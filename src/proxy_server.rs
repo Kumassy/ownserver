@@ -1,12 +1,14 @@
 pub use magic_tunnel::{StreamId, ClientHello};
 use futures::{SinkExt, StreamExt};
-use log::*;
+// use log::*;
 use std::net::SocketAddr;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::{accept_async, client_async, WebSocketStream, tungstenite::{Error, Result, Message}};
 use tokio::io::{AsyncRead, AsyncWrite};
 use std::marker::Unpin;
 use tokio::sync::oneshot;
+use tracing::info;
+use tracing_subscriber;
 
 // WebSocketStream 
 // async fn try_client_handshake(websocket: &mut WebSocketStream<impl AsyncRead + AsyncWrite + Unpin>) -> Option<ClientHello> {
@@ -14,12 +16,18 @@ async fn try_client_handshake(websocket: &mut WebSocketStream<TcpStream>) -> Opt
     let client_hello_data = match websocket.next().await {
         Some(Ok(Message::Binary(msg))) => msg,
         _ => {
-            error!("no client init message");
+            tracing::error!("no client init message");
             return None
         },
     };
 
-    let client_hello: ClientHello = serde_json::from_slice(&client_hello_data).expect("parse error");
+    let client_hello: ClientHello = match serde_json::from_slice(&client_hello_data) {
+        Ok(client_hello) => client_hello,
+        _ => {
+            tracing::error!("failed to deserialize client hello");
+            return None
+        }
+    };
     Some(client_hello)
 }
 
@@ -40,7 +48,8 @@ async fn handle_new_connection(peer: SocketAddr, stream: TcpStream) -> Result<()
 
 #[tokio::main]
 async fn main() {
-    pretty_env_logger::init();
+    // pretty_env_logger::init();
+    tracing_subscriber::fmt::init();
 
     let addr = "127.0.0.1:5000";
     let listener = TcpListener::bind(&addr).await.expect("Can't listen");
@@ -54,6 +63,7 @@ async fn main() {
     }
 }
 
+#[cfg(test)]
 mod try_client_handshake_test {
     use super::*;
 
@@ -107,6 +117,13 @@ mod try_client_handshake_test {
     #[tokio::test]
     async fn reject_invalid_text_hello() {
         test_helper!(Message::Text("foobarbaz".into()), |hello: Option<ClientHello>| {
+            assert!(hello.is_none());
+        });
+    }
+    #[tokio::test]
+    async fn reject_invalid_serialized_hello() {
+        let hello = serde_json::to_vec(&"malformed".to_string()).unwrap_or_default();
+        test_helper!(Message::Binary(hello), |hello: Option<ClientHello>| {
             assert!(hello.is_none());
         });
     }
