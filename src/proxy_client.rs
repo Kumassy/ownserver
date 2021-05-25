@@ -16,7 +16,7 @@ pub use magic_tunnel::{StreamId, ClientHello};
 async fn main() -> Result<()> {
     pretty_env_logger::init();
 
-    let url = Url::parse(&"wss://localhost:5000/")?;
+    let url = Url::parse(&"wss://localhost:5000/tunnel")?;
     let (mut ws_stream, _ ) = connect_async(url).await.expect("failed to connect");
 
     info!("WebSocket handshake has been successfully completed");

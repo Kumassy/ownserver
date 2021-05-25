@@ -1,20 +1,57 @@
 pub use magic_tunnel::{StreamId, ClientHello};
 use futures::{SinkExt, StreamExt};
 // use log::*;
-use std::net::SocketAddr;
+use std::net::{SocketAddr, IpAddr};
 use tokio::net::{TcpListener, TcpStream};
-use tokio_tungstenite::{accept_async, client_async, WebSocketStream, tungstenite::{Error, Result, Message}};
+use tokio_tungstenite::{accept_async, client_async, WebSocketStream, tungstenite::{Error, Result}};
 use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::task::JoinHandle;
 use std::marker::Unpin;
 use tokio::sync::oneshot;
-use tracing::info;
+use tracing::{info, Instrument};
 use tracing_subscriber;
+use warp::{Filter, Rejection, ws::{Ws, WebSocket, Message}};
+use std::convert::Infallible;
+
+pub fn spawn<A: Into<SocketAddr>>(addr: A) -> JoinHandle<()> {
+    let health_check = warp::get().and(warp::path("health_check")).map(|| {
+        tracing::debug!("Health Check #2 triggered");
+        "ok"
+    });
+    let client_conn = warp::path("tunnel").and(client_addr()).and(warp::ws()).map(
+        move |client_addr: SocketAddr, ws: Ws| {
+            ws.on_upgrade(move |w| {
+                async move { handle_new_connection(client_addr, w).await }
+                    .instrument(tracing::info_span!("handle_websocket"))
+            })
+        },
+    );
+
+    let routes = client_conn.or(health_check);
+
+    // TODO tls https://docs.rs/warp/0.3.1/warp/struct.Server.html#method.tls
+    tokio::spawn(warp::serve(routes).run(addr.into()))
+}
+
+// fn client_ip() -> impl Filter<Extract = (IpAddr,), Error = Rejection> + Copy {
+fn client_addr() -> impl Filter<Extract = (SocketAddr,), Error = Infallible> + Copy {
+    warp::any()
+        .and(warp::addr::remote())
+        .map(
+            |remote: Option<SocketAddr>| {
+                remote
+                    .unwrap_or(SocketAddr::from(([0, 0, 0, 0], 0)))
+            },
+        )
+}
 
 // WebSocketStream 
 // async fn try_client_handshake(websocket: &mut WebSocketStream<impl AsyncRead + AsyncWrite + Unpin>) -> Option<ClientHello> {
-async fn try_client_handshake(websocket: &mut WebSocketStream<TcpStream>) -> Option<ClientHello> {
+async fn try_client_handshake(websocket: &mut WebSocket) -> Option<ClientHello> {
     let client_hello_data = match websocket.next().await {
-        Some(Ok(Message::Binary(msg))) => msg,
+        Some(Ok(msg)) if (msg.is_binary() || msg.is_text()) && !msg.as_bytes().is_empty() => {
+            msg.into_bytes()
+        }
         _ => {
             tracing::error!("no client init message");
             return None
@@ -31,19 +68,22 @@ async fn try_client_handshake(websocket: &mut WebSocketStream<TcpStream>) -> Opt
     Some(client_hello)
 }
 
-async fn handle_new_connection(peer: SocketAddr, stream: TcpStream) -> Result<()> {
-    let mut ws_stream = accept_async(stream).await.expect("Failed to accept");
+async fn handle_new_connection(peer: SocketAddr, mut websocket: WebSocket) {
     info!("New WebSocket connection: {}", peer);
 
-    let client_hello = try_client_handshake(&mut ws_stream).await.expect("failed to verify client hello");
+    let client_hello = try_client_handshake(&mut websocket).await.expect("failed to verify client hello");
     info!("verify client hello {:?}", client_hello);
 
-    while let Some(msg) = ws_stream.next().await {
-        let msg = msg?;
+    while let Some(msg) = websocket.next().await {
+        let msg = match msg {
+            Ok(msg) => msg,
+            _ => {
+                tracing::debug!("client websocket has ended");
+                return;
+            }
+        };
         info!("message received: {:?}", msg);
     }
-
-    Ok(())
 }
 
 #[tokio::main]
@@ -51,16 +91,20 @@ async fn main() {
     // pretty_env_logger::init();
     tracing_subscriber::fmt::init();
 
-    let addr = "127.0.0.1:5000";
-    let listener = TcpListener::bind(&addr).await.expect("Can't listen");
+    let addr: SocketAddr = ([0, 0, 0, 0], 5000).into();
+    // let listener = TcpListener::bind(&addr).await.expect("Can't listen");
+    // info!("Listening on: {}", addr);
+
+    // while let Ok((stream, _)) = listener.accept().await {
+    //     let peer = stream.peer_addr().expect("connected streams should have a peer address");
+    //     info!("Peer address: {}", peer);
+
+    //     tokio::spawn(handle_new_connection(peer, stream));
+    // }
+    let handle = spawn(addr);
     info!("Listening on: {}", addr);
 
-    while let Ok((stream, _)) = listener.accept().await {
-        let peer = stream.peer_addr().expect("connected streams should have a peer address");
-        info!("Peer address: {}", peer);
-
-        tokio::spawn(handle_new_connection(peer, stream));
-    }
+    handle.await.unwrap();
 }
 
 #[cfg(test)]
