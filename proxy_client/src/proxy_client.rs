@@ -1,4 +1,5 @@
 use futures::{SinkExt, StreamExt};
+use futures::channel::mpsc::{unbounded, UnboundedSender};
 use log::*;
 use tokio_tungstenite::{
     connect_async,
@@ -6,11 +7,26 @@ use tokio_tungstenite::{
 };
 use url::Url;
 use anyhow::Result;
-
+use std::collections::HashMap;
+use std::env;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use tokio::time;
 
-pub use magic_tunnel::{StreamId, ClientHello};
+pub use magic_tunnel_lib::{StreamId, ClientHello};
+
+
+pub type ActiveStreams = Arc<RwLock<HashMap<StreamId, UnboundedSender<StreamMessage>>>>;
+
+lazy_static::lazy_static! {
+    pub static ref ACTIVE_STREAMS:ActiveStreams = Arc::new(RwLock::new(HashMap::new()));
+}
+
+#[derive(Debug, Clone)]
+pub enum StreamMessage {
+    Data(Vec<u8>),
+    Close,
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {

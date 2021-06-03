@@ -1,4 +1,4 @@
-pub use magic_tunnel::{StreamId, ClientHello};
+pub use magic_tunnel_lib::{StreamId, ClientHello};
 use futures::{SinkExt, StreamExt};
 // use log::*;
 use std::net::{SocketAddr, IpAddr};

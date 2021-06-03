@@ -1,0 +1,28 @@
+[package]
+name = "magic_tunnel_server"
+version = "0.1.0"
+authors = ["Kumassy <kumassyii@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+magic_tunnel_lib = { version = "0.1.0", path = "../proxy_lib" }
+tokio-tungstenite = { version = '0.14', features = ["rustls"] }
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"
+log = "0.4"
+pretty_env_logger = "0.4"
+url = "2.2"
+anyhow = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tracing = "0.1"
+tracing-subscriber = "0.2"
+warp = "0.3"
+lazy_static = "1.4"
+base64 = "0.13"
+
+[[bin]]
+name = "proxy-server"
+path = "src/proxy_server.rs"
