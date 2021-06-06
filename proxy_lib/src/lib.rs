@@ -21,7 +21,7 @@ pub struct ClientHello {
     pub id: StreamId,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ControlPacket {
     Init(StreamId),
     Data(StreamId, Vec<u8>),

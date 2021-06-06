@@ -13,6 +13,7 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use tokio::time;
 
+mod local;
 pub use magic_tunnel_lib::{StreamId, ClientHello};
 
 
