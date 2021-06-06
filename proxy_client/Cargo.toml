@@ -23,6 +23,9 @@ warp = "0.3"
 lazy_static = "1.4"
 base64 = "0.13"
 
+[dev-dependencies]
+serial_test = "*"
+
 [[bin]]
 name = "proxy-client"
 path = "src/proxy_client.rs"
