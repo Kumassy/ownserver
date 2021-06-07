@@ -14,7 +14,7 @@ use std::time::Duration;
 use tokio::time;
 
 mod local;
-pub use magic_tunnel_lib::{StreamId, ClientHello, ControlPacket};
+pub use magic_tunnel_lib::{StreamId, ClientId, ClientHello, ControlPacket};
 
 
 pub type ActiveStreams = Arc<RwLock<HashMap<StreamId, UnboundedSender<StreamMessage>>>>;
@@ -40,7 +40,7 @@ async fn main() -> Result<()> {
     info!("WebSocket handshake has been successfully completed");
 
     let hello = serde_json::to_vec(&ClientHello {
-        id: StreamId::generate(),
+        id: ClientId::generate(),
     }).unwrap_or_default();
     ws_stream.send(Message::Binary(hello)).await?;
 

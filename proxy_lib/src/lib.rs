@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use rand::prelude::*;
+use sha2::Digest;
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 #[serde(transparent)]
@@ -19,9 +20,32 @@ impl StreamId {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
+#[serde(transparent)]
+pub struct ClientId(String);
+
+impl std::fmt::Display for ClientId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+impl ClientId {
+    pub fn generate() -> Self {
+        let mut id = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut id);
+        ClientId(base64::encode_config(&id, base64::URL_SAFE_NO_PAD))
+    }
+
+    pub fn safe_id(self) -> ClientId {
+        ClientId(base64::encode(
+            &sha2::Sha256::digest(self.0.as_bytes()).to_vec(),
+        ))
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ClientHello {
-    pub id: StreamId,
+    pub id: ClientId,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,6 +94,21 @@ impl ControlPacket {
 
         Ok(packet)
     }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "snake_case")]
+pub enum ServerHello {
+    Success {
+        // sub_domain: String,
+        // hostname: String,
+        client_id: ClientId,
+    },
+    // TODO: this may not be used
+    // SubDomainInUse,
+    // InvalidSubDomain,
+    // AuthFailed,
+    // Error(String),
 }
 
 #[cfg(test)]

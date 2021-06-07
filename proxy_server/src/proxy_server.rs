@@ -1,11 +1,11 @@
-pub use magic_tunnel_lib::{StreamId, ClientHello};
-use futures::{SinkExt, StreamExt};
+pub use magic_tunnel_lib::{StreamId, ClientId, ClientHello, ServerHello};
+use futures::{SinkExt, StreamExt, Stream, Sink, AsyncRead, AsyncWrite, AsyncReadExt, AsyncWriteExt};
 // use log::*;
 use std::net::{SocketAddr, IpAddr};
 use tokio::task::JoinHandle;
 use tracing::{info, Instrument};
 use tracing_subscriber;
-use warp::{Filter, Rejection, ws::{Ws, WebSocket, Message}};
+use warp::{Filter, Rejection, ws::{Ws, WebSocket, Message}, Error as WarpError};
 use std::convert::Infallible;
 
 pub fn spawn<A: Into<SocketAddr>>(addr: A) -> JoinHandle<()> {
@@ -40,9 +40,8 @@ fn client_addr() -> impl Filter<Extract = (SocketAddr,), Error = Infallible> + C
         )
 }
 
-// WebSocketStream 
-// async fn try_client_handshake(websocket: &mut WebSocketStream<impl AsyncRead + AsyncWrite + Unpin>) -> Option<ClientHello> {
-async fn try_client_handshake(websocket: &mut WebSocket) -> Option<ClientHello> {
+// async fn try_client_handshake(websocket: &mut WebSocket) -> Option<ClientHello> {
+async fn try_client_handshake(websocket: &mut (impl Unpin + Stream<Item=Result<Message, WarpError>>)) -> Option<ClientHello> {
     let client_hello_data = match websocket.next().await {
         Some(Ok(msg)) if (msg.is_binary() || msg.is_text()) && !msg.as_bytes().is_empty() => {
             msg.into_bytes()
@@ -61,6 +60,30 @@ async fn try_client_handshake(websocket: &mut WebSocket) -> Option<ClientHello> 
         }
     };
     Some(client_hello)
+}
+
+// async fn respond_with_server_hello(websocket: &mut (impl Unpin + Sink<Message>)) -> Result<(), WarpError> 
+async fn respond_with_server_hello<T>(websocket: &mut T) -> Result<(), T::Error> 
+    where T: Unpin + Sink<Message> {
+    // Send server hello success
+    let client_id = ClientId::generate();
+    let data = serde_json::to_vec(&ServerHello::Success {
+        client_id: client_id.clone(),
+    })
+    .unwrap_or_default();
+
+    websocket.send(Message::binary(data)).await?;
+    // if let Err(error) = send_result {
+    //     tracing::info!("failed to send server hello: {}", error);
+    //     return None;
+    // }
+
+    tracing::debug!(
+        "new client connected: {:?}",
+        client_id,
+    );
+
+    Ok(())
 }
 
 async fn handle_new_connection(peer: SocketAddr, mut websocket: WebSocket) {
@@ -95,53 +118,60 @@ async fn main() {
 #[cfg(test)]
 mod try_client_handshake_test {
     use super::*;
-
-    macro_rules! test_helper {
-        ($send_value:expr, $expect:expr) => {
-            let server = warp::ws().map(|ws: Ws| {
-                ws.on_upgrade(|mut websocket| {
-                    async move {
-                        let hello = try_client_handshake(&mut websocket).await;
-                        $expect(hello);
-                        // make sure $expect to be executed
-                        websocket.send(Message::text("ok")).await.expect("send back response");
-                    }
-                })
-            });
-
-            let mut client = warp::test::ws()
-                .handshake(server)
-                .await
-                .expect("handshake");
-
-            client.send($send_value).await;
-            client.recv().await.expect("recv");
-        };
-    }
+    use futures::channel::mpsc;
 
     #[tokio::test]
-    async fn accept_client_hello() {
+    async fn accept_client_hello() -> Result<(), Box<dyn std::error::Error>> {
+        let (mut tx, mut rx) = mpsc::unbounded();
+
         let hello = serde_json::to_vec(&ClientHello {
-            id: StreamId::generate(),
+            id: ClientId::generate(),
         }).unwrap_or_default();
-        test_helper!(Message::binary(hello), |hello: Option<ClientHello>| {
-            assert!(hello.is_some());
-            // let hello = hello.unwrap();
-            // assert_eq!(hello.id, StreamId([0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]));
-        });
+
+        tx.send(Ok(Message::binary(hello))).await?;
+        let hello = try_client_handshake(&mut rx).await;
+        assert!(hello.is_some());
+        Ok(())
     }
 
     #[tokio::test]
-    async fn reject_invalid_text_hello() {
-        test_helper!(Message::text("foobarbaz".to_string()), |hello: Option<ClientHello>| {
-            assert!(hello.is_none());
-        });
+    async fn reject_invalid_text_hello() -> Result<(), Box<dyn std::error::Error>> {
+        let (mut tx, mut rx) = mpsc::unbounded();
+
+        tx.send(Ok(Message::text("foobarbaz".to_string()))).await?;
+        let hello = try_client_handshake(&mut rx).await;
+        assert!(hello.is_none());
+        Ok(())
     }
+
     #[tokio::test]
-    async fn reject_invalid_serialized_hello() {
+    async fn reject_invalid_serialized_hello() -> Result<(), Box<dyn std::error::Error>> {
+        let (mut tx, mut rx) = mpsc::unbounded();
+
         let hello = serde_json::to_vec(&"malformed".to_string()).unwrap_or_default();
-        test_helper!(Message::binary(hello), |hello: Option<ClientHello>| {
-            assert!(hello.is_none());
-        });
+
+        tx.send(Ok(Message::binary(hello))).await?;
+        let hello = try_client_handshake(&mut rx).await;
+        assert!(hello.is_none());
+        Ok(())
+    }
+}
+
+
+#[cfg(test)]
+mod respond_with_server_hello_test {
+    use super::*;
+    use futures::channel::mpsc;
+
+    #[tokio::test]
+    async fn it_works() -> Result<(), Box<dyn std::error::Error>> {
+        let (mut tx, mut rx) = mpsc::unbounded();
+
+        respond_with_server_hello(&mut tx).await.expect("failed to write to websocket");
+
+        let server_hello_data = rx.next().await.unwrap().into_bytes();
+        let _server_hello: ServerHello = serde_json::from_slice(&server_hello_data).expect("server hello is malformed");
+
+        Ok(())
     }
 }
