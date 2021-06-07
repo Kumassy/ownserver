@@ -69,6 +69,7 @@ async fn respond_with_server_hello<T>(websocket: &mut T) -> Result<(), T::Error>
     let client_id = ClientId::generate();
     let data = serde_json::to_vec(&ServerHello::Success {
         client_id: client_id.clone(),
+        assigned_port: 12345, // TODO
     })
     .unwrap_or_default();
 
@@ -91,6 +92,8 @@ async fn handle_new_connection(peer: SocketAddr, mut websocket: WebSocket) {
 
     let client_hello = try_client_handshake(&mut websocket).await.expect("failed to verify client hello");
     info!("verify client hello {:?}", client_hello);
+
+    respond_with_server_hello(&mut websocket).await.expect("failed to send server_hello");
 
     while let Some(msg) = websocket.next().await {
         let msg = match msg {
@@ -170,8 +173,9 @@ mod respond_with_server_hello_test {
         respond_with_server_hello(&mut tx).await.expect("failed to write to websocket");
 
         let server_hello_data = rx.next().await.unwrap().into_bytes();
-        let _server_hello: ServerHello = serde_json::from_slice(&server_hello_data).expect("server hello is malformed");
+        let server_hello: ServerHello = serde_json::from_slice(&server_hello_data).expect("server hello is malformed");
 
+        assert!(matches!(server_hello, ServerHello::Success{ .. }));
         Ok(())
     }
 }

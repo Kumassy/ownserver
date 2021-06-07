@@ -1,9 +1,9 @@
-use futures::{SinkExt, StreamExt};
+use futures::{SinkExt, Stream, StreamExt, Sink};
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use log::*;
 use tokio_tungstenite::{
     connect_async,
-    tungstenite::{Error, Message},
+    tungstenite::{Error as WsError, Message},
 };
 use url::Url;
 use anyhow::Result;
@@ -14,7 +14,9 @@ use std::time::Duration;
 use tokio::time;
 
 mod local;
-pub use magic_tunnel_lib::{StreamId, ClientId, ClientHello, ControlPacket};
+mod error;
+use self::error::Error;
+pub use magic_tunnel_lib::{StreamId, ClientId, ClientHello, ControlPacket, ServerHello};
 
 
 pub type ActiveStreams = Arc<RwLock<HashMap<StreamId, UnboundedSender<StreamMessage>>>>;
@@ -39,10 +41,9 @@ async fn main() -> Result<()> {
 
     info!("WebSocket handshake has been successfully completed");
 
-    let hello = serde_json::to_vec(&ClientHello {
-        id: ClientId::generate(),
-    }).unwrap_or_default();
-    ws_stream.send(Message::Binary(hello)).await?;
+    send_client_hello(&mut ws_stream).await?;
+    let client_info = verify_server_hello(&mut ws_stream).await?;
+    info!("client_info: {:?}", client_info);
 
 
     let mut interval = time::interval(Duration::from_millis(1000));
@@ -56,6 +57,54 @@ async fn main() -> Result<()> {
     ws_stream.close(None).await?;
 
     Ok(())
+}
+
+async fn send_client_hello<T>(websocket: &mut T) -> Result<(), T::Error> 
+    where T: Unpin + Sink<Message> {
+    let hello = serde_json::to_vec(&ClientHello {
+        id: ClientId::generate(),
+    }).unwrap_or_default();
+    websocket.send(Message::binary(hello)).await?;
+
+    Ok(())
+}
+
+// Wormhole
+#[derive(Debug)]
+struct ClientInfo
+{
+    client_id: ClientId,
+    assigned_port: u16,
+}
+
+async fn verify_server_hello<T>(websocket: &mut T) -> Result<ClientInfo, Error>
+where T: Unpin + Stream<Item=Result<Message, WsError>>
+{
+    let server_hello_data = websocket
+        .next()
+        .await
+        .ok_or(Error::NoResponseFromServer)??
+        .into_data();
+    let server_hello = serde_json::from_slice::<ServerHello>(&server_hello_data).map_err(|e| {
+        error!("Couldn't parse server_hello from {:?}", e);
+        Error::ServerReplyInvalid
+    })?;
+
+    let (client_id, assigned_port) = match server_hello {
+        ServerHello::Success {
+            client_id,
+            assigned_port,
+        } => {
+            info!("Server accepted our connection. I am client_{}", client_id);
+            (client_id, assigned_port)
+        }
+        _ => unimplemented!(),
+    };
+
+    Ok(ClientInfo {
+        client_id,
+        assigned_port
+    })
 }
 
 // TODO: improve testability, fix return value
@@ -324,5 +373,86 @@ mod process_control_flow_message {
 
         // connection refused should be sent to proxy server
         assert_eq!(Some(ControlPacket::Refused(stream_id.clone())), tunnel_rx.next().await);
+    }
+}
+
+#[cfg(test)]
+mod send_client_hello_test {
+    use super::*;
+    use futures::channel::mpsc;
+
+    #[tokio::test]
+    async fn it_sends_client_hello() -> Result<(), Box<dyn std::error::Error>> {
+        let (mut tx, mut rx) = mpsc::unbounded();
+
+        send_client_hello(&mut tx).await.expect("failed to write to websocket");
+
+        let client_hello_data = rx.next().await.unwrap().into_data();
+        let _client_hello: ClientHello = serde_json::from_slice(&client_hello_data).expect("client hello is malformed");
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod verify_server_hello_test {
+    use super::*;
+    use futures::channel::mpsc;
+
+    #[tokio::test]
+    async fn it_accept_server_hello() -> Result<(), Box<dyn std::error::Error>> {
+        let (mut tx, mut rx) = mpsc::unbounded();
+
+        let cid = ClientId::generate();
+        let hello = serde_json::to_vec(&ServerHello::Success {
+            client_id: cid.clone(),
+            assigned_port: 256,
+        }).unwrap_or_default();
+        tx.send(Ok(Message::binary(hello))).await?;
+
+        let client_info = verify_server_hello(&mut rx).await.expect("unexpected server hello error");
+        let ClientInfo { client_id, assigned_port } = client_info;
+        assert_eq!(cid, client_id);
+        assert_eq!(256, assigned_port);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn returns_errors_when_websocket_yields_nothing() -> Result<(), Box<dyn std::error::Error>> {
+        let (mut tx, mut rx) = mpsc::unbounded();
+
+        tx.disconnect();
+
+        let server_hello = verify_server_hello(&mut rx).await.err().expect("server hello is unexpectedly correct");
+        assert!(matches!(server_hello, Error::NoResponseFromServer));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn returns_errors_when_server_hello_is_invalid() -> Result<(), Box<dyn std::error::Error>> {
+        let (mut tx, mut rx) = mpsc::unbounded();
+
+        let hello = serde_json::to_vec(&"hello server").unwrap_or_default();
+        tx.send(Ok(Message::binary(hello))).await?;
+
+        let server_hello = verify_server_hello(&mut rx).await.err().expect("server hello is unexpectedly correct");
+        assert!(matches!(server_hello, Error::ServerReplyInvalid));
+
+        Ok(())
+    }
+
+
+    #[tokio::test]
+    async fn returns_errors_when_websocket_error() -> Result<(), Box<dyn std::error::Error>> {
+        let (mut tx, mut rx) = mpsc::unbounded();
+
+        tx.send(Err(WsError::AlreadyClosed)).await?;
+
+        let server_hello = verify_server_hello(&mut rx).await.err().expect("server hello is unexpectedly correct");
+        assert!(matches!(server_hello, Error::WebSocketError(_)));
+
+        Ok(())
     }
 }

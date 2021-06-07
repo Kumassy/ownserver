@@ -45,7 +45,11 @@ impl ClientId {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ClientHello {
+    // depricated
+    // send JWT
     pub id: ClientId,
+
+    // game id
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -103,6 +107,7 @@ pub enum ServerHello {
         // sub_domain: String,
         // hostname: String,
         client_id: ClientId,
+        assigned_port: u16,
     },
     // TODO: this may not be used
     // SubDomainInUse,
