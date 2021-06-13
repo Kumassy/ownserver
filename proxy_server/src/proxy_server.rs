@@ -8,6 +8,9 @@ use tracing_subscriber;
 use warp::{Filter, Rejection, ws::{Ws, WebSocket, Message}, Error as WarpError};
 use std::convert::Infallible;
 
+mod connected_clients;
+mod active_stream;
+
 pub fn spawn<A: Into<SocketAddr>>(addr: A) -> JoinHandle<()> {
     let health_check = warp::get().and(warp::path("health_check")).map(|| {
         tracing::debug!("Health Check #2 triggered");
