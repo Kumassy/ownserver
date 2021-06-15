@@ -22,6 +22,7 @@ impl std::fmt::Debug for ConnectedClient {
     }
 }
 
+#[derive(Debug)]
 pub struct Connections {
     clients: Arc<DashMap<ClientId, ConnectedClient>>,
     hosts: Arc<DashMap<String, ConnectedClient>>,
@@ -41,7 +42,7 @@ impl Connections {
     //         .insert(client.host.clone(), client.clone());
     // }
 
-    pub fn remove(connection: &mut Self, client: &ConnectedClient) {
+    pub fn remove(connection: &Self, client: &ConnectedClient) {
         client.tx.close_channel();
 
         // https://github.com/agrinman/tunnelto/blob/0.1.9/src/server/connected_clients.rs
@@ -65,7 +66,7 @@ impl Connections {
         connection.hosts.get(host).map(|c| c.value().clone())
     }
 
-    pub fn add(connection: &mut Self, client: ConnectedClient) {
+    pub fn add(connection: &Self, client: ConnectedClient) {
         connection
             .clients
             .insert(client.id.clone(), client.clone());

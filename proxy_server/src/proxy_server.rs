@@ -1,5 +1,5 @@
-pub use magic_tunnel_lib::{StreamId, ClientId, ClientHello, ServerHello};
-use futures::{SinkExt, StreamExt, Stream, Sink, AsyncRead, AsyncWrite, AsyncReadExt, AsyncWriteExt};
+pub use magic_tunnel_lib::{StreamId, ClientId, ClientHello, ServerHello, ControlPacket};
+use futures::{SinkExt, StreamExt, Stream, Sink, AsyncRead, AsyncWrite, AsyncReadExt, AsyncWriteExt, channel::mpsc::unbounded};
 // use log::*;
 use std::net::{SocketAddr, IpAddr};
 use tokio::task::JoinHandle;
@@ -7,9 +7,21 @@ use tracing::{info, Instrument};
 use tracing_subscriber;
 use warp::{Filter, Rejection, ws::{Ws, WebSocket, Message}, Error as WarpError};
 use std::convert::Infallible;
+use dashmap::DashMap;
+use lazy_static::lazy_static;
+use std::sync::Arc;
 
 mod connected_clients;
 mod active_stream;
+mod control_server;
+use crate::active_stream::ActiveStreams;
+use crate::connected_clients::{ConnectedClient, Connections};
+use crate::control_server::process_client_messages;
+
+lazy_static! {
+    pub static ref CONNECTIONS: Connections = Connections::new();
+    pub static ref ACTIVE_STREAMS: ActiveStreams = Arc::new(DashMap::new());
+}
 
 pub fn spawn<A: Into<SocketAddr>>(addr: A) -> JoinHandle<()> {
     let health_check = warp::get().and(warp::path("health_check")).map(|| {
@@ -98,16 +110,34 @@ async fn handle_new_connection(peer: SocketAddr, mut websocket: WebSocket) {
 
     respond_with_server_hello(&mut websocket).await.expect("failed to send server_hello");
 
-    while let Some(msg) = websocket.next().await {
-        let msg = match msg {
-            Ok(msg) => msg,
-            _ => {
-                tracing::debug!("client websocket has ended");
-                return;
-            }
-        };
-        info!("message received: {:?}", msg);
-    }
+    let (tx, rx) = unbounded::<ControlPacket>();
+    let mut client = ConnectedClient {
+        id: ClientId::generate(),
+        host: "foobar".to_string(),
+        tx,
+    };
+    Connections::add(&CONNECTIONS, client.clone());
+
+    let (sink, stream) = websocket.split();
+
+    let active_streams = ACTIVE_STREAMS.clone();
+    tokio::spawn(
+        async move {
+            process_client_messages(active_streams, &CONNECTIONS, client, stream).await;
+        }
+        .instrument(tracing::info_span!("process_client")),
+    );
+
+    // while let Some(msg) = websocket.next().await {
+    //     let msg = match msg {
+    //         Ok(msg) => msg,
+    //         _ => {
+    //             tracing::debug!("client websocket has ended");
+    //             return;
+    //         }
+    //     };
+    //     info!("message received: {:?}", msg);
+    // }
 }
 
 #[tokio::main]

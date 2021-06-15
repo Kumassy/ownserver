@@ -28,7 +28,7 @@ impl ActiveStream {
 
 pub type ActiveStreams = Arc<DashMap<StreamId, ActiveStream>>;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum StreamMessage {
     Data(Vec<u8>),
     TunnelRefused,
