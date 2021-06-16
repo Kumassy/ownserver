@@ -86,9 +86,7 @@ mod process_client_messages_test {
     use std::sync::Arc;
 
     #[tokio::test]
-    async fn forward_control_packet_data_to_appropriate_stream() -> Result<(), Box<dyn std::error::Error>> {
-        tracing_subscriber::fmt::init();
-
+    async fn discard_control_packet_data_no_active_stream() -> Result<(), Box<dyn std::error::Error>> {
         let (mut stream_tx, stream_rx) = unbounded::<Result<Message, WarpError>>();
 
         let conn = Connections::new();
@@ -96,6 +94,34 @@ mod process_client_messages_test {
         let (tx, rx) = unbounded::<ControlPacket>();
         let client = ConnectedClient {
             id: ClientId::generate(),
+            host: "foobar".into(),
+            tx
+        };
+
+        let (active_stream, mut queue_rx) = ActiveStream::new(client.clone());
+        let stream_id = active_stream.id.clone();
+        let packet = ControlPacket::Data(stream_id, b"foobarbaz".to_vec());
+        stream_tx.send(Ok(Message::binary(packet.serialize()))).await?;
+        stream_tx.close_channel();
+        process_client_messages(active_streams, &conn, client, stream_rx).await;
+
+        // all active stream must be dropped
+        drop(active_stream);
+        assert_eq!(queue_rx.next().await, None);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn forward_control_packet_data_to_appropriate_stream() -> Result<(), Box<dyn std::error::Error>> {
+        // tracing_subscriber::fmt::init();
+        let (mut stream_tx, stream_rx) = unbounded::<Result<Message, WarpError>>();
+
+        let conn = Connections::new();
+        let active_streams = Arc::new(DashMap::new());
+        let (tx, rx) = unbounded::<ControlPacket>();
+        let client_id = ClientId::generate();
+        let client = ConnectedClient {
+            id: client_id.clone(),
             host: "foobar".into(),
             tx
         };
@@ -111,10 +137,81 @@ mod process_client_messages_test {
         process_client_messages(active_streams, &conn, client, stream_rx).await;
 
 
+        // ControlPacket::Data must be sent to ActiveStream
         assert_eq!(queue_rx.next().await, Some(StreamMessage::Data(b"foobarbaz".to_vec())));
-        // all active stream must be dropped
-        drop(active_stream);
+        drop(active_stream); // all active stream must be dropped
         assert_eq!(queue_rx.next().await, None);
+
+        // Client must be deleted from Connections when stream_tx closes
+        assert!(Connections::get(&conn, &client_id).is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn forward_control_packet_refused_to_appropriate_stream() -> Result<(), Box<dyn std::error::Error>> {
+        // tracing_subscriber::fmt::init();
+        let (mut stream_tx, stream_rx) = unbounded::<Result<Message, WarpError>>();
+
+        let conn = Connections::new();
+        let active_streams = Arc::new(DashMap::new());
+        let (tx, rx) = unbounded::<ControlPacket>();
+        let client_id = ClientId::generate();
+        let client = ConnectedClient {
+            id: client_id.clone(),
+            host: "foobar".into(),
+            tx
+        };
+
+        Connections::add(&conn, client.clone());
+        let (active_stream, mut queue_rx) = ActiveStream::new(client.clone());
+        let stream_id = active_stream.id.clone();
+        active_streams.insert(stream_id.clone(), active_stream.clone());
+
+        let packet = ControlPacket::Refused(stream_id);
+        stream_tx.send(Ok(Message::binary(packet.serialize()))).await?;
+        stream_tx.close_channel();
+        process_client_messages(active_streams, &conn, client, stream_rx).await;
+
+
+        // ControlPacket::Data must be sent to ActiveStream
+        assert_eq!(queue_rx.next().await, Some(StreamMessage::TunnelRefused));
+        drop(active_stream); // all active stream must be dropped
+        assert_eq!(queue_rx.next().await, None);
+
+        // Client must be deleted from Connections when stream_tx closes
+        assert!(Connections::get(&conn, &client_id).is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn close_stream_remove_client() -> Result<(), Box<dyn std::error::Error>> {
+        // tracing_subscriber::fmt::init();
+        let (mut stream_tx, stream_rx) = unbounded::<Result<Message, WarpError>>();
+
+        let conn = Connections::new();
+        let active_streams = Arc::new(DashMap::new());
+        let (tx, rx) = unbounded::<ControlPacket>();
+        let client_id = ClientId::generate();
+        let client = ConnectedClient {
+            id: client_id.clone(),
+            host: "foobar".into(),
+            tx
+        };
+
+        Connections::add(&conn, client.clone());
+        let (active_stream, mut queue_rx) = ActiveStream::new(client.clone());
+        let stream_id = active_stream.id.clone();
+        active_streams.insert(stream_id.clone(), active_stream.clone());
+
+        stream_tx.send(Ok(Message::close())).await?;
+        stream_tx.close_channel();
+        process_client_messages(active_streams, &conn, client, stream_rx).await;
+
+        drop(active_stream); // all active stream must be dropped
+        assert_eq!(queue_rx.next().await, None);
+
+        // Client must be deleted from Connections when stream_tx closes
+        assert!(Connections::get(&conn, &client_id).is_none());
         Ok(())
     }
 }
