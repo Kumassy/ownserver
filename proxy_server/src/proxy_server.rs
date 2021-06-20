@@ -16,7 +16,7 @@ mod active_stream;
 mod control_server;
 use crate::active_stream::ActiveStreams;
 use crate::connected_clients::{ConnectedClient, Connections};
-use crate::control_server::process_client_messages;
+use crate::control_server::{process_client_messages, tunnel_client};
 
 lazy_static! {
     pub static ref CONNECTIONS: Connections = Connections::new();
@@ -117,13 +117,21 @@ async fn handle_new_connection(peer: SocketAddr, mut websocket: WebSocket) {
         tx,
     };
     Connections::add(&CONNECTIONS, client.clone());
-
+    let active_streams = ACTIVE_STREAMS.clone();
     let (sink, stream) = websocket.split();
 
-    let active_streams = ACTIVE_STREAMS.clone();
+    let client_clone = client.clone();
     tokio::spawn(
         async move {
-            let client = process_client_messages(active_streams, client, stream).await;
+            let client = tunnel_client(client_clone, sink, rx).await;
+            Connections::remove(&CONNECTIONS, &client);
+        }
+        .instrument(tracing::info_span!("tunnel_client")),
+    );
+    let client_clone = client.clone();
+    tokio::spawn(
+        async move {
+            let client = process_client_messages(active_streams, client_clone, stream).await;
             Connections::remove(&CONNECTIONS, &client);
         }
         .instrument(tracing::info_span!("process_client")),

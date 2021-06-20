@@ -1,5 +1,5 @@
 pub use magic_tunnel_lib::{StreamId, ClientId, ClientHello, ServerHello, ControlPacket};
-use futures::{SinkExt, StreamExt, Stream, Sink, AsyncRead, AsyncWrite, AsyncReadExt, AsyncWriteExt, stream::{SplitStream, SplitSink}};
+use futures::{SinkExt, StreamExt, Stream, Sink, AsyncRead, AsyncWrite, AsyncReadExt, AsyncWriteExt, stream::{SplitStream, SplitSink}, channel::mpsc::{UnboundedReceiver, SendError}};
 // use log::*;
 use std::net::{SocketAddr, IpAddr};
 use tokio::task::JoinHandle;
@@ -11,6 +11,15 @@ use std::convert::Infallible;
 use crate::connected_clients::{ConnectedClient, Connections};
 use crate::active_stream::{ActiveStreams, ActiveStream, StreamMessage};
 
+
+/// Send the client a "stream init" message
+pub async fn send_client_stream_init(mut stream: ActiveStream) -> Result<(), SendError> {
+    stream
+        .client
+        .tx
+        .send(ControlPacket::Init(stream.id.clone()))
+        .await
+}
 
 /// Process client control messages
 #[must_use]
@@ -76,6 +85,36 @@ where T: Stream<Item=Result<Message, WarpError>> + Unpin {
     }
 }
 
+// async fn tunnel_client(
+//     client: ConnectedClient,
+//     mut sink: SplitSink<WebSocket, Message>,
+//     mut queue: UnboundedReceiver<ControlPacket>,
+// ) -> ConnectedClient 
+#[must_use]
+#[tracing::instrument(skip(sink, queue))]
+pub async fn tunnel_client<T, U>(
+    client: ConnectedClient,
+    mut sink: T,
+    mut queue: U,
+) -> ConnectedClient 
+where T: Sink<Message> + Unpin, U: Stream<Item=ControlPacket> + Unpin, T::Error: std::fmt::Debug
+{
+    loop {
+        match queue.next().await {
+            Some(packet) => {
+                let result = sink.send(Message::binary(packet.serialize())).await;
+                if let Err(error) = result {
+                    tracing::trace!(?error, "client disconnected: aborting.");
+                    return client;
+                }
+            }
+            None => {
+                tracing::debug!("ending client tunnel");
+                return client;
+            }
+        };
+    }
+}
 
 #[cfg(test)]
 mod process_client_messages_test {
@@ -89,7 +128,7 @@ mod process_client_messages_test {
         let (mut stream_tx, stream_rx) = unbounded::<Result<Message, WarpError>>();
 
         let active_streams = Arc::new(DashMap::new());
-        let (tx, rx) = unbounded::<ControlPacket>();
+        let (tx, _rx) = unbounded::<ControlPacket>();
         let client = ConnectedClient {
             id: ClientId::generate(),
             host: "foobar".into(),
@@ -115,7 +154,7 @@ mod process_client_messages_test {
         let (mut stream_tx, stream_rx) = unbounded::<Result<Message, WarpError>>();
 
         let active_streams = Arc::new(DashMap::new());
-        let (tx, rx) = unbounded::<ControlPacket>();
+        let (tx, _rx) = unbounded::<ControlPacket>();
         let client_id = ClientId::generate();
         let client = ConnectedClient {
             id: client_id.clone(),
@@ -146,7 +185,7 @@ mod process_client_messages_test {
         let (mut stream_tx, stream_rx) = unbounded::<Result<Message, WarpError>>();
 
         let active_streams = Arc::new(DashMap::new());
-        let (tx, rx) = unbounded::<ControlPacket>();
+        let (tx, _rx) = unbounded::<ControlPacket>();
         let client_id = ClientId::generate();
         let client = ConnectedClient {
             id: client_id.clone(),
@@ -178,7 +217,7 @@ mod process_client_messages_test {
         let (mut stream_tx, stream_rx) = unbounded::<Result<Message, WarpError>>();
 
         let active_streams = Arc::new(DashMap::new());
-        let (tx, rx) = unbounded::<ControlPacket>();
+        let (tx, _rx) = unbounded::<ControlPacket>();
         let client_id = ClientId::generate();
         let client = ConnectedClient {
             id: client_id.clone(),
@@ -196,6 +235,38 @@ mod process_client_messages_test {
 
         drop(active_stream); // all active stream must be dropped
         assert_eq!(queue_rx.next().await, None);
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tunnel_client_test {
+    use super::*;
+    use futures::channel::mpsc::unbounded;
+
+    #[tokio::test]
+    async fn forward_control_packet_to_websocket() -> Result<(), Box<dyn std::error::Error>> {
+        let (tx, _rx) = unbounded::<ControlPacket>();
+        let client_id = ClientId::generate();
+        let client = ConnectedClient {
+            id: client_id.clone(),
+            host: "foobar".into(),
+            tx
+        };
+
+        let (ws_tx, mut ws_rx) = unbounded::<Message>();
+        let (mut control_tx, control_rx) = unbounded::<ControlPacket>();
+        let stream_id = StreamId::generate();
+
+        control_tx.send(ControlPacket::Init(stream_id.clone())).await?;
+        control_tx.close_channel();
+        let _ = tunnel_client(client, ws_tx, control_rx).await;
+
+        let payload = ws_rx.next().await.unwrap().into_bytes();
+        let packet = ControlPacket::deserialize(&payload)?;
+        assert_eq!(packet, ControlPacket::Init(stream_id.clone()));
+        assert_eq!(ws_rx.next().await, None);
 
         Ok(())
     }
