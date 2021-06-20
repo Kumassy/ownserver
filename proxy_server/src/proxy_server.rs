@@ -123,7 +123,8 @@ async fn handle_new_connection(peer: SocketAddr, mut websocket: WebSocket) {
     let active_streams = ACTIVE_STREAMS.clone();
     tokio::spawn(
         async move {
-            process_client_messages(active_streams, &CONNECTIONS, client, stream).await;
+            let client = process_client_messages(active_streams, client, stream).await;
+            Connections::remove(&CONNECTIONS, &client);
         }
         .instrument(tracing::info_span!("process_client")),
     );
