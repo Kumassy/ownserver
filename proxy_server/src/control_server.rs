@@ -1,16 +1,161 @@
 pub use magic_tunnel_lib::{StreamId, ClientId, ClientHello, ServerHello, ControlPacket};
-use futures::{SinkExt, StreamExt, Stream, Sink, AsyncRead, AsyncWrite, AsyncReadExt, AsyncWriteExt, stream::{SplitStream, SplitSink}, channel::mpsc::{UnboundedReceiver, SendError}};
+use futures::{SinkExt, StreamExt, Stream, Sink, AsyncRead, AsyncWrite, AsyncReadExt, AsyncWriteExt, stream::{SplitStream, SplitSink}, channel::mpsc::{unbounded, UnboundedReceiver, SendError}};
 // use log::*;
 use std::net::{SocketAddr, IpAddr};
 use tokio::task::JoinHandle;
 use tracing::{error, info, Instrument};
-use tracing_subscriber;
 use warp::{Filter, Rejection, ws::{Ws, WebSocket, Message}, Error as WarpError};
 use std::convert::Infallible;
 
+use crate::{ACTIVE_STREAMS, CONNECTIONS};
 use crate::connected_clients::{ConnectedClient, Connections};
 use crate::active_stream::{ActiveStreams, ActiveStream, StreamMessage};
 
+pub fn spawn<A: Into<SocketAddr>>(addr: A) -> JoinHandle<()> {
+    let health_check = warp::get().and(warp::path("health_check")).map(|| {
+        tracing::debug!("Health Check #2 triggered");
+        "ok"
+    });
+    let client_conn = warp::path("tunnel").and(client_addr()).and(warp::ws()).map(
+        move |client_addr: SocketAddr, ws: Ws| {
+            ws.on_upgrade(move |w| {
+                async move { handle_new_connection(client_addr, w).await }
+                    .instrument(tracing::info_span!("handle_websocket"))
+            })
+        },
+    );
+
+    let routes = client_conn.or(health_check);
+
+    // TODO tls https://docs.rs/warp/0.3.1/warp/struct.Server.html#method.tls
+    tokio::spawn(warp::serve(routes).run(addr.into()))
+}
+
+// fn client_ip() -> impl Filter<Extract = (IpAddr,), Error = Rejection> + Copy {
+fn client_addr() -> impl Filter<Extract = (SocketAddr,), Error = Infallible> + Copy {
+    warp::any()
+        .and(warp::addr::remote())
+        .map(
+            |remote: Option<SocketAddr>| {
+                remote
+                    .unwrap_or(SocketAddr::from(([0, 0, 0, 0], 0)))
+            },
+        )
+}
+
+pub struct ClientHandshake {
+    pub id: ClientId,
+    // pub sub_domain: String,
+    // pub is_anonymous: bool,
+}
+
+async fn try_client_handshake(websocket: &mut WebSocket) -> Option<ClientHandshake>
+{
+    let client_hello = match verify_client_handshake(websocket).await {
+        Some(client_hello) => client_hello,
+        _ => {
+            tracing::error!("failed to parse client hello");
+            return None;
+        }
+    };
+    let client_id = match respond_with_server_hello(websocket).await {
+        Ok(ServerHello::Success { client_id, assigned_port }) => client_id,
+        Err(error) => {
+            tracing::info!("failed to send server hello: {}", error);
+            return None;
+        },
+        _ => unimplemented!(),
+    };
+
+    Some(ClientHandshake {
+        id: client_id
+    })
+}
+// async fn verify_client_handshake(websocket: &mut WebSocket) -> Option<ClientHello> {
+async fn verify_client_handshake(websocket: &mut (impl Unpin + Stream<Item=Result<Message, WarpError>>)) -> Option<ClientHello> {
+    let client_hello_data = match websocket.next().await {
+        Some(Ok(msg)) if (msg.is_binary() || msg.is_text()) && !msg.as_bytes().is_empty() => {
+            msg.into_bytes()
+        }
+        _ => {
+            tracing::error!("no client init message");
+            return None
+        },
+    };
+
+    let client_hello: ClientHello = match serde_json::from_slice(&client_hello_data) {
+        Ok(client_hello) => client_hello,
+        _ => {
+            tracing::error!("failed to deserialize client hello");
+            return None
+        }
+    };
+    Some(client_hello)
+}
+
+// async fn respond_with_server_hello(websocket: &mut (impl Unpin + Sink<Message>)) -> Result<(), WarpError> 
+async fn respond_with_server_hello<T>(websocket: &mut T) -> Result<ServerHello, T::Error> 
+    where T: Unpin + Sink<Message> {
+    // Send server hello success
+    let client_id = ClientId::generate();
+
+    let server_hello = ServerHello::Success {
+        client_id: client_id.clone(),
+        assigned_port: 12345, // TODO
+    };
+    let data = serde_json::to_vec(&server_hello)
+        .unwrap_or_default();
+
+    websocket.send(Message::binary(data.clone())).await?;
+
+    Ok(server_hello)
+}
+
+async fn handle_new_connection(client_ip: SocketAddr, mut websocket: WebSocket) {
+    let handshake = match try_client_handshake(&mut websocket).await {
+        Some(ws) => ws,
+        None => return,
+    };
+    tracing::info!(client_ip=%client_ip, id=%handshake.id, "open tunnel");
+
+    let (tx, rx) = unbounded::<ControlPacket>();
+    let mut client = ConnectedClient {
+        id: handshake.id,
+        host: "foobar".to_string(),
+        tx,
+    };
+    Connections::add(&CONNECTIONS, client.clone());
+    let active_streams = ACTIVE_STREAMS.clone();
+    let (sink, stream) = websocket.split();
+
+    let client_clone = client.clone();
+    tokio::spawn(
+        async move {
+            let client = tunnel_client(client_clone, sink, rx).await;
+            Connections::remove(&CONNECTIONS, &client);
+        }
+        .instrument(tracing::info_span!("tunnel_client")),
+    );
+    let client_clone = client.clone();
+    tokio::spawn(
+        async move {
+            let client = process_client_messages(active_streams, client_clone, stream).await;
+            Connections::remove(&CONNECTIONS, &client);
+        }
+        .instrument(tracing::info_span!("process_client")),
+    );
+
+    // while let Some(msg) = websocket.next().await {
+    //     let msg = match msg {
+    //         Ok(msg) => msg,
+    //         _ => {
+    //             tracing::debug!("client websocket has ended");
+    //             return;
+    //         }
+    //     };
+    //     info!("message received: {:?}", msg);
+    // }
+}
 
 /// Send the client a "stream init" message
 pub async fn send_client_stream_init(mut stream: ActiveStream) -> Result<(), SendError> {
@@ -113,6 +258,69 @@ where T: Sink<Message> + Unpin, U: Stream<Item=ControlPacket> + Unpin, T::Error:
                 return client;
             }
         };
+    }
+}
+
+
+#[cfg(test)]
+mod verify_client_handshake_test {
+    use super::*;
+    use futures::channel::mpsc;
+
+    #[tokio::test]
+    async fn accept_client_hello() -> Result<(), Box<dyn std::error::Error>> {
+        let (mut tx, mut rx) = mpsc::unbounded();
+
+        let hello = serde_json::to_vec(&ClientHello {
+            id: ClientId::generate(),
+        }).unwrap_or_default();
+
+        tx.send(Ok(Message::binary(hello))).await?;
+        let hello = verify_client_handshake(&mut rx).await;
+        assert!(hello.is_some());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn reject_invalid_text_hello() -> Result<(), Box<dyn std::error::Error>> {
+        let (mut tx, mut rx) = mpsc::unbounded();
+
+        tx.send(Ok(Message::text("foobarbaz".to_string()))).await?;
+        let hello = verify_client_handshake(&mut rx).await;
+        assert!(hello.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn reject_invalid_serialized_hello() -> Result<(), Box<dyn std::error::Error>> {
+        let (mut tx, mut rx) = mpsc::unbounded();
+
+        let hello = serde_json::to_vec(&"malformed".to_string()).unwrap_or_default();
+
+        tx.send(Ok(Message::binary(hello))).await?;
+        let hello = verify_client_handshake(&mut rx).await;
+        assert!(hello.is_none());
+        Ok(())
+    }
+}
+
+
+#[cfg(test)]
+mod respond_with_server_hello_test {
+    use super::*;
+    use futures::channel::mpsc;
+
+    #[tokio::test]
+    async fn it_works() -> Result<(), Box<dyn std::error::Error>> {
+        let (mut tx, mut rx) = mpsc::unbounded();
+
+        respond_with_server_hello(&mut tx).await.expect("failed to write to websocket");
+
+        let server_hello_data = rx.next().await.unwrap().into_bytes();
+        let server_hello: ServerHello = serde_json::from_slice(&server_hello_data).expect("server hello is malformed");
+
+        assert!(matches!(server_hello, ServerHello::Success{ .. }));
+        Ok(())
     }
 }
 
