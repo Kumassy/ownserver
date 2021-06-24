@@ -331,11 +331,7 @@ mod process_client_messages_test {
     use dashmap::DashMap;
     use std::sync::Arc;
 
-    #[tokio::test]
-    async fn discard_control_packet_data_no_active_stream() -> Result<(), Box<dyn std::error::Error>> {
-        let (mut stream_tx, stream_rx) = unbounded::<Result<Message, WarpError>>();
-
-        let active_streams = Arc::new(DashMap::new());
+    fn create_active_stream() -> (ConnectedClient, ActiveStream, UnboundedReceiver<StreamMessage>) {
         let (tx, _rx) = unbounded::<ControlPacket>();
         let client = ConnectedClient {
             id: ClientId::generate(),
@@ -343,7 +339,17 @@ mod process_client_messages_test {
             tx
         };
 
-        let (active_stream, mut queue_rx) = ActiveStream::new(client.clone());
+        let (active_stream, queue_rx) = ActiveStream::new(client.clone());
+
+        (client, active_stream, queue_rx)
+    }
+    #[tokio::test]
+    async fn discard_control_packet_data_no_active_stream() -> Result<(), Box<dyn std::error::Error>> {
+        let (mut stream_tx, stream_rx) = unbounded::<Result<Message, WarpError>>();
+
+        let active_streams = Arc::new(DashMap::new());
+        let (client, active_stream, mut queue_rx) = create_active_stream();
+
         let stream_id = active_stream.id.clone();
         let packet = ControlPacket::Data(stream_id, b"foobarbaz".to_vec());
         stream_tx.send(Ok(Message::binary(packet.serialize()))).await?;
@@ -362,15 +368,8 @@ mod process_client_messages_test {
         let (mut stream_tx, stream_rx) = unbounded::<Result<Message, WarpError>>();
 
         let active_streams = Arc::new(DashMap::new());
-        let (tx, _rx) = unbounded::<ControlPacket>();
-        let client_id = ClientId::generate();
-        let client = ConnectedClient {
-            id: client_id.clone(),
-            host: "foobar".into(),
-            tx
-        };
+        let (client, active_stream, mut queue_rx) = create_active_stream();
 
-        let (active_stream, mut queue_rx) = ActiveStream::new(client.clone());
         let stream_id = active_stream.id.clone();
         active_streams.insert(stream_id.clone(), active_stream.clone());
 
@@ -393,15 +392,7 @@ mod process_client_messages_test {
         let (mut stream_tx, stream_rx) = unbounded::<Result<Message, WarpError>>();
 
         let active_streams = Arc::new(DashMap::new());
-        let (tx, _rx) = unbounded::<ControlPacket>();
-        let client_id = ClientId::generate();
-        let client = ConnectedClient {
-            id: client_id.clone(),
-            host: "foobar".into(),
-            tx
-        };
-
-        let (active_stream, mut queue_rx) = ActiveStream::new(client.clone());
+        let (client, active_stream, mut queue_rx) = create_active_stream();
         let stream_id = active_stream.id.clone();
         active_streams.insert(stream_id.clone(), active_stream.clone());
 
@@ -425,15 +416,7 @@ mod process_client_messages_test {
         let (mut stream_tx, stream_rx) = unbounded::<Result<Message, WarpError>>();
 
         let active_streams = Arc::new(DashMap::new());
-        let (tx, _rx) = unbounded::<ControlPacket>();
-        let client_id = ClientId::generate();
-        let client = ConnectedClient {
-            id: client_id.clone(),
-            host: "foobar".into(),
-            tx
-        };
-
-        let (active_stream, mut queue_rx) = ActiveStream::new(client.clone());
+        let (client, active_stream, mut queue_rx) = create_active_stream();
         let stream_id = active_stream.id.clone();
         active_streams.insert(stream_id.clone(), active_stream.clone());
 
