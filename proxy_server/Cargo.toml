@@ -24,6 +24,9 @@ lazy_static = "1.4"
 base64 = "0.13"
 dashmap = "4.0"
 
+[dev-dependencies]
+tokio-test = "0.4"
+
 [[bin]]
 name = "proxy-server"
 path = "src/proxy_server.rs"
