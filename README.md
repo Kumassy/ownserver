@@ -5,7 +5,7 @@ TODO
 - [ ] server hello, connect_wormhole
 - [ ] make ACTIVE_STREAMS to DI
 - [ ] write test to process_client_messages
-
+- [ ] skip tracing, make log clean
 
 integration test
 - [ ] if server send ControlPacket::Init, then client set up local stream

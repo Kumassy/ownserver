@@ -11,7 +11,53 @@ use crate::connected_clients::{ConnectedClient, Connections};
 use crate::control_server;
 pub use magic_tunnel_lib::{StreamId, ClientId, ControlPacket};
 
+// stream has selected because each stream listen different port
+#[tracing::instrument(skip(socket))]
+pub async fn accept_connection(conn: &Connections, active_streams: ActiveStreams, socket: TcpStream, host: String) {
+    tracing::info!("new remote connection");
 
+    // find the client listening for this host
+    let client = match Connections::find_by_host(conn, &host) {
+        Some(client) => client.clone(),
+        None => {
+            error!(%host, ?error, "failed to find instance");
+            let _ = socket.write_all(HTTP_ERROR_LOCATING_HOST_RESPONSE).await;
+            return;
+        }
+    };
+
+    // allocate a new stream for this request
+    let (active_stream, queue_rx) = ActiveStream::new(client.clone());
+    let stream_id = active_stream.id.clone();
+
+    tracing::debug!(
+        stream_id = %active_stream.id.to_string(),
+        "new stream connected"
+    );
+    let (stream, sink) = tokio::io::split(socket);
+
+    // add our stream
+    active_streams.insert(stream_id.clone(), active_stream.clone());
+
+    // read from socket, write to client
+    tokio::spawn(
+        async move {
+            process_tcp_stream(conn, active_stream, stream).await;
+        }
+        .instrument(tracing::info_span!("process_tcp_stream")),
+    );
+
+    // read from client, write to socket
+    tokio::spawn(
+        async move {
+            tunnel_to_stream(host, stream_id, sink, queue_rx).await;
+        }
+        .instrument(tracing::info_span!("tunnel_to_stream")),
+    );
+}
+
+const HTTP_ERROR_LOCATING_HOST_RESPONSE: &'static [u8] =
+    b"HTTP/1.1 500\r\nContent-Length: 27\r\n\r\nError: Error finding tunnel";
 const HTTP_NOT_FOUND_RESPONSE: &'static [u8] =
     b"HTTP/1.1 404\r\nContent-Length: 23\r\n\r\nError: Tunnel Not Found";
 const HTTP_TUNNEL_REFUSED_RESPONSE: &'static [u8] =
