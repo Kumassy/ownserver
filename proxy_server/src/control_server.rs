@@ -121,7 +121,7 @@ async fn handle_new_connection(client_ip: SocketAddr, mut websocket: WebSocket) 
     let (tx, rx) = unbounded::<ControlPacket>();
     let mut client = ConnectedClient {
         id: handshake.id,
-        host: "foobar".to_string(),
+        host: "host-foobar".to_string(),
         tx,
     };
     Connections::add(&CONNECTIONS, client.clone());

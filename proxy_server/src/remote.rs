@@ -13,14 +13,14 @@ pub use magic_tunnel_lib::{StreamId, ClientId, ControlPacket};
 
 // stream has selected because each stream listen different port
 #[tracing::instrument(skip(socket))]
-pub async fn accept_connection(conn: &Connections, active_streams: ActiveStreams, socket: TcpStream, host: String) {
+pub async fn accept_connection(conn: &'static Connections, active_streams: ActiveStreams, mut socket: TcpStream, host: String) {
     tracing::info!("new remote connection");
 
     // find the client listening for this host
     let client = match Connections::find_by_host(conn, &host) {
         Some(client) => client.clone(),
         None => {
-            error!(%host, ?error, "failed to find instance");
+            error!(%host, "failed to find instance");
             let _ = socket.write_all(HTTP_ERROR_LOCATING_HOST_RESPONSE).await;
             return;
         }

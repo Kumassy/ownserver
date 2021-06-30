@@ -35,28 +35,87 @@ pub enum StreamMessage {
 #[tokio::main]
 async fn main() -> Result<()> {
     pretty_env_logger::init();
+    let control_port: u16 = 5000;
+    let remote_port: u16 = 8080;
+    let local_port: u16 = 3000;
 
-    let url = Url::parse(&"wss://localhost:5000/tunnel")?;
-    let (mut ws_stream, _ ) = connect_async(url).await.expect("failed to connect");
+
+    let url = Url::parse(&format!("wss://localhost:{}/tunnel", control_port))?;
+    let (mut websocket, _ ) = connect_async(url).await.expect("failed to connect");
 
     info!("WebSocket handshake has been successfully completed");
 
-    send_client_hello(&mut ws_stream).await?;
-    let client_info = verify_server_hello(&mut ws_stream).await?;
+    send_client_hello(&mut websocket).await?;
+    let client_info = verify_server_hello(&mut websocket).await?;
     info!("client_info: {:?}", client_info);
 
 
-    let mut interval = time::interval(Duration::from_millis(1000));
-    for i in 0..3 {
-        interval.tick().await;
+    // let mut interval = time::interval(Duration::from_millis(1000));
+    // for i in 0..3 {
+    //     interval.tick().await;
 
-        ws_stream.send(Message::Binary("hello server".into())).await?;
-        info!("message sent: {}", i);
+    //     websocket.send(Message::Binary("hello server".into())).await?;
+    //     info!("message sent: {}", i);
+    // }
+
+    // websocket.close(None).await?;
+
+    // split reading and writing
+    let (mut ws_sink, mut ws_stream) = websocket.split();
+
+    // tunnel channel
+    let (tunnel_tx, mut tunnel_rx) = unbounded::<ControlPacket>();
+
+    // continuously write to websocket tunnel
+    tokio::spawn(async move {
+        loop {
+            let packet = match tunnel_rx.next().await {
+                Some(data) => data,
+                None => {
+                    warn!("control flow didn't send anything!");
+                    return;
+                }
+            };
+
+            if let Err(e) = ws_sink.send(Message::binary(packet.serialize())).await {
+                warn!("failed to write message to tunnel websocket: {:?}", e);
+                return;
+            }
+        }
+    });
+
+    // continuously read from websocket tunnel
+    loop {
+        match ws_stream.next().await {
+            Some(Ok(message)) if message.is_close() => {
+                debug!("got close message");
+                return Ok(());
+            }
+            Some(Ok(message)) => {
+                let packet = process_control_flow_message(
+                    tunnel_tx.clone(),
+                    message.into_data(),
+                    local_port,
+                )
+                .await
+                .map_err(|e| {
+                    error!("Malformed protocol control packet: {:?}", e);
+                    Error::MalformedMessageFromServer
+                })?;
+                debug!("Processed packet: {:?}", packet);
+            }
+            Some(Err(e)) => {
+                warn!("websocket read error: {:?}", e);
+                return Err(Error::Timeout.into());
+            }
+            None => {
+                warn!("websocket sent none");
+                return Err(Error::Timeout.into());
+            }
+        }
     }
 
-    ws_stream.close(None).await?;
-
-    Ok(())
+    // Ok(())
 }
 
 async fn send_client_hello<T>(websocket: &mut T) -> Result<(), T::Error> 
