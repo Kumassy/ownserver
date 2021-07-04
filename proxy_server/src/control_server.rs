@@ -331,7 +331,10 @@ mod process_client_messages_test {
     use dashmap::DashMap;
     use std::sync::Arc;
 
-    fn create_active_stream() -> (ConnectedClient, ActiveStream, UnboundedReceiver<StreamMessage>) {
+    async fn send_messages_to_client_and_process_client_message(is_add_stream_to_streams: bool, messages: Vec<Box<dyn Fn(StreamId) -> Message>>) -> Result<UnboundedReceiver<StreamMessage>, Box<dyn std::error::Error>> {
+        let (mut stream_tx, stream_rx) = unbounded::<Result<Message, WarpError>>();
+        let active_streams = Arc::new(DashMap::new());
+
         let (tx, _rx) = unbounded::<ControlPacket>();
         let client = ConnectedClient {
             id: ClientId::generate(),
@@ -340,93 +343,72 @@ mod process_client_messages_test {
         };
 
         let (active_stream, queue_rx) = ActiveStream::new(client.clone());
+        let stream_id = active_stream.id.clone();
+        if is_add_stream_to_streams {
+            active_streams.insert(stream_id.clone(), active_stream.clone());
+        }
 
-        (client, active_stream, queue_rx)
+        for message in messages {
+            let msg = message(stream_id.clone());
+            stream_tx.send(Ok(msg)).await?;
+        }
+        stream_tx.close_channel();
+
+        let _ = process_client_messages(active_streams, client, stream_rx).await;
+        // all active stream must be dropped
+        // so that queue_rx.next().await returns None
+        drop(active_stream);
+
+        Ok(queue_rx)
     }
+
     #[tokio::test]
     async fn discard_control_packet_data_no_active_stream() -> Result<(), Box<dyn std::error::Error>> {
-        let (mut stream_tx, stream_rx) = unbounded::<Result<Message, WarpError>>();
-
-        let active_streams = Arc::new(DashMap::new());
-        let (client, active_stream, mut queue_rx) = create_active_stream();
-
-        let stream_id = active_stream.id.clone();
-        let packet = ControlPacket::Data(stream_id, b"foobarbaz".to_vec());
-        stream_tx.send(Ok(Message::binary(packet.serialize()))).await?;
-        stream_tx.close_channel();
-        let _ = process_client_messages(active_streams, client, stream_rx).await;
-
-        // all active stream must be dropped
-        drop(active_stream);
+        let message = |stream_id| {
+            let packet = ControlPacket::Data(stream_id, b"foobarbaz".to_vec());
+            Message::binary(packet.serialize())
+        };
+        let mut queue_rx = send_messages_to_client_and_process_client_message(false, vec![Box::new(message)]).await?;
         assert_eq!(queue_rx.next().await, None);
         Ok(())
     }
 
     #[tokio::test]
     async fn forward_control_packet_data_to_appropriate_stream() -> Result<(), Box<dyn std::error::Error>> {
-        // tracing_subscriber::fmt::init();
-        let (mut stream_tx, stream_rx) = unbounded::<Result<Message, WarpError>>();
-
-        let active_streams = Arc::new(DashMap::new());
-        let (client, active_stream, mut queue_rx) = create_active_stream();
-
-        let stream_id = active_stream.id.clone();
-        active_streams.insert(stream_id.clone(), active_stream.clone());
-
-        let packet = ControlPacket::Data(stream_id, b"foobarbaz".to_vec());
-        stream_tx.send(Ok(Message::binary(packet.serialize()))).await?;
-        stream_tx.close_channel();
-        let _ = process_client_messages(active_streams, client, stream_rx).await;
-
+        let message = |stream_id| {
+            let packet = ControlPacket::Data(stream_id, b"foobarbaz".to_vec());
+            Message::binary(packet.serialize())
+        };
+        let mut queue_rx = send_messages_to_client_and_process_client_message(true, vec![Box::new(message)]).await?;
 
         // ControlPacket::Data must be sent to ActiveStream
         assert_eq!(queue_rx.next().await, Some(StreamMessage::Data(b"foobarbaz".to_vec())));
-        drop(active_stream); // all active stream must be dropped
         assert_eq!(queue_rx.next().await, None);
         Ok(())
     }
 
     #[tokio::test]
     async fn forward_control_packet_refused_to_appropriate_stream() -> Result<(), Box<dyn std::error::Error>> {
-        // tracing_subscriber::fmt::init();
-        let (mut stream_tx, stream_rx) = unbounded::<Result<Message, WarpError>>();
-
-        let active_streams = Arc::new(DashMap::new());
-        let (client, active_stream, mut queue_rx) = create_active_stream();
-        let stream_id = active_stream.id.clone();
-        active_streams.insert(stream_id.clone(), active_stream.clone());
-
-        let packet = ControlPacket::Refused(stream_id);
-        stream_tx.send(Ok(Message::binary(packet.serialize()))).await?;
-        stream_tx.close_channel();
-        let _ = process_client_messages(active_streams, client, stream_rx).await;
-
+        let message = |stream_id| {
+            let packet = ControlPacket::Refused(stream_id);
+            Message::binary(packet.serialize())
+        };
+        let mut queue_rx = send_messages_to_client_and_process_client_message(true, vec![Box::new(message)]).await?;
 
         // ControlPacket::Data must be sent to ActiveStream
         assert_eq!(queue_rx.next().await, Some(StreamMessage::TunnelRefused));
-        drop(active_stream); // all active stream must be dropped
         assert_eq!(queue_rx.next().await, None);
-
         Ok(())
     }
 
     #[tokio::test]
     async fn close_stream_remove_client() -> Result<(), Box<dyn std::error::Error>> {
-        // tracing_subscriber::fmt::init();
-        let (mut stream_tx, stream_rx) = unbounded::<Result<Message, WarpError>>();
+        let message = |_| {
+            Message::close()
+        };
+        let mut queue_rx = send_messages_to_client_and_process_client_message(true, vec![Box::new(message)]).await?;
 
-        let active_streams = Arc::new(DashMap::new());
-        let (client, active_stream, mut queue_rx) = create_active_stream();
-        let stream_id = active_stream.id.clone();
-        active_streams.insert(stream_id.clone(), active_stream.clone());
-
-        stream_tx.send(Ok(Message::close())).await?;
-        stream_tx.close_channel();
-        let _ = process_client_messages(active_streams, client, stream_rx).await;
-
-        drop(active_stream); // all active stream must be dropped
         assert_eq!(queue_rx.next().await, None);
-
         Ok(())
     }
 }
@@ -436,8 +418,7 @@ mod tunnel_client_test {
     use super::*;
     use futures::channel::mpsc::unbounded;
 
-    #[tokio::test]
-    async fn forward_control_packet_to_websocket() -> Result<(), Box<dyn std::error::Error>> {
+    async fn send_control_packet_and_forward_to_websocket(packets: Vec<Box<dyn Fn(StreamId) -> ControlPacket>>) -> Result<(StreamId, UnboundedReceiver<Message>), Box<dyn std::error::Error>> {
         let (tx, _rx) = unbounded::<ControlPacket>();
         let client_id = ClientId::generate();
         let client = ConnectedClient {
@@ -446,13 +427,25 @@ mod tunnel_client_test {
             tx
         };
 
-        let (ws_tx, mut ws_rx) = unbounded::<Message>();
+        let (ws_tx, ws_rx) = unbounded::<Message>();
         let (mut control_tx, control_rx) = unbounded::<ControlPacket>();
         let stream_id = StreamId::generate();
 
-        control_tx.send(ControlPacket::Init(stream_id.clone())).await?;
+        for packet in packets {
+            let pkt = packet(stream_id.clone());
+            control_tx.send(pkt).await?;
+        }
         control_tx.close_channel();
+
         let _ = tunnel_client(client, ws_tx, control_rx).await;
+
+        Ok((stream_id, ws_rx))
+    }
+
+    #[tokio::test]
+    async fn forward_control_packet_to_websocket() -> Result<(), Box<dyn std::error::Error>> {
+        let packet = |stream_id| ControlPacket::Init(stream_id);
+        let (stream_id, mut ws_rx) = send_control_packet_and_forward_to_websocket(vec![Box::new(packet)]).await?;
 
         let payload = ws_rx.next().await.unwrap().into_bytes();
         let packet = ControlPacket::deserialize(&payload)?;
