@@ -12,32 +12,16 @@ use std::sync::Arc;
 use tracing::{error, info, Instrument};
 use tokio::net::TcpListener;
 
-mod connected_clients;
-mod active_stream;
-mod control_server;
-mod remote;
 use crate::active_stream::ActiveStreams;
 use crate::connected_clients::{ConnectedClient, Connections};
-use crate::control_server::{spawn};
+use crate::control_server;
+use crate::remote;
 
-lazy_static! {
-    pub static ref CONNECTIONS: Connections = Connections::new();
-    pub static ref ACTIVE_STREAMS: ActiveStreams = Arc::new(DashMap::new());
-}
 
-#[tokio::main]
-async fn main() {
-    tracing_subscriber::fmt::init();
-    let control_port: u16 = 5000;
-    let remote_port: u16 = 8080;
-
-    run(control_port, remote_port).await;
-}
-
-async fn run(control_port: u16, remote_port: u16) {
+pub async fn run(conn: &'static Connections, active_streams: &'static ActiveStreams, control_port: u16, remote_port: u16) {
     tracing::info!("starting server!");
 
-    control_server::spawn(([0, 0, 0, 0], control_port));
+    control_server::spawn(conn, active_streams, ([0, 0, 0, 0], control_port));
     info!("started tunnelto server on 0.0.0.0:{}", control_port);
 
     let listen_addr = format!("[::]:{}", remote_port);
@@ -59,7 +43,7 @@ async fn run(control_port: u16, remote_port: u16) {
 
         tokio::spawn(
             async move {
-                remote::accept_connection(&CONNECTIONS, ACTIVE_STREAMS.clone(), socket, "host-foobar".to_string()).await;
+                remote::accept_connection(conn, active_streams.clone(), socket, "host-foobar".to_string()).await;
             }
             .instrument(tracing::info_span!("remote_connect")),
         );

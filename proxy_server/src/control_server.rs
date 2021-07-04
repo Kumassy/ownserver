@@ -7,11 +7,10 @@ use tracing::{error, info, Instrument};
 use warp::{Filter, Rejection, ws::{Ws, WebSocket, Message}, Error as WarpError};
 use std::convert::Infallible;
 
-use crate::{ACTIVE_STREAMS, CONNECTIONS};
 use crate::connected_clients::{ConnectedClient, Connections};
 use crate::active_stream::{ActiveStreams, ActiveStream, StreamMessage};
 
-pub fn spawn<A: Into<SocketAddr>>(addr: A) -> JoinHandle<()> {
+pub fn spawn<A: Into<SocketAddr>>(conn: &'static Connections, active_streams: &'static ActiveStreams, addr: A) -> JoinHandle<()> {
     let health_check = warp::get().and(warp::path("health_check")).map(|| {
         tracing::debug!("Health Check #2 triggered");
         "ok"
@@ -19,7 +18,7 @@ pub fn spawn<A: Into<SocketAddr>>(addr: A) -> JoinHandle<()> {
     let client_conn = warp::path("tunnel").and(client_addr()).and(warp::ws()).map(
         move |client_addr: SocketAddr, ws: Ws| {
             ws.on_upgrade(move |w| {
-                async move { handle_new_connection(client_addr, w).await }
+                async move { handle_new_connection(conn, active_streams, client_addr, w).await }
                     .instrument(tracing::info_span!("handle_websocket"))
             })
         },
@@ -111,7 +110,7 @@ async fn respond_with_server_hello<T>(websocket: &mut T) -> Result<ServerHello, 
     Ok(server_hello)
 }
 
-async fn handle_new_connection(client_ip: SocketAddr, mut websocket: WebSocket) {
+async fn handle_new_connection(conn: &'static Connections, active_streams: &'static ActiveStreams, client_ip: SocketAddr, mut websocket: WebSocket) {
     let handshake = match try_client_handshake(&mut websocket).await {
         Some(ws) => ws,
         None => return,
@@ -124,15 +123,15 @@ async fn handle_new_connection(client_ip: SocketAddr, mut websocket: WebSocket) 
         host: "host-foobar".to_string(),
         tx,
     };
-    Connections::add(&CONNECTIONS, client.clone());
-    let active_streams = ACTIVE_STREAMS.clone();
+    Connections::add(conn, client.clone());
+    let active_streams = active_streams.clone();
     let (sink, stream) = websocket.split();
 
     let client_clone = client.clone();
     tokio::spawn(
         async move {
             let client = tunnel_client(client_clone, sink, rx).await;
-            Connections::remove(&CONNECTIONS, &client);
+            Connections::remove(conn, &client);
         }
         .instrument(tracing::info_span!("tunnel_client")),
     );
@@ -140,21 +139,10 @@ async fn handle_new_connection(client_ip: SocketAddr, mut websocket: WebSocket) 
     tokio::spawn(
         async move {
             let client = process_client_messages(active_streams, client_clone, stream).await;
-            Connections::remove(&CONNECTIONS, &client);
+            Connections::remove(conn, &client);
         }
         .instrument(tracing::info_span!("process_client")),
     );
-
-    // while let Some(msg) = websocket.next().await {
-    //     let msg = match msg {
-    //         Ok(msg) => msg,
-    //         _ => {
-    //             tracing::debug!("client websocket has ended");
-    //             return;
-    //         }
-    //     };
-    //     info!("message received: {:?}", msg);
-    // }
 }
 
 /// Send the client a "stream init" message

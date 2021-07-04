@@ -29,4 +29,4 @@ tokio-test = "0.4"
 
 [[bin]]
 name = "proxy-server"
-path = "src/proxy_server.rs"
+path = "src/main.rs"
