@@ -39,7 +39,12 @@ async fn main() -> Result<()> {
     let remote_port: u16 = 8080;
     let local_port: u16 = 3000;
 
+    run(control_port, remote_port, local_port).await?;
 
+    Ok(())
+}
+
+async fn run(control_port: u16, remote_port: u16, local_port: u16) -> Result<()> {
     let url = Url::parse(&format!("wss://localhost:{}/tunnel", control_port))?;
     let (mut websocket, _ ) = connect_async(url).await.expect("failed to connect");
 
@@ -48,17 +53,6 @@ async fn main() -> Result<()> {
     send_client_hello(&mut websocket).await?;
     let client_info = verify_server_hello(&mut websocket).await?;
     info!("client_info: {:?}", client_info);
-
-
-    // let mut interval = time::interval(Duration::from_millis(1000));
-    // for i in 0..3 {
-    //     interval.tick().await;
-
-    //     websocket.send(Message::Binary("hello server".into())).await?;
-    //     info!("message sent: {}", i);
-    // }
-
-    // websocket.close(None).await?;
 
     // split reading and writing
     let (mut ws_sink, mut ws_stream) = websocket.split();
@@ -115,8 +109,6 @@ async fn main() -> Result<()> {
             }
         }
     }
-
-    // Ok(())
 }
 
 async fn send_client_hello<T>(websocket: &mut T) -> Result<(), T::Error> 

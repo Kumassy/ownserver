@@ -27,11 +27,14 @@ lazy_static! {
 
 #[tokio::main]
 async fn main() {
+    tracing_subscriber::fmt::init();
     let control_port: u16 = 5000;
     let remote_port: u16 = 8080;
-    tracing_subscriber::fmt::init();
 
+    run(control_port, remote_port).await;
+}
 
+async fn run(control_port: u16, remote_port: u16) {
     tracing::info!("starting server!");
 
     control_server::spawn(([0, 0, 0, 0], control_port));
