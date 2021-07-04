@@ -80,10 +80,22 @@ mod tests {
     use super::*;
     use futures::channel::mpsc::unbounded;
 
+    fn setup() -> (Connections, ConnectedClient, ClientId) {
+        let conn = Connections::new();
+        let (tx, _rx) = unbounded::<ControlPacket>();
+        let client_id = ClientId::generate();
+        let client = ConnectedClient {
+            id: client_id.clone(),
+            host: "foobar".into(),
+            tx
+        };
+
+        (conn, client, client_id)
+    }
+
     #[test]
     fn connections_clients_should_be_empty() -> Result<(), Box<dyn std::error::Error>> {
-        let conn = Connections::new();
-        let client_id = ClientId::generate();
+        let (conn, _, client_id) = setup();
 
         assert!(Connections::get(&conn, &client_id).is_none());
         Ok(())
@@ -91,7 +103,7 @@ mod tests {
 
     #[test]
     fn connections_hosts_should_be_empty() -> Result<(), Box<dyn std::error::Error>> {
-        let conn = Connections::new();
+        let (conn, _, _) = setup();
 
         assert!(Connections::find_by_host(&conn, &"foobar".to_owned()).is_none());
         Ok(())
@@ -99,14 +111,7 @@ mod tests {
 
     #[test]
     fn connections_client_should_be_registered() -> Result<(), Box<dyn std::error::Error>> {
-        let mut conn = Connections::new();
-        let (tx, rx) = unbounded::<ControlPacket>();
-        let client_id = ClientId::generate();
-        let client = ConnectedClient {
-            id: client_id.clone(),
-            host: "foobar".into(),
-            tx
-        };
+        let (mut conn, client, client_id) = setup();
 
         Connections::add(&mut conn, client);
 
@@ -116,14 +121,7 @@ mod tests {
 
     #[test]
     fn connections_hosts_should_be_registered() -> Result<(), Box<dyn std::error::Error>> {
-        let mut conn = Connections::new();
-        let (tx, rx) = unbounded::<ControlPacket>();
-        let client_id = ClientId::generate();
-        let client = ConnectedClient {
-            id: client_id.clone(),
-            host: "foobar".into(),
-            tx
-        };
+        let (mut conn, client, client_id) = setup();
 
         Connections::add(&mut conn, client);
 
@@ -133,14 +131,7 @@ mod tests {
 
     #[test]
     fn connections_client_should_be_empty_after_remove() -> Result<(), Box<dyn std::error::Error>> {
-        let mut conn = Connections::new();
-        let (tx, rx) = unbounded::<ControlPacket>();
-        let client_id = ClientId::generate();
-        let client = ConnectedClient {
-            id: client_id.clone(),
-            host: "foobar".into(),
-            tx
-        };
+        let (mut conn, client, client_id) = setup();
 
         Connections::add(&mut conn, client.clone());
         Connections::remove(&mut conn, &client);
@@ -151,14 +142,7 @@ mod tests {
 
      #[test]
     fn connections_hosts_should_be_empty_after_remove() -> Result<(), Box<dyn std::error::Error>> {
-        let mut conn = Connections::new();
-        let (tx, rx) = unbounded::<ControlPacket>();
-        let client_id = ClientId::generate();
-        let client = ConnectedClient {
-            id: client_id.clone(),
-            host: "foobar".into(),
-            tx
-        };
+        let (mut conn, client, client_id) = setup();
 
         Connections::add(&mut conn, client.clone());
         Connections::remove(&mut conn, &client);
@@ -169,14 +153,7 @@ mod tests {
 
     #[test]
     fn connections_hosts_ignore_multiple_add() -> Result<(), Box<dyn std::error::Error>> {
-        let mut conn = Connections::new();
-        let (tx, rx) = unbounded::<ControlPacket>();
-        let client_id = ClientId::generate();
-        let client = ConnectedClient {
-            id: client_id.clone(),
-            host: "foobar".into(),
-            tx
-        };
+        let (mut conn, client, client_id) = setup();
 
         Connections::add(&mut conn, client.clone());
         Connections::add(&mut conn, client.clone());
@@ -189,14 +166,7 @@ mod tests {
 
     #[test]
     fn connections_hosts_ignore_multiple_remove() -> Result<(), Box<dyn std::error::Error>> {
-        let mut conn = Connections::new();
-        let (tx, rx) = unbounded::<ControlPacket>();
-        let client_id = ClientId::generate();
-        let client = ConnectedClient {
-            id: client_id.clone(),
-            host: "foobar".into(),
-            tx
-        };
+        let (mut conn, client, client_id) = setup();
 
         Connections::add(&mut conn, client.clone());
         Connections::remove(&mut conn, &client);
