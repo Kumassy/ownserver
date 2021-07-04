@@ -10,7 +10,7 @@ use log::{debug, error, info, warn};
 use magic_tunnel_lib::ControlPacket;
 
 /// Establish a new local stream and start processing messages to it
-pub async fn setup_new_stream(local_port: u16, mut tunnel_tx: UnboundedSender<ControlPacket>, stream_id: StreamId) {
+pub async fn setup_new_stream(active_streams: ActiveStreams, local_port: u16, mut tunnel_tx: UnboundedSender<ControlPacket>, stream_id: StreamId) {
     info!("setting up local stream: {}", &stream_id.to_string());
 
     let local_tcp = match TcpStream::connect(format!("localhost:{}", local_port)).await {
@@ -25,14 +25,15 @@ pub async fn setup_new_stream(local_port: u16, mut tunnel_tx: UnboundedSender<Co
 
     // Read local tcp bytes, send them tunnel
     let stream_id_clone = stream_id.clone();
+    let active_streams_clone = active_streams.clone();
     tokio::spawn(async move {
         let _ = process_local_tcp(stream, tunnel_tx, stream_id_clone.clone()).await;
-        ACTIVE_STREAMS.write().unwrap().remove(&stream_id_clone);
+        active_streams_clone.write().unwrap().remove(&stream_id_clone);
     });
 
     // Forward remote packets to local tcp
     let (tx, rx) = unbounded();
-    ACTIVE_STREAMS.write().unwrap().insert(stream_id.clone(), tx.clone());
+    active_streams.write().unwrap().insert(stream_id.clone(), tx.clone());
 
     tokio::spawn(async move {
         forward_to_local_tcp(stream_id, sink, rx).await;

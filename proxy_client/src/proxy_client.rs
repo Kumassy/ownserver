@@ -93,6 +93,7 @@ async fn main() -> Result<()> {
             }
             Some(Ok(message)) => {
                 let packet = process_control_flow_message(
+                    ACTIVE_STREAMS.clone(),
                     tunnel_tx.clone(),
                     message.into_data(),
                     local_port,
@@ -168,6 +169,7 @@ where T: Unpin + Stream<Item=Result<Message, WsError>>
 
 // TODO: improve testability, fix return value
 async fn process_control_flow_message(
+    active_streams: ActiveStreams,
     mut tunnel_tx: UnboundedSender<ControlPacket>,
     payload: Vec<u8>,
     local_port: u16
@@ -178,8 +180,9 @@ async fn process_control_flow_message(
         ControlPacket::Init(stream_id) => {
             info!("stream[{:?}] -> init", stream_id.to_string());
 
-            if !ACTIVE_STREAMS.read().unwrap().contains_key(&stream_id) {
+            if !active_streams.read().unwrap().contains_key(&stream_id) {
                 local::setup_new_stream(
+                    active_streams.clone(),
                     local_port,
                     tunnel_tx.clone(),
                     stream_id.clone(),
@@ -204,13 +207,13 @@ async fn process_control_flow_message(
             info!("got end stream [{:?}]", stream_id.to_string());
 
             tokio::spawn(async move {
-                let stream = ACTIVE_STREAMS.read().unwrap().get(&stream_id).cloned();
+                let stream = active_streams.read().unwrap().get(&stream_id).cloned();
                 if let Some(mut tx) = stream {
                     tokio::time::sleep(Duration::from_secs(5)).await;
                     let _ = tx.send(StreamMessage::Close).await.map_err(|e| {
                         error!("failed to send stream close: {:?}", e);
                     });
-                    ACTIVE_STREAMS.write().unwrap().remove(&stream_id);
+                    active_streams.write().unwrap().remove(&stream_id);
                 }
             });
         }
@@ -221,7 +224,7 @@ async fn process_control_flow_message(
                 data.len()
             );
             // find the right stream
-            let active_stream = ACTIVE_STREAMS.read().unwrap().get(&stream_id).cloned();
+            let active_stream = active_streams.read().unwrap().get(&stream_id).cloned();
 
             // forward data to it
             if let Some(mut tx) = active_stream {
@@ -247,61 +250,85 @@ mod process_control_flow_message {
 
     use tokio::net::TcpListener;
     use tokio::sync::oneshot;
-    use tokio::io::{AsyncWriteExt, AsyncReadExt};
-    use serial_test::serial;
+    use tokio::io::{AsyncWriteExt, AsyncWrite, AsyncReadExt, split};
+    // use serial_test::serial;
+    use futures::channel::mpsc::{UnboundedReceiver};
 
-    fn setup() {
-        ACTIVE_STREAMS.write().unwrap().clear();
-    }
-
-    #[tokio::test]
-    #[serial]
-    async fn handle_control_packet_init() {
-        setup();
+    async fn setup() -> (ActiveStreams, UnboundedSender<ControlPacket>, UnboundedReceiver<ControlPacket>, StreamId, u16, UnboundedReceiver<Vec<u8>>) {
+        let active_streams = Arc::new(RwLock::new(HashMap::new()));
 
         let (con_tx, con_rx) = oneshot::channel();
+        let (mut msg_tx, msg_rx) = unbounded();
+
         let server = async move {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             con_tx.send(listener.local_addr().unwrap().port()).unwrap();
-            let _ = listener.accept().await.expect("No connections to accept");
+            let (local_tcp, _) = listener.accept().await.expect("No connections to accept");
+            let (mut stream, mut sink) = split(local_tcp);
+
+            // constantly write to local tcp so that process_local_tcp don't close
+            tokio::spawn(async move {
+                loop {
+                    sink.write_all(&b"some data".to_vec()).await.expect("failed to write packet data to local tcp socket");
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+            });
+
+            // read local tcp to capture output of forward_to_local_tcp
+            tokio::spawn(async move {
+                let mut buf = [0; 4*1024];
+                loop {
+                    let n = stream.read(&mut buf).await.expect("failed to read data from socket");
+                    if n == 0 {
+                        info!("done reading from client stream");
+                        return;
+                    }
+                    let data = buf[..n].to_vec();
+                    msg_tx.send(data).await.expect("failed to write to msg_tx");
+                }
+            });
         };
         tokio::spawn(server);
 
         let stream_id = StreamId::generate();
         let local_port = con_rx.await.expect("failed to get local port");
-        let (tunnel_tx, _tunnel_rx) = unbounded::<ControlPacket>();
+        let (tunnel_tx, tunnel_rx) = unbounded::<ControlPacket>();
+
+        (active_streams, tunnel_tx, tunnel_rx, stream_id, local_port, msg_rx)
+    }
+
+    fn assert_active_streams_len(active_streams: &ActiveStreams, expected: usize) {
+        assert_eq!(active_streams.read().expect("failed to obtain read lock over ActiveStreams").len(), expected);
+    }
+
+    #[tokio::test]
+    async fn handle_control_packet_init() {
+        let (active_streams, tunnel_tx, _, stream_id, local_port, _) = setup().await;
 
         // ensure active_streams has registered
-        assert_eq!(0, ACTIVE_STREAMS.read().expect("failed to obtain read lock over ActiveStreams").len());
+        assert_eq!(0, active_streams.read().expect("failed to obtain read lock over ActiveStreams").len());
         let _ = process_control_flow_message(
+            active_streams.clone(),
             tunnel_tx,
             ControlPacket::Init(stream_id.clone()).serialize(),
             local_port,
         ).await.expect("failed to decode packet");
-        assert_eq!(1, ACTIVE_STREAMS.read().expect("failed to obtain read lock over ActiveStreams").len());
+        assert_active_streams_len(&active_streams, 1);
     }
 
     #[tokio::test]
     async fn handle_control_packet_ping() {
-        let (con_tx, con_rx) = oneshot::channel();
-        let server = async move {
-            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-            con_tx.send(listener.local_addr().unwrap().port()).unwrap();
-            let _ = listener.accept().await.expect("No connections to accept");
-        };
-        tokio::spawn(server);
-
-        let local_port = con_rx.await.expect("failed to get local port");
-        let (tunnel_tx, mut tunnel_rx) = unbounded::<ControlPacket>();
+        let (active_streams, tunnel_tx, mut tunnel_rx, _, local_port, _) = setup().await;
 
         let _ = process_control_flow_message(
+            active_streams.clone(),
             tunnel_tx,
             ControlPacket::Ping.serialize(),
             local_port
         ).await.expect("failed to decode packet");
 
         // ping packet should be sent to proxy server
-        assert_eq!(Some(ControlPacket::Ping), tunnel_rx.next().await);
+        assert_eq!(tunnel_rx.next().await, Some(ControlPacket::Ping));
     }
 
 
@@ -309,19 +336,10 @@ mod process_control_flow_message {
     #[tokio::test]
     #[should_panic(expected = "ControlPacket::Refused may be unimplemented")]
     async fn handle_control_packet_refused() {
-        let (con_tx, con_rx) = oneshot::channel();
-        let server = async move {
-            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-            con_tx.send(listener.local_addr().unwrap().port()).unwrap();
-            let _ = listener.accept().await.expect("No connections to accept");
-        };
-        tokio::spawn(server);
-
-        let stream_id = StreamId::generate();
-        let local_port = con_rx.await.expect("failed to get local port");
-        let (tunnel_tx, _tunnel_rx) = unbounded::<ControlPacket>();
+        let (active_streams, tunnel_tx, _, stream_id, local_port, _) = setup().await;
 
         let _ = process_control_flow_message(
+            active_streams.clone(),
             tunnel_tx,
             ControlPacket::Refused(stream_id).serialize(),
             local_port,
@@ -329,78 +347,40 @@ mod process_control_flow_message {
     }
 
     #[tokio::test]
-    #[serial]
     async fn handle_control_packet_end() {
-        setup();
-
-        let (con_tx, con_rx) = oneshot::channel();
-        let server = async move {
-            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-            con_tx.send(listener.local_addr().unwrap().port()).unwrap();
-            let (mut stream, _) = listener.accept().await.expect("No connections to accept");
-
-            loop {
-                stream.write_all(&b"some data".to_vec()).await.expect("failed to write packet data to local tcp socket");
-                tokio::time::sleep(Duration::from_secs(1)).await;
-            }
-        };
-        tokio::spawn(server);
-
-        let stream_id = StreamId::generate();
-        let local_port = con_rx.await.expect("failed to get local port");
-        let (tunnel_tx, _tunnel_rx) = unbounded::<ControlPacket>();
+        let (active_streams, tunnel_tx, _, stream_id, local_port, _) = setup().await;
 
         // set up local connection
         let _ = process_control_flow_message(
+            active_streams.clone(),
             tunnel_tx.clone(),
             ControlPacket::Init(stream_id.clone()).serialize(),
             local_port,
         ).await.expect("failed to decode packet");
-        assert_eq!(1, ACTIVE_STREAMS.read().expect("failed to obtain read lock over ActiveStreams").len());
+        assert_active_streams_len(&active_streams, 1);
 
         // terminate local connection
         let _ = process_control_flow_message(
+            active_streams.clone(),
             tunnel_tx,
             ControlPacket::End(stream_id.clone()).serialize(),
             local_port
         ).await.expect("failed to decode packet");
 
         tokio::time::sleep(Duration::from_secs(1)).await;
-        assert_eq!(1, ACTIVE_STREAMS.read().expect("failed to obtain read lock over ActiveStreams").len());
+        assert_active_streams_len(&active_streams, 1);
 
         tokio::time::sleep(Duration::from_secs(8)).await;
-        assert_eq!(0, ACTIVE_STREAMS.read().expect("failed to obtain read lock over ActiveStreams").len());
+        assert_active_streams_len(&active_streams, 0);
     }
 
     #[tokio::test]
-    #[serial]
     async fn handle_control_packet_data() {
-        let (con_tx, con_rx) = oneshot::channel();
-        let (mut msg_tx, mut msg_rx) = unbounded();
-        let server = async move {
-            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-            con_tx.send(listener.local_addr().unwrap().port()).unwrap();
-            let (mut stream, _) = listener.accept().await.expect("No connections to accept");
-            
-            let mut buf = [0; 4*1024];
-            loop {
-                let n = stream.read(&mut buf).await.expect("failed to read data from socket");
-                if n == 0 {
-                    info!("done reading from client stream");
-                    return;
-                }
-                let data = buf[..n].to_vec();
-                msg_tx.send(data).await.expect("failed to write to msg_tx");
-            }
-        };
-        tokio::spawn(server);
-
-        let stream_id = StreamId::generate();
-        let local_port = con_rx.await.expect("failed to get local port");
-        let (tunnel_tx, _tunnel_rx) = unbounded::<ControlPacket>();
+        let (active_streams, tunnel_tx, _, stream_id, local_port, mut msg_rx) = setup().await;
 
         // set up local connection
         let _ = process_control_flow_message(
+            active_streams.clone(),
             tunnel_tx.clone(),
             ControlPacket::Init(stream_id.clone()).serialize(),
             local_port,
@@ -408,6 +388,7 @@ mod process_control_flow_message {
 
         // receive data from server 
         let _ = process_control_flow_message(
+            active_streams.clone(),
             tunnel_tx,
             ControlPacket::Data(stream_id.clone(), b"some message 1".to_vec()).serialize(),
             local_port
@@ -415,23 +396,23 @@ mod process_control_flow_message {
 
 
         // data should be sent to local TcpStream
-        assert_eq!(Some(b"some message 1".to_vec()), msg_rx.next().await);
+        assert_eq!(msg_rx.next().await, Some(b"some message 1".to_vec()));
     }
 
     #[tokio::test]
     async fn handle_control_packet_data_refused() {
-        let stream_id = StreamId::generate();
-        let (tunnel_tx, mut tunnel_rx) = unbounded::<ControlPacket>();
+        let (active_streams, tunnel_tx, mut tunnel_rx, stream_id, _, _) = setup().await;
 
         // receive data from server
         let _ = process_control_flow_message(
+            active_streams.clone(),
             tunnel_tx,
             ControlPacket::Data(stream_id.clone(), b"some message 2".to_vec()).serialize(),
             LOCAL_PORT,
         ).await.expect("failed to decode packet");
 
         // connection refused should be sent to proxy server
-        assert_eq!(Some(ControlPacket::Refused(stream_id.clone())), tunnel_rx.next().await);
+        assert_eq!(tunnel_rx.next().await, Some(ControlPacket::Refused(stream_id.clone())));
     }
 }
 
