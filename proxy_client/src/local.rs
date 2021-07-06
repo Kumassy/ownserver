@@ -1,4 +1,3 @@
-use super::*;
 use futures::{StreamExt, SinkExt};
 use futures::channel::mpsc::{unbounded, UnboundedSender, UnboundedReceiver};
 
@@ -7,7 +6,8 @@ use tokio::io::{ReadHalf, WriteHalf};
 use tokio::io::{split, AsyncReadExt, AsyncWriteExt};
 
 use log::{debug, error, info, warn};
-use magic_tunnel_lib::ControlPacket;
+use crate::{ActiveStreams, StreamMessage};
+use magic_tunnel_lib::{ControlPacket, StreamId};
 
 /// Establish a new local stream and start processing messages to it
 pub async fn setup_new_stream(active_streams: ActiveStreams, local_port: u16, mut tunnel_tx: UnboundedSender<ControlPacket>, stream_id: StreamId) {

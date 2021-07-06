@@ -29,4 +29,4 @@ serial_test = "*"
 
 [[bin]]
 name = "proxy-client"
-path = "src/proxy_client.rs"
+path = "src/main.rs"

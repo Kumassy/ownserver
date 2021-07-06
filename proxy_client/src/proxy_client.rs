@@ -13,38 +13,12 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use tokio::time;
 
-mod local;
-mod error;
-use self::error::Error;
-pub use magic_tunnel_lib::{StreamId, ClientId, ClientHello, ControlPacket, ServerHello};
+use crate::error::Error;
+use crate::local;
+use crate::{ActiveStreams, StreamMessage};
+use magic_tunnel_lib::{StreamId, ClientId, ClientHello, ControlPacket, ServerHello};
 
-
-pub type ActiveStreams = Arc<RwLock<HashMap<StreamId, UnboundedSender<StreamMessage>>>>;
-const LOCAL_PORT: u16 = 25565;
-
-lazy_static::lazy_static! {
-    pub static ref ACTIVE_STREAMS:ActiveStreams = Arc::new(RwLock::new(HashMap::new()));
-}
-
-#[derive(Debug, Clone)]
-pub enum StreamMessage {
-    Data(Vec<u8>),
-    Close,
-}
-
-#[tokio::main]
-async fn main() -> Result<()> {
-    pretty_env_logger::init();
-    let control_port: u16 = 5000;
-    let remote_port: u16 = 8080;
-    let local_port: u16 = 3000;
-
-    run(control_port, remote_port, local_port).await?;
-
-    Ok(())
-}
-
-async fn run(control_port: u16, remote_port: u16, local_port: u16) -> Result<()> {
+pub async fn run(active_streams: &'static ActiveStreams, control_port: u16, remote_port: u16, local_port: u16) -> Result<()> {
     let url = Url::parse(&format!("wss://localhost:{}/tunnel", control_port))?;
     let (mut websocket, _ ) = connect_async(url).await.expect("failed to connect");
 
@@ -87,7 +61,7 @@ async fn run(control_port: u16, remote_port: u16, local_port: u16) -> Result<()>
             }
             Some(Ok(message)) => {
                 let packet = process_control_flow_message(
-                    ACTIVE_STREAMS.clone(),
+                    active_streams.clone(),
                     tunnel_tx.clone(),
                     message.into_data(),
                     local_port,
@@ -111,7 +85,7 @@ async fn run(control_port: u16, remote_port: u16, local_port: u16) -> Result<()>
     }
 }
 
-async fn send_client_hello<T>(websocket: &mut T) -> Result<(), T::Error> 
+pub async fn send_client_hello<T>(websocket: &mut T) -> Result<(), T::Error> 
     where T: Unpin + Sink<Message> {
     let hello = serde_json::to_vec(&ClientHello {
         id: ClientId::generate(),
@@ -123,13 +97,13 @@ async fn send_client_hello<T>(websocket: &mut T) -> Result<(), T::Error>
 
 // Wormhole
 #[derive(Debug)]
-struct ClientInfo
+pub struct ClientInfo
 {
     client_id: ClientId,
     assigned_port: u16,
 }
 
-async fn verify_server_hello<T>(websocket: &mut T) -> Result<ClientInfo, Error>
+pub async fn verify_server_hello<T>(websocket: &mut T) -> Result<ClientInfo, Error>
 where T: Unpin + Stream<Item=Result<Message, WsError>>
 {
     let server_hello_data = websocket
@@ -160,7 +134,7 @@ where T: Unpin + Stream<Item=Result<Message, WsError>>
 }
 
 // TODO: improve testability, fix return value
-async fn process_control_flow_message(
+pub async fn process_control_flow_message(
     active_streams: ActiveStreams,
     mut tunnel_tx: UnboundedSender<ControlPacket>,
     payload: Vec<u8>,
@@ -400,7 +374,7 @@ mod process_control_flow_message {
             active_streams.clone(),
             tunnel_tx,
             ControlPacket::Data(stream_id.clone(), b"some message 2".to_vec()).serialize(),
-            LOCAL_PORT,
+            25565,
         ).await.expect("failed to decode packet");
 
         // connection refused should be sent to proxy server
