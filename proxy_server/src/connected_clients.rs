@@ -72,6 +72,15 @@ impl Connections {
             .insert(client.id.clone(), client.clone());
         connection.hosts.insert(client.host.clone(), client);
     }
+
+    pub fn clear(connection: &Self) {
+        connection
+            .clients
+            .clear();
+        connection
+            .hosts
+            .clear();
+    }
 }
 
 
@@ -94,87 +103,90 @@ mod tests {
     }
 
     #[test]
-    fn connections_clients_should_be_empty() -> Result<(), Box<dyn std::error::Error>> {
+    fn connections_clients_should_be_empty() {
         let (conn, _, client_id) = setup();
 
         assert!(Connections::get(&conn, &client_id).is_none());
-        Ok(())
     }
 
     #[test]
-    fn connections_hosts_should_be_empty() -> Result<(), Box<dyn std::error::Error>> {
+    fn connections_hosts_should_be_empty() {
         let (conn, _, _) = setup();
 
         assert!(Connections::find_by_host(&conn, &"foobar".to_owned()).is_none());
-        Ok(())
     }
 
     #[test]
-    fn connections_client_should_be_registered() -> Result<(), Box<dyn std::error::Error>> {
-        let (mut conn, client, client_id) = setup();
+    fn connections_client_should_be_registered() {
+        let (conn, client, client_id) = setup();
 
-        Connections::add(&mut conn, client);
+        Connections::add(&conn, client);
 
         assert_eq!(Connections::get(&conn, &client_id).unwrap().id, client_id);
-        Ok(())
     }
 
     #[test]
-    fn connections_hosts_should_be_registered() -> Result<(), Box<dyn std::error::Error>> {
-        let (mut conn, client, client_id) = setup();
+    fn connections_hosts_should_be_registered() {
+        let (conn, client, client_id) = setup();
 
-        Connections::add(&mut conn, client);
+        Connections::add(&conn, client);
 
         assert_eq!(Connections::find_by_host(&conn, &"foobar".to_owned()).unwrap().id, client_id);
-        Ok(())
     }
 
     #[test]
-    fn connections_client_should_be_empty_after_remove() -> Result<(), Box<dyn std::error::Error>> {
-        let (mut conn, client, client_id) = setup();
+    fn connections_client_should_be_empty_after_remove() {
+        let (conn, client, client_id) = setup();
 
-        Connections::add(&mut conn, client.clone());
-        Connections::remove(&mut conn, &client);
+        Connections::add(&conn, client.clone());
+        Connections::remove(&conn, &client);
 
         assert!(Connections::get(&conn, &client_id).is_none());
-        Ok(())
-    }
-
-     #[test]
-    fn connections_hosts_should_be_empty_after_remove() -> Result<(), Box<dyn std::error::Error>> {
-        let (mut conn, client, client_id) = setup();
-
-        Connections::add(&mut conn, client.clone());
-        Connections::remove(&mut conn, &client);
-
-        assert!(Connections::find_by_host(&conn, &"foobar".to_owned()).is_none());
-        Ok(())
     }
 
     #[test]
-    fn connections_hosts_ignore_multiple_add() -> Result<(), Box<dyn std::error::Error>> {
-        let (mut conn, client, client_id) = setup();
+    fn connections_hosts_should_be_empty_after_remove() {
+        let (conn, client, _) = setup();
 
-        Connections::add(&mut conn, client.clone());
-        Connections::add(&mut conn, client.clone());
-        Connections::add(&mut conn, client.clone());
+        Connections::add(&conn, client.clone());
+        Connections::remove(&conn, &client);
+
+        assert!(Connections::find_by_host(&conn, &"foobar".to_owned()).is_none());
+    }
+
+    #[test]
+    fn connections_hosts_ignore_multiple_add() {
+        let (conn, client, _) = setup();
+
+        Connections::add(&conn, client.clone());
+        Connections::add(&conn, client.clone());
+        Connections::add(&conn, client.clone());
 
         assert_eq!(conn.clients.len(), 1);
         assert_eq!(conn.hosts.len(), 1);
-        Ok(())
     }
 
     #[test]
-    fn connections_hosts_ignore_multiple_remove() -> Result<(), Box<dyn std::error::Error>> {
-        let (mut conn, client, client_id) = setup();
+    fn connections_hosts_ignore_multiple_remove() {
+        let (conn, client, _) = setup();
 
-        Connections::add(&mut conn, client.clone());
-        Connections::remove(&mut conn, &client);
-        Connections::remove(&mut conn, &client);
-        Connections::remove(&mut conn, &client);
+        Connections::add(&conn, client.clone());
+        Connections::remove(&conn, &client);
+        Connections::remove(&conn, &client);
+        Connections::remove(&conn, &client);
         
         assert_eq!(conn.clients.len(), 0);
         assert_eq!(conn.hosts.len(), 0);
-        Ok(())
+    }
+
+    #[test]
+    fn connections_should_clear() {
+        let (conn, client, _) = setup();
+
+        Connections::add(&conn, client.clone());
+        Connections::clear(&conn);
+        
+        assert_eq!(conn.clients.len(), 0);
+        assert_eq!(conn.hosts.len(), 0);
     }
 }
