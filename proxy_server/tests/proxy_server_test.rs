@@ -5,7 +5,7 @@ use dashmap::DashMap;
 use lazy_static::lazy_static;
 use tokio_tungstenite::{
     connect_async, WebSocketStream, MaybeTlsStream,
-    tungstenite::{Error as WsError, Message},
+    tungstenite::Message,
 };
 use tokio::net::TcpStream;
 use url::Url;
@@ -54,7 +54,7 @@ mod tunnel_to_stream_test {
         let (mut websocket, _ ) = connect_async(url).await.expect("failed to connect");
 
         send_client_hello(&mut websocket).await?;
-        let client_info = verify_server_hello(&mut websocket).await?;
+        let _client_info = verify_server_hello(&mut websocket).await?;
 
         Ok((websocket, ACTIVE_STREAMS.clone()))
     }
@@ -64,8 +64,8 @@ mod tunnel_to_stream_test {
     async fn forward_remote_traffic_to_client() -> Result<(), Box<dyn std::error::Error>> {
         let control_port: u16 = 5000;
         let remote_port: u16 = 8080;
-        let (websoket, active_streams) = setup_proxy_server(control_port, remote_port).await?;
-        let (mut ws_sink, mut ws_stream) = websoket.split();
+        let (websoket, _active_streams) = setup_proxy_server(control_port, remote_port).await?;
+        let (mut _ws_sink, mut ws_stream) = websoket.split();
 
         // access remote port
         let mut remote = TcpStream::connect(format!("127.0.0.1:{}", remote_port)).await.expect("Failed to connect to remote port");
@@ -83,7 +83,7 @@ mod tunnel_to_stream_test {
         let control_port: u16 = 5000;
         let remote_port: u16 = 8080;
         let (websoket, active_streams) = setup_proxy_server(control_port, remote_port).await?;
-        let (mut ws_sink, mut ws_stream) = websoket.split();
+        let (mut ws_sink, mut _ws_stream) = websoket.split();
 
         // access remote port
         let mut remote = TcpStream::connect(format!("127.0.0.1:{}", remote_port)).await.expect("Failed to connect to remote port");
