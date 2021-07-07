@@ -16,7 +16,7 @@ use magic_tunnel_server::{proxy_server::run, active_stream::ActiveStreams, conne
 use magic_tunnel_client::{proxy_client::{send_client_hello, verify_server_hello}};
 
 #[cfg(test)]
-mod tunnel_to_stream_test {
+mod proxy_server_test {
     use super::*;
     use serial_test::serial;
 
@@ -99,7 +99,7 @@ mod tunnel_to_stream_test {
 
     #[tokio::test]
     #[serial]
-    async fn forward_local_traffic_to_remote() -> Result<(), Box<dyn std::error::Error>> {
+    async fn forward_client_traffic_to_remote() -> Result<(), Box<dyn std::error::Error>> {
         let control_port: u16 = 5000;
         let remote_port: u16 = 8080;
         let (websoket, active_streams) = setup_proxy_server(control_port, remote_port).await?;
@@ -164,7 +164,7 @@ mod tunnel_to_stream_test {
 
     #[tokio::test]
     #[serial]
-    async fn forward_local_traffic_to_multiple_remote() -> Result<(), Box<dyn std::error::Error>> {
+    async fn forward_client_traffic_to_multiple_remote() -> Result<(), Box<dyn std::error::Error>> {
         let control_port: u16 = 5000;
         let remote_port: u16 = 8080;
         let (websoket, active_streams) = setup_proxy_server(control_port, remote_port).await?;

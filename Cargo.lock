@@ -599,6 +599,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "magic_tunnel_test"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "dashmap",
+ "futures",
+ "lazy_static",
+ "log",
+ "magic_tunnel_client",
+ "magic_tunnel_lib",
+ "magic_tunnel_server",
+ "pretty_env_logger",
+ "serde",
+ "serde_json",
+ "serial_test",
+ "tokio",
+ "tokio-test",
+ "tokio-tungstenite 0.14.0",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "warp",
+]
+
+[[package]]
 name = "matchers"
 version = "0.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
