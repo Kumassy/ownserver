@@ -36,7 +36,7 @@ mod proxy_server_test {
         }
     }
 
-    macro_rules! assert_remote_bytes_matches {
+    macro_rules! assert_socket_bytes_matches {
         ($read:expr, $expected:expr) => {
             let mut buf = [0; 4*1024];
             let n = $read.read(&mut buf).await.expect("failed to read data from socket");
@@ -46,7 +46,7 @@ mod proxy_server_test {
         }
     }
 
-    async fn setup_proxy_server(control_port: u16, remote_port: u16) -> Result<(WebSocketStream<MaybeTlsStream<TcpStream>>, ActiveStreams), Box<dyn std::error::Error>> {
+    async fn launch_proxy_server(control_port: u16, remote_port: u16) -> Result<(WebSocketStream<MaybeTlsStream<TcpStream>>, ActiveStreams), Box<dyn std::error::Error>> {
         lazy_static! {
             pub static ref CONNECTIONS: Connections = Connections::new();
             pub static ref ACTIVE_STREAMS: ActiveStreams = Arc::new(DashMap::new());
@@ -76,11 +76,10 @@ mod proxy_server_test {
     async fn forward_remote_traffic_to_client() -> Result<(), Box<dyn std::error::Error>> {
         let control_port: u16 = 5000;
         let remote_port: u16 = 8080;
-        let (websoket, active_streams) = setup_proxy_server(control_port, remote_port).await?;
+        let (websoket, active_streams) = launch_proxy_server(control_port, remote_port).await?;
         let (mut _ws_sink, mut ws_stream) = websoket.split();
 
-        // ensure active_streams has cleared
-        assert_eq!(active_streams.iter().count(), 0);
+        assert_eq!(active_streams.iter().count(), 0, "active_streams should be empty until remote connection established");
 
         // access remote port
         let mut remote = TcpStream::connect(format!("127.0.0.1:{}", remote_port)).await.expect("Failed to connect to remote port");
@@ -88,8 +87,7 @@ mod proxy_server_test {
         tokio::time::sleep(Duration::from_secs(3)).await;
         remote.write_all(b"some bytes").await.expect("failed to send client hello");
 
-        // ensure active_streams has successfully registered
-        assert_eq!(active_streams.iter().count(), 1);
+        assert_eq!(active_streams.iter().count(), 1, "remote socket should be accepted and registered");
         let stream_id = active_streams.iter().next().unwrap().id.clone();
 
         assert_control_packet_matches!(ws_stream, ControlPacket::Init(stream_id.clone()));
@@ -102,23 +100,21 @@ mod proxy_server_test {
     async fn forward_client_traffic_to_remote() -> Result<(), Box<dyn std::error::Error>> {
         let control_port: u16 = 5000;
         let remote_port: u16 = 8080;
-        let (websoket, active_streams) = setup_proxy_server(control_port, remote_port).await?;
+        let (websoket, active_streams) = launch_proxy_server(control_port, remote_port).await?;
         let (mut ws_sink, mut _ws_stream) = websoket.split();
 
-        // ensure active_streams has cleared
-        assert_eq!(active_streams.iter().count(), 0);
+        assert_eq!(active_streams.iter().count(), 0, "active_streams should be empty until remote connection established");
 
         // access remote port
         let mut remote = TcpStream::connect(format!("127.0.0.1:{}", remote_port)).await.expect("Failed to connect to remote port");
         // wait until remote access has registered to ACTIVE_STREAMS
         tokio::time::sleep(Duration::from_secs(3)).await;
         
-        // ensure active_streams has successfully registered
-        assert_eq!(active_streams.iter().count(), 1);
+        assert_eq!(active_streams.iter().count(), 1, "remote socket should be accepted and registered");
         let stream_id = active_streams.iter().next().unwrap().id.clone();
         ws_sink.send(Message::binary(ControlPacket::Data(stream_id, b"foobarbaz".to_vec()).serialize())).await?;
 
-        assert_remote_bytes_matches!(remote, b"foobarbaz");
+        assert_socket_bytes_matches!(remote, b"foobarbaz");
         Ok(())
     }
 
@@ -127,25 +123,22 @@ mod proxy_server_test {
     async fn forward_multiple_remote_traffic_to_client() -> Result<(), Box<dyn std::error::Error>> {
         let control_port: u16 = 5000;
         let remote_port: u16 = 8080;
-        let (websoket, active_streams) = setup_proxy_server(control_port, remote_port).await?;
+        let (websoket, active_streams) = launch_proxy_server(control_port, remote_port).await?;
         let (mut _ws_sink, mut ws_stream) = websoket.split();
 
-        // ensure active_streams has cleared
-        assert_eq!(active_streams.iter().count(), 0);
+        assert_eq!(active_streams.iter().count(), 0, "active_streams should be empty until remote connection established");
 
         // access remote port
         let mut remote1 = TcpStream::connect(format!("127.0.0.1:{}", remote_port)).await.expect("Failed to connect to remote port");
         // wait until remote access has registered to ACTIVE_STREAMS
         tokio::time::sleep(Duration::from_secs(3)).await;
-        // ensure active_streams has successfully registered
-        assert_eq!(active_streams.iter().count(), 1);
+        assert_eq!(active_streams.iter().count(), 1, "remote socket should be accepted and registered");
         let stream_id1 = active_streams.iter().next().unwrap().id.clone();
 
         let mut remote2 = TcpStream::connect(format!("127.0.0.1:{}", remote_port)).await.expect("Failed to connect to remote port");
         // wait until remote access has registered to ACTIVE_STREAMS
         tokio::time::sleep(Duration::from_secs(3)).await;
-        // ensure active_streams has successfully registered
-        assert_eq!(active_streams.iter().count(), 2);
+        assert_eq!(active_streams.iter().count(), 2, "remote socket should be accepted and registered");
         let stream_id2 = active_streams.iter().filter(|sid| sid.key() != &stream_id1).next().unwrap().id.clone();
 
         assert_ne!(stream_id1, stream_id2);
@@ -167,25 +160,22 @@ mod proxy_server_test {
     async fn forward_client_traffic_to_multiple_remote() -> Result<(), Box<dyn std::error::Error>> {
         let control_port: u16 = 5000;
         let remote_port: u16 = 8080;
-        let (websoket, active_streams) = setup_proxy_server(control_port, remote_port).await?;
+        let (websoket, active_streams) = launch_proxy_server(control_port, remote_port).await?;
         let (mut ws_sink, mut _ws_stream) = websoket.split();
 
-        // ensure active_streams has cleared
-        assert_eq!(active_streams.iter().count(), 0);
+        assert_eq!(active_streams.iter().count(), 0, "active_streams should be empty until remote connection established");
 
         // access remote port
         let mut remote1 = TcpStream::connect(format!("127.0.0.1:{}", remote_port)).await.expect("Failed to connect to remote port");
         // wait until remote access has registered to ACTIVE_STREAMS
         tokio::time::sleep(Duration::from_secs(3)).await;
-        // ensure active_streams has successfully registered
-        assert_eq!(active_streams.iter().count(), 1);
+        assert_eq!(active_streams.iter().count(), 1, "remote socket should be accepted and registered");
         let stream_id1 = active_streams.iter().next().unwrap().id.clone();
 
         let mut remote2 = TcpStream::connect(format!("127.0.0.1:{}", remote_port)).await.expect("Failed to connect to remote port");
         // wait until remote access has registered to ACTIVE_STREAMS
         tokio::time::sleep(Duration::from_secs(3)).await;
-        // ensure active_streams has successfully registered
-        assert_eq!(active_streams.iter().count(), 2);
+        assert_eq!(active_streams.iter().count(), 2, "remote socket should be accepted and registered");
         let stream_id2 = active_streams.iter().filter(|sid| sid.key() != &stream_id1).next().unwrap().id.clone();
 
         assert_ne!(stream_id1, stream_id2);
@@ -193,8 +183,8 @@ mod proxy_server_test {
         ws_sink.send(Message::binary(ControlPacket::Data(stream_id1, b"some message 1".to_vec()).serialize())).await?;
         ws_sink.send(Message::binary(ControlPacket::Data(stream_id2, b"some message 2".to_vec()).serialize())).await?;
 
-        assert_remote_bytes_matches!(remote1, b"some message 1");
-        assert_remote_bytes_matches!(remote2, b"some message 2");
+        assert_socket_bytes_matches!(remote1, b"some message 1");
+        assert_socket_bytes_matches!(remote2, b"some message 2");
         Ok(())
     }
 }

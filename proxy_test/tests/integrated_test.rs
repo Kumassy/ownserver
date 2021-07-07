@@ -43,7 +43,7 @@ mod proxy_client_server_test {
             let n = $read.read(&mut buf).await.expect("failed to read data from socket");
             let data = buf[..n].to_vec();
 
-            assert_eq!(data, $expected.to_vec());
+            assert_eq!(data, $expected);
         }
     }
 
