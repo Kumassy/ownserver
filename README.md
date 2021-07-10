@@ -1,15 +1,19 @@
 TODO
-- [ ] local to server buffer
+- [x] local to server buffer
 - [x] process control flow message
-- [ ] tunnel_client
-- [ ] server hello, connect_wormhole
-- [ ] make ACTIVE_STREAMS to DI
-- [ ] write test to process_client_messages
+- [x] tunnel_client
+- [x] server hello, connect_wormhole
+- [x] make ACTIVE_STREAMS to DI
+- [x] write test to process_client_messages
 - [ ] skip tracing, make log clean
-- [ ] client: run_wormhole
+- [x] client: run_wormhole
+- [ ] add version field to handshake
+- [ ] host -> port addresssing
+- [ ] launch, delete port listen when client registered/dropped
+- [ ] maintain available port table
 
 integration test
-- [ ] if server send ControlPacket::Init, then client set up local stream
+- [x] if server send ControlPacket::Init, then client set up local stream
 
 
 (host, client_id) の組は一通りではない...？
