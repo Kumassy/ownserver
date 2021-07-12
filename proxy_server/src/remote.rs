@@ -12,7 +12,7 @@ use crate::control_server;
 pub use magic_tunnel_lib::{StreamId, ClientId, ControlPacket};
 
 // stream has selected because each stream listen different port
-#[tracing::instrument(skip(socket))]
+#[tracing::instrument(skip(socket, conn, active_streams))]
 pub async fn accept_connection(conn: &'static Connections, active_streams: ActiveStreams, mut socket: TcpStream, host: String) {
     tracing::info!("new remote connection");
 
@@ -50,17 +50,19 @@ pub async fn accept_connection(conn: &'static Connections, active_streams: Activ
     // read from client, write to socket
     tokio::spawn(
         async move {
-            tunnel_to_stream(host, stream_id, sink, queue_rx).await;
+            let reason = tunnel_to_stream(host, stream_id.clone(), sink, queue_rx).await;
+            debug!("tunnel_to_stream closed for stream_id: {:?} with reason: {:?}", stream_id, reason);
+            active_streams.remove(&stream_id);
         }
         .instrument(tracing::info_span!("tunnel_to_stream")),
     );
 }
 
-const HTTP_ERROR_LOCATING_HOST_RESPONSE: &'static [u8] =
+pub const HTTP_ERROR_LOCATING_HOST_RESPONSE: &'static [u8] =
     b"HTTP/1.1 500\r\nContent-Length: 27\r\n\r\nError: Error finding tunnel";
-const HTTP_NOT_FOUND_RESPONSE: &'static [u8] =
+pub const HTTP_NOT_FOUND_RESPONSE: &'static [u8] =
     b"HTTP/1.1 404\r\nContent-Length: 23\r\n\r\nError: Tunnel Not Found";
-const HTTP_TUNNEL_REFUSED_RESPONSE: &'static [u8] =
+pub const HTTP_TUNNEL_REFUSED_RESPONSE: &'static [u8] =
     b"HTTP/1.1 500\r\nContent-Length: 32\r\n\r\nTunnel says: connection refused.";
 
 
@@ -99,7 +101,7 @@ where T: AsyncRead + Unpin {
         };
 
         if n == 0 {
-            debug!("stream ended");
+            debug!("stream {:?} ended", tunnel_stream.id);
             let _ = tunnel_stream
                 .client
                 .tx
@@ -113,6 +115,11 @@ where T: AsyncRead + Unpin {
 
         debug!("read {} bytes", n);
 
+        if tunnel_stream.tx.is_closed() {
+            tracing::debug!("process_tcp_stream closed because active_stream.tx has closed");
+            return;
+        }
+
         let data = &buf[..n];
         let packet = ControlPacket::Data(tunnel_stream.id.clone(), data.to_vec());
 
@@ -120,6 +127,8 @@ where T: AsyncRead + Unpin {
             Ok(_) => debug!(client_id = %tunnel_stream.client.id, "sent data packet to client"),
             Err(_) => {
                 // TODO: not tested
+                // This line extecuted when
+                // - Corresponding client not found or closed
                 error!("failed to forward tcp packets to disconnected client. dropping client.");
                 Connections::remove(conn, &tunnel_stream.client);
             }
@@ -133,6 +142,7 @@ enum TunnelToStreamExitReason {
     TcpClosed,
 }
 
+// queue is automatically closed when queue is dropped at the end of this function
 #[tracing::instrument(skip(sink, stream_id, queue))]
 async fn tunnel_to_stream<T>(
     subdomain: String,
@@ -183,7 +193,6 @@ where T: AsyncWrite + AsyncWriteExt + Unpin
 
         if let Some(error) = result.err() {
             tracing::warn!(?error, "stream closed, disconnecting");
-            // return;
             return TunnelToStreamExitReason::TcpClosed;
         }
     }
@@ -194,6 +203,29 @@ mod process_tcp_stream_test {
     use super::*;
     use futures::channel::mpsc::{unbounded, UnboundedReceiver};
     use tokio_test::io::Builder;
+
+    use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, ReadBuf};
+    use std::task::{self, Poll, Waker};
+    use std::pin::Pin;
+    use std::io;
+
+    struct InfiniteRead {
+    }
+    impl InfiniteRead {
+        fn new() -> Self {
+            InfiniteRead {}
+        }
+    }
+    impl AsyncRead for InfiniteRead {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            cx: &mut task::Context<'_>,
+            buf: &mut ReadBuf<'_>,
+        ) -> Poll<io::Result<()>> {
+            buf.put_slice(b"infinite source");
+            return Poll::Ready(Ok(()));
+        }
+    }
 
     fn create_active_stream() -> (Connections, ConnectedClient, ActiveStream, UnboundedReceiver<StreamMessage>, UnboundedReceiver<ControlPacket>) {
         let conn = Connections::new();
@@ -298,6 +330,19 @@ mod process_tcp_stream_test {
         assert_eq!(client_rx.next().await, None);
         Ok(())
     }
+
+    #[tokio::test]
+    async fn stop_wait_read_when_tunnel_stream_is_closed() -> Result<(), Box<dyn std::error::Error>> {
+        let (conn, client, active_stream, _stream_rx, mut client_rx) = create_active_stream();
+        Connections::add(&conn, client);
+        let stream_id = active_stream.id.clone();
+
+        client_rx.close();
+        let infinite_reader = InfiniteRead::new();
+        let _ = process_tcp_stream(&conn, active_stream, infinite_reader).await;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -333,6 +378,7 @@ mod tunnel_to_stream_test {
         let reason = tunnel_to_stream("foobar".to_string(), StreamId::generate(), tcp_mock, rx).await;
 
         assert_eq!(reason, TunnelToStreamExitReason::TcpClosed);
+        assert_eq!(tx.is_closed(), true);
         Ok(())
     }
 
@@ -358,6 +404,7 @@ mod tunnel_to_stream_test {
         let reason = tunnel_to_stream("foobar".to_string(), StreamId::generate(), tcp_mock, rx).await;
 
         assert_eq!(reason, TunnelToStreamExitReason::QueueClosed);
+        assert_eq!(tx.is_closed(), true);
         Ok(())
     }
 
@@ -371,6 +418,7 @@ mod tunnel_to_stream_test {
         let reason = tunnel_to_stream("foobar".to_string(), StreamId::generate(), tcp_mock, rx).await;
 
         assert_eq!(reason, TunnelToStreamExitReason::QueueClosed);
+        assert_eq!(tx.is_closed(), true);
         Ok(())
     }
 

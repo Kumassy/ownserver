@@ -156,7 +156,7 @@ pub async fn send_client_stream_init(mut stream: ActiveStream) -> Result<(), Sen
 
 /// Process client control messages
 #[must_use]
-#[tracing::instrument(skip(client_conn))]
+#[tracing::instrument(skip(client_conn, active_streams))]
 // pub async fn process_client_messages(active_streams: ActiveStreams, connections: &Connections, client: ConnectedClient, mut client_conn: SplitStream<WebSocket>) {
 pub async fn process_client_messages<T>(active_streams: ActiveStreams, client: ConnectedClient, mut client_conn: T) -> ConnectedClient
 where T: Stream<Item=Result<Message, WarpError>> + Unpin {
