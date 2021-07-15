@@ -7,7 +7,7 @@ TODO
 - [x] write test to process_client_messages
 - [ ] skip tracing, make log clean
 - [x] client: run_wormhole
-- [ ] add version field to handshake
+- [x] add version field to handshake
 - [ ] host -> port addresssing
 - [ ] launch, delete port listen when client registered/dropped
 - [ ] maintain available port table

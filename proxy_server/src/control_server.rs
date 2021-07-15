@@ -58,7 +58,7 @@ async fn try_client_handshake(websocket: &mut WebSocket) -> Option<ClientHandsha
         }
     };
     let client_id = match respond_with_server_hello(websocket).await {
-        Ok(ServerHello::Success { client_id, assigned_port }) => client_id,
+        Ok(ServerHello::Success { client_id, assigned_port, version }) => client_id,
         Err(error) => {
             tracing::info!("failed to send server hello: {}", error);
             return None;
@@ -101,6 +101,7 @@ async fn respond_with_server_hello<T>(websocket: &mut T) -> Result<ServerHello, 
     let server_hello = ServerHello::Success {
         client_id: client_id.clone(),
         assigned_port: 12345, // TODO
+        version: 0,
     };
     let data = serde_json::to_vec(&server_hello)
         .unwrap_or_default();
@@ -261,6 +262,7 @@ mod verify_client_handshake_test {
 
         let hello = serde_json::to_vec(&ClientHello {
             id: ClientId::generate(),
+            version: 0,
         }).unwrap_or_default();
 
         tx.send(Ok(Message::binary(hello))).await?;

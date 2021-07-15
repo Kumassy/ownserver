@@ -48,7 +48,7 @@ pub struct ClientHello {
     // depricated
     // send JWT
     pub id: ClientId,
-
+    pub version: u16,
     // game id
 }
 
@@ -108,6 +108,7 @@ pub enum ServerHello {
         // hostname: String,
         client_id: ClientId,
         assigned_port: u16,
+        version: u16,
     },
     // TODO: this may not be used
     // SubDomainInUse,

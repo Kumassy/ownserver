@@ -89,6 +89,7 @@ pub async fn send_client_hello<T>(websocket: &mut T) -> Result<(), T::Error>
     where T: Unpin + Sink<Message> {
     let hello = serde_json::to_vec(&ClientHello {
         id: ClientId::generate(),
+        version: 0,
     }).unwrap_or_default();
     websocket.send(Message::binary(hello)).await?;
 
@@ -120,6 +121,7 @@ where T: Unpin + Stream<Item=Result<Message, WsError>>
         ServerHello::Success {
             client_id,
             assigned_port,
+            ..
         } => {
             info!("Server accepted our connection. I am client_{}", client_id);
             (client_id, assigned_port)
@@ -413,6 +415,7 @@ mod verify_server_hello_test {
         let hello = serde_json::to_vec(&ServerHello::Success {
             client_id: cid.clone(),
             assigned_port: 256,
+            version: 0,
         }).unwrap_or_default();
         tx.send(Ok(Message::binary(hello))).await?;
 
