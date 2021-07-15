@@ -11,6 +11,7 @@ TODO
 - [ ] host -> port addresssing
 - [ ] launch, delete port listen when client registered/dropped
 - [ ] maintain available port table
+- [ ] port scan, integrate with fail2ban
 
 integration test
 - [x] if server send ControlPacket::Init, then client set up local stream

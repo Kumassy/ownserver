@@ -13,7 +13,12 @@ use url::Url;
 use futures::{StreamExt, SinkExt};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use magic_tunnel_lib::ControlPacket;
-use magic_tunnel_server::{proxy_server, active_stream::ActiveStreams as ActiveStreamsServer, connected_clients::Connections, remote::HTTP_TUNNEL_REFUSED_RESPONSE};
+use magic_tunnel_server::{
+    proxy_server,
+    active_stream::ActiveStreams as ActiveStreamsServer,
+    connected_clients::Connections,
+    remote::{HTTP_TUNNEL_REFUSED_RESPONSE, HTTP_ERROR_LOCATING_HOST_RESPONSE},
+};
 use magic_tunnel_client::{proxy_client, ActiveStreams as ActiveStreamsClient};
 
 #[cfg(test)]
@@ -136,9 +141,44 @@ mod proxy_client_server_test {
 
     #[tokio::test]
     #[serial]
-    async fn forward_remote_traffic_when_local_server_not_running() -> Result<(), Box<dyn std::error::Error>> {
-        tracing_subscriber::fmt::init();
+    async fn forward_multiple_remote_traffic_to_local() -> Result<(), Box<dyn std::error::Error>> {
+        let control_port: u16 = 5000;
+        let remote_port: u16 = 8080;
+        let local_port: u16 = 3000;
 
+        let active_streams_server = launch_proxy_server(control_port, remote_port).await?;
+        // wait until server is ready
+        tokio::time::sleep(Duration::from_secs(3)).await;
+
+        launch_local_server(local_port).await;
+        let active_streams_client = launch_proxy_client(control_port, remote_port, local_port).await?;
+        // wait until client is ready
+        tokio::time::sleep(Duration::from_secs(3)).await;
+
+        assert_eq!(active_streams_server.iter().count(), 0, "active_streams should be empty until remote connection established");
+        assert_eq!(active_streams_client.read().unwrap().iter().count(), 0, "active_streams should be empty until remote connection established");
+
+        // access remote port
+        let mut remote = TcpStream::connect(format!("127.0.0.1:{}", remote_port)).await.expect("Failed to connect to remote port");
+        let mut remote2 = TcpStream::connect(format!("127.0.0.1:{}", remote_port)).await.expect("Failed to connect to remote port");
+        // wait until remote access has registered to ACTIVE_STREAMS
+        tokio::time::sleep(Duration::from_secs(3)).await;
+
+        assert_eq!(active_streams_server.iter().count(), 2, "remote socket should be accepted and registered");
+        assert_eq!(active_streams_client.read().unwrap().iter().count(), 2, "remote socket should be forwared through control packet");
+
+        remote.write_all(&b"foobar".to_vec()).await?;
+        assert_socket_bytes_matches!(remote, b"hello, foobar");
+
+        remote2.write_all(&b"fugapiyo".to_vec()).await?;
+        assert_socket_bytes_matches!(remote2, b"hello, fugapiyo");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn refuse_remote_traffic_when_local_server_not_running() -> Result<(), Box<dyn std::error::Error>> {
         let control_port: u16 = 5000;
         let remote_port: u16 = 8080;
         let local_port: u16 = 3000;
@@ -171,6 +211,35 @@ mod proxy_client_server_test {
         remote.flush().await?;
         tokio::time::sleep(Duration::from_secs(1)).await;
         assert!(remote.write_all(&b"foobar".to_vec()).await.is_err(), "third operation must fail because proxy_server release tcp connection.");
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn refuse_remote_traffic_when_client_not_connected() -> Result<(), Box<dyn std::error::Error>> {
+        let control_port: u16 = 5000;
+        let remote_port: u16 = 8080;
+
+        let active_streams_server = launch_proxy_server(control_port, remote_port).await?;
+        // wait until server is ready
+        tokio::time::sleep(Duration::from_secs(3)).await;
+
+        assert_eq!(active_streams_server.iter().count(), 0, "active_streams should be empty until remote connection established");
+
+        // access remote port
+        let mut remote = TcpStream::connect(format!("127.0.0.1:{}", remote_port)).await.expect("Failed to connect to remote port");
+        // wait until remote access has registered to ACTIVE_STREAMS
+        tokio::time::sleep(Duration::from_secs(3)).await;
+
+        assert_eq!(active_streams_server.iter().count(), 0, "active_streams should be empty. remote stream is never registered.");
+        assert_socket_bytes_matches!(remote, HTTP_ERROR_LOCATING_HOST_RESPONSE);
+
+        // at the first write operation, proxy_server send FIN
+        remote.write_all(&b"foobar".to_vec()).await?; 
+        remote.flush().await?;
+        tokio::time::sleep(Duration::from_secs(1)).await;
+       
+        assert!(remote.write_all(&b"foobar".to_vec()).await.is_err(), "second operation must fail because proxy_server release tcp connection.");
         Ok(())
     }
 }
