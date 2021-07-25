@@ -1,8 +1,10 @@
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::io::{ReadHalf, WriteHalf};
-use tokio::net::TcpStream;
+use tokio::net::{TcpStream, TcpListener, ToSocketAddrs};
+use tokio::sync::oneshot;
+use std::io;
 use tracing::debug;
-use tracing::{error, Instrument};
+use tracing::{error, info, Instrument};
 use futures::prelude::*;
 use futures::channel::mpsc::UnboundedReceiver;
 
@@ -10,6 +12,44 @@ use crate::active_stream::{ActiveStream, StreamMessage, ActiveStreams};
 use crate::connected_clients::{ConnectedClient, Connections};
 use crate::control_server;
 pub use magic_tunnel_lib::{StreamId, ClientId, ControlPacket};
+
+pub type CancelHander = oneshot::Sender<()>;
+pub async fn spawn_remote(conn: &'static Connections, active_streams: &'static ActiveStreams, listen_addr: impl ToSocketAddrs, host: String) -> io::Result<CancelHander> {
+    // create our accept any server
+    let listener = TcpListener::bind(listen_addr)
+        .await?;
+
+    let (cancel_tx, mut cancel_rx) = oneshot::channel::<()>();
+
+    tokio::spawn(async move {
+        loop {
+            let socket = tokio::select! {
+                socket = listener.accept() => {
+                    match socket {
+                        Ok((socket, _)) => socket,
+                        _ => {
+                            error!("failed to accept socket");
+                            continue;
+                        }
+                    }
+                },
+                _ = (&mut cancel_rx) => {
+                    info!("remote tcp listener {} is cancelled.", host);
+                    return;
+                },
+            };
+
+            let host_clone = host.clone();
+            tokio::spawn(
+                async move {
+                    accept_connection(conn, active_streams.clone(), socket, host_clone).await;
+                }
+                .instrument(tracing::info_span!("remote_connect")),
+            );
+        }
+    });
+    Ok(cancel_tx)
+}
 
 // stream has selected because each stream listen different port
 #[tracing::instrument(skip(socket, conn, active_streams))]
@@ -434,6 +474,55 @@ mod tunnel_to_stream_test {
         let reason = tunnel_to_stream("foobar".to_string(), StreamId::generate(), tcp_mock, rx).await;
 
         assert_eq!(reason, TunnelToStreamExitReason::QueueClosed);
+        Ok(())
+    }
+}
+
+
+#[cfg(test)]
+mod spawn_remote_test {
+    use super::*;
+    use futures::channel::mpsc::{unbounded, UnboundedReceiver};
+    use tokio_test::io::Builder;
+    use std::io;
+    use lazy_static::lazy_static;
+    use std::sync::Arc;
+    use dashmap::DashMap;
+
+
+    async fn launch_remote(remote_port: u16) -> io::Result<CancelHander> {
+        lazy_static! {
+            pub static ref CONNECTIONS: Connections = Connections::new();
+            pub static ref ACTIVE_STREAMS: ActiveStreams = Arc::new(DashMap::new());
+        }
+        // we must clear CONNECTIONS, ACTIVE_STREAMS
+        // because they are shared across test
+        Connections::clear(&CONNECTIONS);
+        ACTIVE_STREAMS.clear();
+
+        spawn_remote(&CONNECTIONS, &ACTIVE_STREAMS, format!("[::]:{}", remote_port), "aaa".to_string()).await
+    }
+
+    #[tokio::test]
+    async fn accept_remote_connection() -> Result<(), Box<dyn std::error::Error>> {
+        let remote_port = 5678;
+        let _remote_cancel_handler = launch_remote(remote_port).await?;
+
+        let _ = TcpStream::connect(format!("127.0.0.1:{}", remote_port)).await.expect("Failed to connect to remote port");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn reject_remote_connection_after_cancellation() -> Result<(), Box<dyn std::error::Error>> {
+        let remote_port = 5678;
+        let remote_cancel_handler = launch_remote(remote_port).await?;
+
+        let _ = TcpStream::connect(format!("127.0.0.1:{}", remote_port)).await.expect("Failed to connect to remote port");
+        
+        remote_cancel_handler.send(()).unwrap();
+        let remote = TcpStream::connect(format!("127.0.0.1:{}", remote_port)).await;
+        assert!(remote.is_err());
+
         Ok(())
     }
 }
