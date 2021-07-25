@@ -24,6 +24,8 @@ warp = "0.3"
 lazy_static = "1.4"
 base64 = "0.13"
 dashmap = "4.0"
+thiserror = "1.0"
+rand = { version = "0.8", features = ["small_rng"] }
 
 [dev-dependencies]
 tokio-test = "0.4"
