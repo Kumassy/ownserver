@@ -1,5 +1,6 @@
 use std::collections::HashSet;
-use std::ops::RangeInclusive;
+use std::ops::RangeBounds;
+use std::iter::ExactSizeIterator;
 use rand::prelude::*;
 use rand::Rng;
 
@@ -17,13 +18,16 @@ pub enum PortAllocatorError {
     PortAlreadyReleased,
 }
 
-struct PortAllocator {
+pub struct PortAllocator<R> {
     available_ports: HashSet<u16>,
-    range: RangeInclusive<u16>,
+    range: R,
 }
 
-impl PortAllocator {
-    fn new(range: RangeInclusive<u16>) -> Self {
+impl<R> PortAllocator<R>
+where
+    R: RangeBounds<u16> + Clone + Iterator<Item=u16> + ExactSizeIterator,
+{
+    pub fn new(range: R) -> Self {
         let mut set = HashSet::with_capacity(range.len());
         for p in range.clone().into_iter() {
             set.insert(p);
@@ -35,7 +39,7 @@ impl PortAllocator {
         }
     }
 
-    fn allocate_port(&mut self, rng: &mut impl Rng) -> Result<u16, PortAllocatorError> {
+    pub fn allocate_port(&mut self, rng: &mut impl Rng) -> Result<u16, PortAllocatorError> {
         if let Some(n) = self.available_ports.iter().choose(rng).map(|n| n.clone()) {
             self.available_ports.remove(&n);
             Ok(n)
@@ -44,7 +48,7 @@ impl PortAllocator {
         }
     }
 
-    fn release_port(&mut self, port: u16) -> Result<(), PortAllocatorError> {
+    pub fn release_port(&mut self, port: u16) -> Result<(), PortAllocatorError> {
         if !self.range.contains(&port) {
             return Err(PortAllocatorError::PortOutOfRange);
         }
@@ -75,16 +79,16 @@ mod allocate_port_tests {
     #[test]
     fn delete_port_from_table() {
         let mut rng = thread_rng();
-        let mut alloc = PortAllocator::new(1000..=2000);
-        assert_eq!(alloc.available_ports.len(), 1001);
-        let _ = alloc.allocate_port(&mut rng).unwrap();
+        let mut alloc = PortAllocator::new(1000..2000);
         assert_eq!(alloc.available_ports.len(), 1000);
+        let _ = alloc.allocate_port(&mut rng).unwrap();
+        assert_eq!(alloc.available_ports.len(), 999);
     }
 
     #[test]
     fn return_error_when_no_available_port() {
         let mut rng = thread_rng();
-        let mut alloc = PortAllocator::new(1000..=1009);
+        let mut alloc = PortAllocator::new(1000..1010);
         assert_eq!(alloc.available_ports.len(), 10);
 
         for _ in 0..10 {
@@ -119,13 +123,13 @@ mod release_port_tests {
     #[test]
     fn release_port_to_port_table() {
         let mut rng = thread_rng();
-        let mut alloc = PortAllocator::new(1000..=2000);
-        assert_eq!(alloc.available_ports.len(), 1001);
-
-        let port = alloc.allocate_port(&mut rng).unwrap();
+        let mut alloc = PortAllocator::new(1000..2000);
         assert_eq!(alloc.available_ports.len(), 1000);
 
+        let port = alloc.allocate_port(&mut rng).unwrap();
+        assert_eq!(alloc.available_ports.len(), 999);
+
         let _ = alloc.release_port(port).unwrap();
-        assert_eq!(alloc.available_ports.len(), 1001);
+        assert_eq!(alloc.available_ports.len(), 1000);
     }
 }
