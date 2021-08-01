@@ -500,7 +500,15 @@ mod spawn_remote_test {
         Connections::clear(&CONNECTIONS);
         ACTIVE_STREAMS.clear();
 
-        spawn_remote(&CONNECTIONS, &ACTIVE_STREAMS, format!("[::]:{}", remote_port), "aaa".to_string()).await
+        let (tx, rx) = unbounded::<ControlPacket>();
+        let mut client = ConnectedClient {
+            id: ClientId::generate(),
+            host: "host-aaa".to_string(),
+            tx,
+        };
+        Connections::add(&CONNECTIONS, client.clone());
+
+        spawn_remote(&CONNECTIONS, &ACTIVE_STREAMS, format!("[::]:{}", remote_port), "host-aaa".to_string()).await
     }
 
     #[tokio::test]
