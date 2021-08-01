@@ -484,8 +484,9 @@ mod spawn_remote_test {
     use super::*;
     use futures::channel::mpsc::{unbounded, UnboundedReceiver};
     use tokio_test::io::Builder;
-    use std::io;
     use lazy_static::lazy_static;
+    use std::io;
+    use std::time::Duration;
     use std::sync::Arc;
     use dashmap::DashMap;
 
@@ -522,12 +523,14 @@ mod spawn_remote_test {
 
     #[tokio::test]
     async fn reject_remote_connection_after_cancellation() -> Result<(), Box<dyn std::error::Error>> {
-        let remote_port = 5678;
+        let remote_port = 5679;
         let remote_cancel_handler = launch_remote(remote_port).await?;
 
         let _ = TcpStream::connect(format!("127.0.0.1:{}", remote_port)).await.expect("Failed to connect to remote port");
         
         remote_cancel_handler.send(()).unwrap();
+        tokio::time::sleep(Duration::from_secs(3)).await;
+
         let remote = TcpStream::connect(format!("127.0.0.1:{}", remote_port)).await;
         assert!(remote.is_err());
 
