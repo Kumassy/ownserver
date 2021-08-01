@@ -30,6 +30,7 @@ pub async fn run(
 {
     tracing::info!("starting server!");
 
-    control_server::spawn(conn, active_streams, alloc, remote_cancellers, ([0, 0, 0, 0], control_port));
+    let handle = control_server::spawn(conn, active_streams, alloc, remote_cancellers, ([0, 0, 0, 0], control_port));
     info!("started tunnelto server on 0.0.0.0:{}", control_port);
+    handle.await.unwrap(); // TODO: fix unwrap
 }
