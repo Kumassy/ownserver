@@ -8,11 +8,18 @@ use tokio_tungstenite::{
     tungstenite::Message,
 };
 use tokio::net::TcpStream;
+use tokio::sync::Mutex;
 use url::Url;
 use futures::{StreamExt, SinkExt};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use magic_tunnel_lib::ControlPacket;
-use magic_tunnel_server::{proxy_server::run, active_stream::ActiveStreams, connected_clients::Connections};
+use magic_tunnel_lib::{ControlPacket, ClientId};
+use magic_tunnel_server::{
+    proxy_server::run,
+    active_stream::ActiveStreams,
+    connected_clients::Connections,
+    remote::CancelHander,
+    port_allocator::PortAllocator,
+};
 use magic_tunnel_client::{proxy_client::{send_client_hello, verify_server_hello}};
 
 #[cfg(test)]
@@ -55,9 +62,12 @@ mod proxy_server_test {
         // because they are shared across test
         Connections::clear(&CONNECTIONS);
         ACTIVE_STREAMS.clear();
+        let alloc = Arc::new(Mutex::new(PortAllocator::new(4000..4010)));
+        let remote_cancellers: Arc<DashMap<ClientId, CancelHander>> = Arc::new(DashMap::new());
+
 
         tokio::spawn(async move {
-            run(&CONNECTIONS, &ACTIVE_STREAMS, control_port, remote_port).await;
+            run(&CONNECTIONS, &ACTIVE_STREAMS, alloc, remote_cancellers, control_port, remote_port).await;
         });
 
         // setup proxy client

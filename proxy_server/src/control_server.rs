@@ -7,18 +7,33 @@ use tracing::{error, info, Instrument};
 use warp::{Filter, Rejection, ws::{Ws, WebSocket, Message}, Error as WarpError};
 use std::convert::Infallible;
 
+use dashmap::DashMap;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+use std::ops::Range;
+use rand::{rngs::StdRng, SeedableRng};
+
 use crate::connected_clients::{ConnectedClient, Connections};
 use crate::active_stream::{ActiveStreams, ActiveStream, StreamMessage};
+use crate::remote::{self, CancelHander};
+use crate::port_allocator::PortAllocator;
 
-pub fn spawn<A: Into<SocketAddr>>(conn: &'static Connections, active_streams: &'static ActiveStreams, addr: A) -> JoinHandle<()> {
+pub fn spawn<A: Into<SocketAddr>>(
+    conn: &'static Connections,
+    active_streams: &'static ActiveStreams,
+    alloc: Arc<Mutex<PortAllocator<Range<u16>>>>,
+    remote_cancellers: Arc<DashMap<ClientId, CancelHander>>,
+    addr: A) -> JoinHandle<()> {
     let health_check = warp::get().and(warp::path("health_check")).map(|| {
         tracing::debug!("Health Check #2 triggered");
         "ok"
     });
     let client_conn = warp::path("tunnel").and(client_addr()).and(warp::ws()).map(
         move |client_addr: SocketAddr, ws: Ws| {
+            let alloc_clone = alloc.clone();
+            let remote_cancellers_clone = remote_cancellers.clone();
             ws.on_upgrade(move |w| {
-                async move { handle_new_connection(conn, active_streams, client_addr, w).await }
+                async move { handle_new_connection(conn, active_streams, alloc_clone, remote_cancellers_clone, client_addr, w).await }
                     .instrument(tracing::info_span!("handle_websocket"))
             })
         },
@@ -46,9 +61,10 @@ pub struct ClientHandshake {
     pub id: ClientId,
     // pub sub_domain: String,
     // pub is_anonymous: bool,
+    pub port: u16
 }
 
-async fn try_client_handshake(websocket: &mut WebSocket) -> Option<ClientHandshake>
+async fn try_client_handshake(websocket: &mut WebSocket, alloc: Arc<Mutex<PortAllocator<Range<u16>>>>) -> Option<ClientHandshake>
 {
     let client_hello = match verify_client_handshake(websocket).await {
         Some(client_hello) => client_hello,
@@ -57,7 +73,18 @@ async fn try_client_handshake(websocket: &mut WebSocket) -> Option<ClientHandsha
             return None;
         }
     };
-    let client_id = match respond_with_server_hello(websocket).await {
+
+    // TODO: initialization of StdRng may takes time
+    let mut rng = StdRng::from_entropy();
+    let port = match alloc.lock().await.allocate_port(&mut rng) {
+        Ok(port) => port,
+        Err(_) => {
+            tracing::error!("failed to allocate port");
+            return None;
+        }
+    };
+
+    let client_id = match respond_with_server_hello(websocket, port).await {
         Ok(ServerHello::Success { client_id, assigned_port, version }) => client_id,
         Err(error) => {
             tracing::info!("failed to send server hello: {}", error);
@@ -67,7 +94,8 @@ async fn try_client_handshake(websocket: &mut WebSocket) -> Option<ClientHandsha
     };
 
     Some(ClientHandshake {
-        id: client_id
+        id: client_id,
+        port
     })
 }
 // async fn verify_client_handshake(websocket: &mut WebSocket) -> Option<ClientHello> {
@@ -93,14 +121,14 @@ async fn verify_client_handshake(websocket: &mut (impl Unpin + Stream<Item=Resul
 }
 
 // async fn respond_with_server_hello(websocket: &mut (impl Unpin + Sink<Message>)) -> Result<(), WarpError> 
-async fn respond_with_server_hello<T>(websocket: &mut T) -> Result<ServerHello, T::Error> 
+async fn respond_with_server_hello<T>(websocket: &mut T, port: u16) -> Result<ServerHello, T::Error> 
     where T: Unpin + Sink<Message> {
     // Send server hello success
     let client_id = ClientId::generate();
 
     let server_hello = ServerHello::Success {
         client_id: client_id.clone(),
-        assigned_port: 12345, // TODO
+        assigned_port: port,
         version: 0,
     };
     let data = serde_json::to_vec(&server_hello)
@@ -111,17 +139,35 @@ async fn respond_with_server_hello<T>(websocket: &mut T) -> Result<ServerHello, 
     Ok(server_hello)
 }
 
-async fn handle_new_connection(conn: &'static Connections, active_streams: &'static ActiveStreams, client_ip: SocketAddr, mut websocket: WebSocket) {
-    let handshake = match try_client_handshake(&mut websocket).await {
+async fn handle_new_connection(
+    conn: &'static Connections,
+    active_streams: &'static ActiveStreams,
+    alloc: Arc<Mutex<PortAllocator<Range<u16>>>>,
+    remote_cancellers: Arc<DashMap<ClientId, CancelHander>>,
+    client_ip: SocketAddr,
+    mut websocket: WebSocket) {
+    let handshake = match try_client_handshake(&mut websocket, alloc).await {
         Some(ws) => ws,
         None => return,
     };
-    tracing::info!(client_ip=%client_ip, id=%handshake.id, "open tunnel");
+    let client_id = handshake.id;
+    tracing::info!(client_ip=%client_ip, id=%client_id, port=%handshake.port, "open tunnel");
+    
+    let host = format!("host-foobar-{}", handshake.port);
+    let listen_addr = format!("[::]:{}", handshake.port);
+    let canceller = match remote::spawn_remote(conn, active_streams, listen_addr, host.clone()).await {
+        Ok(canceller) => canceller,
+        Err(_) => {
+            tracing::error!("failed to bind to allocated port");
+            return;
+        }
+    };
+    remote_cancellers.insert(client_id.clone(), canceller);
 
     let (tx, rx) = unbounded::<ControlPacket>();
     let mut client = ConnectedClient {
-        id: handshake.id,
-        host: "host-foobar".to_string(),
+        id: client_id.clone(),
+        host,
         tx,
     };
     Connections::add(conn, client.clone());
@@ -129,10 +175,17 @@ async fn handle_new_connection(conn: &'static Connections, active_streams: &'sta
     let (sink, stream) = websocket.split();
 
     let client_clone = client.clone();
+    let remote_cancellers_clone = remote_cancellers.clone();
+    let client_id_clone = client_id.clone();
     tokio::spawn(
         async move {
             let client = tunnel_client(client_clone, sink, rx).await;
             Connections::remove(conn, &client);
+            if let Some((cid, handler)) = remote_cancellers_clone.remove(&client_id_clone) {
+                if let Err(_) = handler.send(()) {
+                    tracing::error!("failed to cancel remote for {:?}", client_id_clone);
+                }
+            }
         }
         .instrument(tracing::info_span!("tunnel_client")),
     );
@@ -141,6 +194,11 @@ async fn handle_new_connection(conn: &'static Connections, active_streams: &'sta
         async move {
             let client = process_client_messages(active_streams, client_clone, stream).await;
             Connections::remove(conn, &client);
+            if let Some((cid, handler)) = remote_cancellers.remove(&client_id) {
+                if let Err(_) = handler.send(()) {
+                    tracing::error!("failed to cancel remote for {:?}", client_id);
+                }
+            }
         }
         .instrument(tracing::info_span!("process_client")),
     );
@@ -304,7 +362,7 @@ mod respond_with_server_hello_test {
     async fn it_works() -> Result<(), Box<dyn std::error::Error>> {
         let (mut tx, mut rx) = mpsc::unbounded();
 
-        respond_with_server_hello(&mut tx).await.expect("failed to write to websocket");
+        respond_with_server_hello(&mut tx, 12345).await.expect("failed to write to websocket");
 
         let server_hello_data = rx.next().await.unwrap().into_bytes();
         let server_hello: ServerHello = serde_json::from_slice(&server_hello_data).expect("server hello is malformed");
