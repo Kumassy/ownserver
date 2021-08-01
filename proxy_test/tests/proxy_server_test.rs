@@ -54,8 +54,7 @@ mod proxy_server_test {
         }
     }
 
-    // async fn launch_proxy_server(control_port: u16, remote_port: u16) -> Result<(WebSocketStream<MaybeTlsStream<TcpStream>>, ActiveStreams, UnboundedReceiver<ControlPacket>), Box<dyn std::error::Error>> {
-    async fn launch_proxy_server(control_port: u16, remote_port: u16) -> Result<(WebSocketStream<MaybeTlsStream<TcpStream>>, ActiveStreams, ClientInfo), Box<dyn std::error::Error>> {
+    async fn launch_proxy_server(control_port: u16) -> Result<(WebSocketStream<MaybeTlsStream<TcpStream>>, ActiveStreams, ClientInfo), Box<dyn std::error::Error>> {
         lazy_static! {
             pub static ref CONNECTIONS: Connections = Connections::new();
             pub static ref ACTIVE_STREAMS: ActiveStreams = Arc::new(DashMap::new());
@@ -68,7 +67,7 @@ mod proxy_server_test {
         let remote_cancellers: Arc<DashMap<ClientId, CancelHander>> = Arc::new(DashMap::new());
 
         tokio::spawn(async move {
-            run(&CONNECTIONS, &ACTIVE_STREAMS, alloc, remote_cancellers, control_port, remote_port).await;
+            run(&CONNECTIONS, &ACTIVE_STREAMS, alloc, remote_cancellers, control_port).await;
         });
 
         // setup proxy client
@@ -86,8 +85,7 @@ mod proxy_server_test {
     #[serial]
     async fn forward_remote_traffic_to_client() -> Result<(), Box<dyn std::error::Error>> {
         let control_port: u16 = 5000;
-        let remote_port: u16 = 8080;
-        let (websoket, active_streams, client_info) = launch_proxy_server(control_port, remote_port).await?;
+        let (websoket, active_streams, client_info) = launch_proxy_server(control_port).await?;
         let (mut _raw_client_ws_sink, mut raw_client_ws_stream) = websoket.split();
 
         assert_eq!(active_streams.iter().count(), 0, "active_streams should be empty until remote connection established");
@@ -110,8 +108,7 @@ mod proxy_server_test {
     #[serial]
     async fn forward_client_traffic_to_remote() -> Result<(), Box<dyn std::error::Error>> {
         let control_port: u16 = 5000;
-        let remote_port: u16 = 8080;
-        let (websoket, active_streams, client_info) = launch_proxy_server(control_port, remote_port).await?;
+        let (websoket, active_streams, client_info) = launch_proxy_server(control_port).await?;
         let (mut raw_client_ws_sink, mut _raw_client_ws_stream) = websoket.split();
 
         assert_eq!(active_streams.iter().count(), 0, "active_streams should be empty until remote connection established");
@@ -133,8 +130,7 @@ mod proxy_server_test {
     #[serial]
     async fn forward_multiple_remote_traffic_to_client() -> Result<(), Box<dyn std::error::Error>> {
         let control_port: u16 = 5000;
-        let remote_port: u16 = 8080;
-        let (websoket, active_streams, client_info) = launch_proxy_server(control_port, remote_port).await?;
+        let (websoket, active_streams, client_info) = launch_proxy_server(control_port).await?;
         let (mut _raw_client_ws_sink, mut raw_client_ws_stream) = websoket.split();
 
         assert_eq!(active_streams.iter().count(), 0, "active_streams should be empty until remote connection established");
@@ -170,8 +166,7 @@ mod proxy_server_test {
     #[serial]
     async fn forward_client_traffic_to_multiple_remote() -> Result<(), Box<dyn std::error::Error>> {
         let control_port: u16 = 5000;
-        let remote_port: u16 = 8080;
-        let (websoket, active_streams, client_info) = launch_proxy_server(control_port, remote_port).await?;
+        let (websoket, active_streams, client_info) = launch_proxy_server(control_port).await?;
         let (mut raw_client_ws_sink, mut _raw_client_ws_stream) = websoket.split();
 
         assert_eq!(active_streams.iter().count(), 0, "active_streams should be empty until remote connection established");

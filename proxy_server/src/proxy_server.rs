@@ -26,36 +26,10 @@ pub async fn run(
     active_streams: &'static ActiveStreams,
     alloc: Arc<Mutex<PortAllocator<Range<u16>>>>,
     remote_cancellers: Arc<DashMap<ClientId, CancelHander>>,
-    control_port: u16,
-    remote_port: u16)
+    control_port: u16)
 {
     tracing::info!("starting server!");
 
     control_server::spawn(conn, active_streams, alloc, remote_cancellers, ([0, 0, 0, 0], control_port));
     info!("started tunnelto server on 0.0.0.0:{}", control_port);
-
-    let listen_addr = format!("[::]:{}", remote_port);
-    info!("listening on: {}", &listen_addr);
-
-    // create our accept any server
-    let listener = TcpListener::bind(listen_addr)
-        .await
-        .expect("failed to bind");
-
-    loop {
-        let socket = match listener.accept().await {
-            Ok((socket, _)) => socket,
-            _ => {
-                error!("failed to accept socket");
-                continue;
-            }
-        };
-
-        tokio::spawn(
-            async move {
-                remote::accept_connection(conn, active_streams.clone(), socket, "host-foobar".to_string()).await;
-            }
-            .instrument(tracing::info_span!("remote_connect")),
-        );
-    }
 }

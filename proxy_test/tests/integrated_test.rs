@@ -59,7 +59,7 @@ mod proxy_client_server_test {
         }
     }
 
-    async fn launch_proxy_server(control_port: u16, remote_port: u16) -> Result<ActiveStreamsServer, Box<dyn std::error::Error>> {
+    async fn launch_proxy_server(control_port: u16) -> Result<ActiveStreamsServer, Box<dyn std::error::Error>> {
         lazy_static! {
             pub static ref CONNECTIONS: Connections = Connections::new();
             pub static ref ACTIVE_STREAMS_SERVER: ActiveStreamsServer = Arc::new(DashMap::new());
@@ -72,7 +72,7 @@ mod proxy_client_server_test {
         let remote_cancellers: Arc<DashMap<ClientId, CancelHander>> = Arc::new(DashMap::new());
 
         tokio::spawn(async move {
-            proxy_server::run(&CONNECTIONS, &ACTIVE_STREAMS_SERVER, alloc, remote_cancellers, control_port, remote_port).await;
+            proxy_server::run(&CONNECTIONS, &ACTIVE_STREAMS_SERVER, alloc, remote_cancellers, control_port).await;
         });
 
         Ok(ACTIVE_STREAMS_SERVER.clone())
@@ -128,7 +128,7 @@ mod proxy_client_server_test {
         let remote_port: u16 = 8080;
         let local_port: u16 = 3000;
 
-        let active_streams_server = launch_proxy_server(control_port, remote_port).await?;
+        let active_streams_server = launch_proxy_server(control_port).await?;
         // wait until server is ready
         tokio::time::sleep(Duration::from_secs(3)).await;
 
@@ -162,7 +162,7 @@ mod proxy_client_server_test {
         let remote_port: u16 = 8080;
         let local_port: u16 = 3000;
 
-        let active_streams_server = launch_proxy_server(control_port, remote_port).await?;
+        let active_streams_server = launch_proxy_server(control_port).await?;
         // wait until server is ready
         tokio::time::sleep(Duration::from_secs(3)).await;
 
@@ -200,7 +200,7 @@ mod proxy_client_server_test {
         let remote_port: u16 = 8080;
         let local_port: u16 = 3000;
 
-        let active_streams_server = launch_proxy_server(control_port, remote_port).await?;
+        let active_streams_server = launch_proxy_server(control_port).await?;
         // wait until server is ready
         tokio::time::sleep(Duration::from_secs(3)).await;
 
@@ -232,34 +232,22 @@ mod proxy_client_server_test {
         Ok(())
     }
 
-    // TODO: only when client is connected, remote port opens.
-    // thus, we cannnot connect to remote port when not client connected
     #[tokio::test]
     #[serial]
-    async fn refuse_remote_traffic_when_client_not_connected() -> Result<(), Box<dyn std::error::Error>> {
+    async fn refuse_remote_traffic_when_remote_process_not_running() -> Result<(), Box<dyn std::error::Error>> {
         let control_port: u16 = 5000;
         let remote_port: u16 = 8080;
 
-        let active_streams_server = launch_proxy_server(control_port, remote_port).await?;
+        let active_streams_server = launch_proxy_server(control_port).await?;
         // wait until server is ready
         tokio::time::sleep(Duration::from_secs(3)).await;
 
         assert_eq!(active_streams_server.iter().count(), 0, "active_streams should be empty until remote connection established");
 
         // access remote port
-        let mut remote = TcpStream::connect(format!("127.0.0.1:{}", remote_port)).await.expect("Failed to connect to remote port");
-        // wait until remote access has registered to ACTIVE_STREAMS
-        tokio::time::sleep(Duration::from_secs(3)).await;
+        let remote = TcpStream::connect(format!("127.0.0.1:{}", remote_port)).await;
+        assert!(remote.is_err());
 
-        assert_eq!(active_streams_server.iter().count(), 0, "active_streams should be empty. remote stream is never registered.");
-        assert_socket_bytes_matches!(remote, HTTP_ERROR_LOCATING_HOST_RESPONSE);
-
-        // at the first write operation, proxy_server send FIN
-        remote.write_all(&b"foobar".to_vec()).await?; 
-        remote.flush().await?;
-        tokio::time::sleep(Duration::from_secs(1)).await;
-       
-        assert!(remote.write_all(&b"foobar".to_vec()).await.is_err(), "second operation must fail because proxy_server release tcp connection.");
         Ok(())
     }
 }
