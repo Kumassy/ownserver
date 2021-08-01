@@ -6,12 +6,18 @@ TODO
 - [x] make ACTIVE_STREAMS to DI
 - [x] write test to process_client_messages
 - [ ] skip tracing, make log clean
+- [ ] more meaningful log
 - [x] client: run_wormhole
 - [x] add version field to handshake
-- [ ] host -> port addresssing
-- [ ] launch, delete port listen when client registered/dropped
-- [ ] maintain available port table
-- [ ] port scan, integrate with fail2ban
+- [x] host -> port addresssing
+    - this is not necessary because port belongs to only one host: remote process
+- [x] launch, delete port listen when client registered/dropped
+- [x] maintain available port table
+- [ ] forbit port scan, integrate with fail2ban
+- [ ] add more auth logics
+- [ ] add admin api: get available port count for load balancing 
+- [ ] monitoring
+    - [ ] cpu, # of open tcp port
 
 integration test
 - [x] if server send ControlPacket::Init, then client set up local stream
