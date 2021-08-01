@@ -44,7 +44,13 @@ pub async fn process_local_tcp(mut stream: ReadHalf<TcpStream>, mut tunnel: Unbo
     let mut buf = [0; 4*1024];
 
     loop {
-        let n = stream.read(&mut buf).await.expect("failed to read data from socket");
+        let n = match stream.read(&mut buf).await {
+            Ok(n) => n,
+            Err(e) => {
+                error!("failed to read data from socket: {:?}", e);
+                return;
+            }
+        };
 
         if n == 0 {
             info!("done reading from client stream");
