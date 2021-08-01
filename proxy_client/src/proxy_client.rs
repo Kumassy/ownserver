@@ -12,13 +12,19 @@ use std::env;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use tokio::time;
+use tokio::task::{JoinHandle, JoinError};
 
 use crate::error::Error;
 use crate::local;
 use crate::{ActiveStreams, StreamMessage};
 use magic_tunnel_lib::{StreamId, ClientId, ClientHello, ControlPacket, ServerHello};
 
-pub async fn run(active_streams: &'static ActiveStreams, control_port: u16, remote_port: u16, local_port: u16) -> Result<()> {
+pub async fn run(
+    active_streams: &'static ActiveStreams,
+    control_port: u16,
+    remote_port: u16,
+    local_port: u16
+) -> Result<(ClientInfo, JoinHandle<()>, JoinHandle<Result<(), Error>>)> {
     let url = Url::parse(&format!("wss://localhost:{}/tunnel", control_port))?;
     let (mut websocket, _ ) = connect_async(url).await.expect("failed to connect");
 
@@ -26,7 +32,7 @@ pub async fn run(active_streams: &'static ActiveStreams, control_port: u16, remo
 
     send_client_hello(&mut websocket).await?;
     let client_info = verify_server_hello(&mut websocket).await?;
-    info!("client_info: {:?}", client_info);
+    info!("got client_info from server: {:?}", client_info);
 
     // split reading and writing
     let (mut ws_sink, mut ws_stream) = websocket.split();
@@ -35,7 +41,7 @@ pub async fn run(active_streams: &'static ActiveStreams, control_port: u16, remo
     let (tunnel_tx, mut tunnel_rx) = unbounded::<ControlPacket>();
 
     // continuously write to websocket tunnel
-    tokio::spawn(async move {
+    let handle_client_to_control: JoinHandle<()> = tokio::spawn(async move {
         loop {
             let packet = match tunnel_rx.next().await {
                 Some(data) => data,
@@ -52,37 +58,41 @@ pub async fn run(active_streams: &'static ActiveStreams, control_port: u16, remo
         }
     });
 
-    // continuously read from websocket tunnel
-    loop {
-        match ws_stream.next().await {
-            Some(Ok(message)) if message.is_close() => {
-                debug!("got close message");
-                return Ok(());
-            }
-            Some(Ok(message)) => {
-                let packet = process_control_flow_message(
-                    active_streams.clone(),
-                    tunnel_tx.clone(),
-                    message.into_data(),
-                    local_port,
-                )
-                .await
-                .map_err(|e| {
-                    error!("Malformed protocol control packet: {:?}", e);
-                    Error::MalformedMessageFromServer
-                })?;
-                debug!("Processed packet: {:?}", packet);
-            }
-            Some(Err(e)) => {
-                warn!("websocket read error: {:?}", e);
-                return Err(Error::Timeout.into());
-            }
-            None => {
-                warn!("websocket sent none");
-                return Err(Error::Timeout.into());
+    let handle_control_to_client: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
+        // continuously read from websocket tunnel
+        loop {
+            match ws_stream.next().await {
+                Some(Ok(message)) if message.is_close() => {
+                    debug!("got close message");
+                    return Ok(());
+                }
+                Some(Ok(message)) => {
+                    let packet = process_control_flow_message(
+                        active_streams.clone(),
+                        tunnel_tx.clone(),
+                        message.into_data(),
+                        local_port,
+                    )
+                    .await
+                    .map_err(|e| {
+                        error!("Malformed protocol control packet: {:?}", e);
+                        Error::MalformedMessageFromServer
+                    })?;
+                    debug!("Processed packet: {:?}", packet);
+                }
+                Some(Err(e)) => {
+                    warn!("websocket read error: {:?}", e);
+                    return Err(Error::Timeout.into());
+                }
+                None => {
+                    warn!("websocket sent none");
+                    return Err(Error::Timeout.into());
+                }
             }
         }
-    }
+    });
+
+    Ok((client_info, handle_client_to_control, handle_control_to_client))
 }
 
 pub async fn send_client_hello<T>(websocket: &mut T) -> Result<(), T::Error> 
@@ -100,8 +110,8 @@ pub async fn send_client_hello<T>(websocket: &mut T) -> Result<(), T::Error>
 #[derive(Debug)]
 pub struct ClientInfo
 {
-    client_id: ClientId,
-    assigned_port: u16,
+    pub client_id: ClientId,
+    pub assigned_port: u16,
 }
 
 pub async fn verify_server_hello<T>(websocket: &mut T) -> Result<ClientInfo, Error>

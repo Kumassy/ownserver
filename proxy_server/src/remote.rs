@@ -522,8 +522,7 @@ mod spawn_remote_test {
 
     #[tokio::test]
     async fn reject_remote_connection_after_cancellation() -> Result<(), Box<dyn std::error::Error>> {
-        tracing_subscriber::fmt::init();
-        let remote_port = 5678;
+        let remote_port = 5679;
         let remote_cancel_handler = launch_remote(remote_port).await?;
 
         let _ = TcpStream::connect(format!("127.0.0.1:{}", remote_port)).await.expect("Failed to connect to remote port");
