@@ -7,6 +7,8 @@ TODO
 - [x] write test to process_client_messages
 - [ ] skip tracing, make log clean
 - [ ] more meaningful log
+    - [ ] include stream id to each log 
+    - [ ] num of client, stream at create/delete client, stream
 - [x] client: run_wormhole
 - [x] add version field to handshake
 - [x] host -> port addresssing
@@ -18,6 +20,7 @@ TODO
 - [ ] add admin api: get available port count for load balancing 
 - [ ] monitoring
     - [ ] cpu, # of open tcp port
+- [ ] no unwrap, expect
 
 integration test
 - [x] if server send ControlPacket::Init, then client set up local stream
