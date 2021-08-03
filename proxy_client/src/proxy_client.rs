@@ -27,7 +27,7 @@ pub async fn run(
 
     send_client_hello(&mut websocket).await?;
     let client_info = verify_server_hello(&mut websocket).await?;
-    info!("got client_info from server: {:?}", client_info);
+    info!("cid={} got client_info from server: {:?}", client_info.client_id, client_info);
 
     // split reading and writing
     let (mut ws_sink, mut ws_stream) = websocket.split();
@@ -35,19 +35,22 @@ pub async fn run(
     // tunnel channel
     let (tunnel_tx, mut tunnel_rx) = unbounded::<ControlPacket>();
 
+    let client_id = client_info.client_id.clone();
+    let client_id_clone = client_id.clone();
     // continuously write to websocket tunnel
     let handle_client_to_control: JoinHandle<()> = tokio::spawn(async move {
+        let client_id = client_id_clone;
         loop {
             let packet = match tunnel_rx.next().await {
                 Some(data) => data,
                 None => {
-                    warn!("control flow didn't send anything!");
+                    warn!("cid={} control flow didn't send anything!", client_id);
                     return;
                 }
             };
 
             if let Err(e) = ws_sink.send(Message::binary(packet.serialize())).await {
-                warn!("failed to write message to tunnel websocket: {:?}", e);
+                warn!("cid={} failed to write message to tunnel websocket: {:?}", client_id, e);
                 return;
             }
         }
@@ -58,7 +61,7 @@ pub async fn run(
         loop {
             match ws_stream.next().await {
                 Some(Ok(message)) if message.is_close() => {
-                    debug!("got close message");
+                    debug!("cid={} got close message", client_id);
                     return Ok(());
                 }
                 Some(Ok(message)) => {
@@ -70,17 +73,17 @@ pub async fn run(
                     )
                     .await
                     .map_err(|e| {
-                        error!("Malformed protocol control packet: {:?}", e);
+                        error!("cid={} Malformed protocol control packet: {:?}", client_id, e);
                         Error::MalformedMessageFromServer
                     })?;
-                    debug!("Processed packet: {:?}", packet);
+                    debug!("cid={} Processed data packet: {}", client_id, packet);
                 }
                 Some(Err(e)) => {
-                    warn!("websocket read error: {:?}", e);
+                    warn!("cid={} websocket read error: {:?}", client_id, e);
                     return Err(Error::Timeout.into());
                 }
                 None => {
-                    warn!("websocket sent none");
+                    warn!("cid={} websocket sent none", client_id);
                     return Err(Error::Timeout.into());
                 }
             }
@@ -98,12 +101,13 @@ pub async fn send_client_hello<T>(websocket: &mut T) -> Result<(), T::Error>
 where
     T: Unpin + Sink<Message>,
 {
-    let hello = serde_json::to_vec(&ClientHello {
+    let hello = ClientHello {
         id: ClientId::generate(),
         version: 0,
-    })
-    .unwrap_or_default();
-    websocket.send(Message::binary(hello)).await?;
+    };
+    debug!("Sent client hello: {:?}", hello);
+    let hello_data = serde_json::to_vec(&hello).unwrap_or_default();
+    websocket.send(Message::binary(hello_data)).await?;
 
     Ok(())
 }
@@ -128,6 +132,7 @@ where
         error!("Couldn't parse server_hello from {:?}", e);
         Error::ServerReplyInvalid
     })?;
+    debug!("Got server hello: {:?}", server_hello);
 
     let (client_id, assigned_port) = match server_hello {
         ServerHello::Success {
@@ -135,7 +140,7 @@ where
             assigned_port,
             ..
         } => {
-            info!("Server accepted our connection. I am client_{}", client_id);
+            info!("cid={} Server accepted our connection.", client_id);
             (client_id, assigned_port)
         }
         _ => unimplemented!(),
@@ -158,7 +163,7 @@ pub async fn process_control_flow_message(
 
     match &control_packet {
         ControlPacket::Init(stream_id) => {
-            info!("stream[{:?}] -> init", stream_id.to_string());
+            debug!("sid={} init stream", stream_id.to_string());
 
             if !active_streams.read().unwrap().contains_key(&stream_id) {
                 local::setup_new_stream(
@@ -170,39 +175,38 @@ pub async fn process_control_flow_message(
                 .await;
             } else {
                 warn!(
-                    "stream[{:?}] already exist at init process",
+                    "sid={} already exist at init process",
                     stream_id.to_string()
                 );
             }
         }
         ControlPacket::Ping => {
-            log::info!("got ping.");
-
+            debug!("got ping");
             let _ = tunnel_tx.send(ControlPacket::Ping).await;
         }
         ControlPacket::Refused(_) => return Err("unexpected control packet".into()),
         ControlPacket::End(stream_id) => {
+            debug!("sid={} end stream", stream_id.to_string());
             // proxy server try to close control stream and local stream
 
             // find the stream
             let stream_id = stream_id.clone();
 
-            info!("got end stream [{:?}]", stream_id.to_string());
 
             tokio::spawn(async move {
                 let stream = active_streams.read().unwrap().get(&stream_id).cloned();
                 if let Some(mut tx) = stream {
                     tokio::time::sleep(Duration::from_secs(5)).await;
                     let _ = tx.send(StreamMessage::Close).await.map_err(|e| {
-                        error!("failed to send stream close: {:?}", e);
+                        error!("sid={} failed to send stream close: {:?}", stream_id.to_string(), e);
                     });
                     active_streams.write().unwrap().remove(&stream_id);
                 }
             });
         }
         ControlPacket::Data(stream_id, data) => {
-            info!(
-                "stream[{:?}] -> new data: {:?}",
+            debug!(
+                "sid={} new data: {}",
                 stream_id.to_string(),
                 data.len()
             );
@@ -212,9 +216,9 @@ pub async fn process_control_flow_message(
             // forward data to it
             if let Some(mut tx) = active_stream {
                 tx.send(StreamMessage::Data(data.clone())).await?;
-                info!("forwarded to local tcp ({})", stream_id.to_string());
+                debug!("sid={} forwarded to local tcp", stream_id.to_string());
             } else {
-                error!("got data but no stream to send it to.");
+                error!("sid={} got data but no stream to send it to.", stream_id.to_string());
                 let _ = tunnel_tx
                     .send(ControlPacket::Refused(stream_id.clone()))
                     .await?;

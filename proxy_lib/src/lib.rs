@@ -41,6 +41,13 @@ impl ClientId {
             &sha2::Sha256::digest(self.0.as_bytes()).to_vec(),
         ))
     }
+
+    pub fn to_string(&self) -> String {
+        format!(
+            "client_{}",
+            base64::encode_config(&self.0, base64::URL_SAFE_NO_PAD)
+        )
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -93,6 +100,18 @@ impl ControlPacket {
         };
 
         Ok(packet)
+    }
+}
+
+impl std::fmt::Display for ControlPacket {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+         match self {
+            ControlPacket::Init(sid) => write!(f, "ControlPacket::Init(sid={})", sid.to_string()),
+            ControlPacket::Data(sid, data) => write!(f, "ControlPacket::Data(sid={}, data_len={})", sid.to_string(), data.len()),
+            ControlPacket::Refused(sid) => write!(f, "ControlPacket::Refused(sid={})", sid.to_string()),
+            ControlPacket::End(sid) => write!(f, "ControlPacket::End(sid={})", sid.to_string()),
+            ControlPacket::Ping => write!(f, "ControlPacket::Ping"),
+        }
     }
 }
 
