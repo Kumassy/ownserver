@@ -1,8 +1,8 @@
-use std::collections::HashSet;
-use std::ops::RangeBounds;
-use std::iter::ExactSizeIterator;
 use rand::prelude::*;
 use rand::Rng;
+use std::collections::HashSet;
+use std::iter::ExactSizeIterator;
+use std::ops::RangeBounds;
 
 use thiserror::Error;
 
@@ -25,7 +25,7 @@ pub struct PortAllocator<R> {
 
 impl<R> PortAllocator<R>
 where
-    R: RangeBounds<u16> + Clone + Iterator<Item=u16> + ExactSizeIterator,
+    R: RangeBounds<u16> + Clone + Iterator<Item = u16> + ExactSizeIterator,
 {
     pub fn new(range: R) -> Self {
         let mut set = HashSet::with_capacity(range.len());
@@ -35,7 +35,7 @@ where
 
         PortAllocator {
             available_ports: set,
-            range
+            range,
         }
     }
 
@@ -61,7 +61,6 @@ where
         Ok(())
     }
 }
-
 
 #[cfg(test)]
 mod allocate_port_tests {

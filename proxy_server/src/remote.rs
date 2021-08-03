@@ -1,27 +1,26 @@
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tokio::net::{TcpStream, TcpListener, ToSocketAddrs};
-use tokio::sync::oneshot;
+use futures::channel::mpsc::UnboundedReceiver;
+use futures::prelude::*;
 use std::io;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream, ToSocketAddrs};
+use tokio::sync::oneshot;
 use tracing::debug;
 use tracing::{error, info, Instrument};
-use futures::prelude::*;
-use futures::channel::mpsc::UnboundedReceiver;
 
-use crate::active_stream::{ActiveStream, StreamMessage, ActiveStreams};
+use crate::active_stream::{ActiveStream, ActiveStreams, StreamMessage};
 use crate::connected_clients::Connections;
 use crate::control_server;
-pub use magic_tunnel_lib::{StreamId, ClientId, ControlPacket};
+pub use magic_tunnel_lib::{ClientId, ControlPacket, StreamId};
 
 pub type CancelHander = oneshot::Sender<()>;
 pub async fn spawn_remote(
     conn: &'static Connections,
     active_streams: &'static ActiveStreams,
     listen_addr: impl ToSocketAddrs,
-    host: String
+    host: String,
 ) -> io::Result<CancelHander> {
     // create our accept any server
-    let listener = TcpListener::bind(listen_addr)
-        .await?;
+    let listener = TcpListener::bind(listen_addr).await?;
 
     let (cancel_tx, mut cancel_rx) = oneshot::channel::<()>();
 
@@ -57,7 +56,12 @@ pub async fn spawn_remote(
 
 // stream has selected because each stream listen different port
 #[tracing::instrument(skip(socket, conn, active_streams))]
-pub async fn accept_connection(conn: &'static Connections, active_streams: ActiveStreams, mut socket: TcpStream, host: String) {
+pub async fn accept_connection(
+    conn: &'static Connections,
+    active_streams: ActiveStreams,
+    mut socket: TcpStream,
+    host: String,
+) {
     tracing::info!("new remote connection");
 
     // find the client listening for this host
@@ -95,7 +99,10 @@ pub async fn accept_connection(conn: &'static Connections, active_streams: Activ
     tokio::spawn(
         async move {
             let reason = tunnel_to_stream(host, stream_id.clone(), sink, queue_rx).await;
-            debug!("tunnel_to_stream closed for stream_id: {:?} with reason: {:?}", stream_id, reason);
+            debug!(
+                "tunnel_to_stream closed for stream_id: {:?} with reason: {:?}",
+                stream_id, reason
+            );
             active_streams.remove(&stream_id);
         }
         .instrument(tracing::info_span!("tunnel_to_stream")),
@@ -109,12 +116,16 @@ pub const HTTP_NOT_FOUND_RESPONSE: &'static [u8] =
 pub const HTTP_TUNNEL_REFUSED_RESPONSE: &'static [u8] =
     b"HTTP/1.1 500\r\nContent-Length: 32\r\n\r\nTunnel says: connection refused.";
 
-
 /// Process Messages from the control path in & out of the remote stream
 #[tracing::instrument(skip(tunnel_stream, tcp_stream))]
 // async fn process_tcp_stream(conn: &Connections, mut tunnel_stream: ActiveStream, mut tcp_stream: ReadHalf<TcpStream>) {
-async fn process_tcp_stream<T>(conn: &Connections, mut tunnel_stream: ActiveStream, mut tcp_stream: T)
-where T: AsyncRead + Unpin {
+async fn process_tcp_stream<T>(
+    conn: &Connections,
+    mut tunnel_stream: ActiveStream,
+    mut tcp_stream: T,
+) where
+    T: AsyncRead + Unpin,
+{
     // send initial control stream init to client
     if let Err(e) = control_server::send_client_stream_init(tunnel_stream.clone()).await {
         error!("failed to send stream init: {:?}", e);
@@ -194,9 +205,9 @@ async fn tunnel_to_stream<T>(
     // mut sink: WriteHalf<TcpStream>,
     mut sink: T,
     mut queue: UnboundedReceiver<StreamMessage>,
-)
--> TunnelToStreamExitReason
-where T: AsyncWrite + AsyncWriteExt + Unpin
+) -> TunnelToStreamExitReason
+where
+    T: AsyncWrite + AsyncWriteExt + Unpin,
 {
     loop {
         let result = queue.next().await;
@@ -248,15 +259,14 @@ mod process_tcp_stream_test {
     use futures::channel::mpsc::{unbounded, UnboundedReceiver};
     use tokio_test::io::Builder;
 
-    use tokio::io::{AsyncRead, ReadBuf};
-    use std::task::{self, Poll};
-    use std::pin::Pin;
     use std::io;
+    use std::pin::Pin;
+    use std::task::{self, Poll};
+    use tokio::io::{AsyncRead, ReadBuf};
 
     use crate::connected_clients::ConnectedClient;
 
-    struct InfiniteRead {
-    }
+    struct InfiniteRead {}
     impl InfiniteRead {
         fn new() -> Self {
             InfiniteRead {}
@@ -273,13 +283,19 @@ mod process_tcp_stream_test {
         }
     }
 
-    fn create_active_stream() -> (Connections, ConnectedClient, ActiveStream, UnboundedReceiver<StreamMessage>, UnboundedReceiver<ControlPacket>) {
+    fn create_active_stream() -> (
+        Connections,
+        ConnectedClient,
+        ActiveStream,
+        UnboundedReceiver<StreamMessage>,
+        UnboundedReceiver<ControlPacket>,
+    ) {
         let conn = Connections::new();
         let (tx, rx) = unbounded::<ControlPacket>();
         let client = ConnectedClient {
             id: ClientId::generate(),
             host: "foobar".into(),
-            tx
+            tx,
         };
 
         let (active_stream, stream_rx) = ActiveStream::new(client.clone());
@@ -291,23 +307,27 @@ mod process_tcp_stream_test {
     async fn send_stream_init() -> Result<(), Box<dyn std::error::Error>> {
         let (conn, _client, active_stream, _stream_rx, mut client_rx) = create_active_stream();
 
-        let tcp_mock = Builder::new()
-            .build();
+        let tcp_mock = Builder::new().build();
         let _ = process_tcp_stream(&conn, active_stream, tcp_mock).await;
 
-        assert!(matches!(client_rx.next().await.unwrap(), ControlPacket::Init(_)));
+        assert!(matches!(
+            client_rx.next().await.unwrap(),
+            ControlPacket::Init(_)
+        ));
         Ok(())
     }
-    
     #[tokio::test]
-    async fn send_noclienttunnel_to_remote_when_client_not_registered() -> Result<(), Box<dyn std::error::Error>> {
+    async fn send_noclienttunnel_to_remote_when_client_not_registered(
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let (conn, _client, active_stream, mut stream_rx, _client_rx) = create_active_stream();
 
-        let tcp_mock = Builder::new()
-            .build();
+        let tcp_mock = Builder::new().build();
         let _ = process_tcp_stream(&conn, active_stream, tcp_mock).await;
 
-        assert_eq!(stream_rx.next().await.unwrap(), StreamMessage::NoClientTunnel);
+        assert_eq!(
+            stream_rx.next().await.unwrap(),
+            StreamMessage::NoClientTunnel
+        );
         Ok(())
     }
 
@@ -317,23 +337,28 @@ mod process_tcp_stream_test {
         Connections::add(&conn, client.clone());
         let stream_id = active_stream.id.clone();
 
-        let tcp_mock = Builder::new()
-            .build();
+        let tcp_mock = Builder::new().build();
         let _ = process_tcp_stream(&conn, active_stream, tcp_mock).await;
 
-        assert_eq!(client_rx.next().await.unwrap(), ControlPacket::Init(stream_id.clone()));
-        assert_eq!(client_rx.next().await.unwrap(), ControlPacket::End(stream_id.clone()));
+        assert_eq!(
+            client_rx.next().await.unwrap(),
+            ControlPacket::Init(stream_id.clone())
+        );
+        assert_eq!(
+            client_rx.next().await.unwrap(),
+            ControlPacket::End(stream_id.clone())
+        );
 
         Ok(())
     }
 
     #[tokio::test]
-    async fn client_stream_should_close_when_client_is_dropped() -> Result<(), Box<dyn std::error::Error>> {
+    async fn client_stream_should_close_when_client_is_dropped(
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let (conn, client, active_stream, _stream_rx, mut client_rx) = create_active_stream();
         Connections::add(&conn, client.clone());
 
-        let tcp_mock = Builder::new()
-            .build();
+        let tcp_mock = Builder::new().build();
         let _ = process_tcp_stream(&conn, active_stream, tcp_mock).await;
 
         assert!(client_rx.next().await.is_some());
@@ -352,25 +377,32 @@ mod process_tcp_stream_test {
         Connections::add(&conn, client);
         let stream_id = active_stream.id.clone();
 
-        let tcp_mock = Builder::new()
-            .read(b"foobar")
-            .build();
+        let tcp_mock = Builder::new().read(b"foobar").build();
         let _ = process_tcp_stream(&conn, active_stream, tcp_mock).await;
 
-        assert_eq!(client_rx.next().await.unwrap(), ControlPacket::Init(stream_id.clone()));
-        assert_eq!(client_rx.next().await.unwrap(), ControlPacket::Data(stream_id.clone(), b"foobar".to_vec()));
-        assert_eq!(client_rx.next().await.unwrap(), ControlPacket::End(stream_id.clone()));
+        assert_eq!(
+            client_rx.next().await.unwrap(),
+            ControlPacket::Init(stream_id.clone())
+        );
+        assert_eq!(
+            client_rx.next().await.unwrap(),
+            ControlPacket::Data(stream_id.clone(), b"foobar".to_vec())
+        );
+        assert_eq!(
+            client_rx.next().await.unwrap(),
+            ControlPacket::End(stream_id.clone())
+        );
         Ok(())
     }
 
     #[tokio::test]
-    async fn failed_to_send_stream_init_when_client_closed() -> Result<(), Box<dyn std::error::Error>> {
+    async fn failed_to_send_stream_init_when_client_closed(
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let (conn, client, active_stream, _stream_rx, mut client_rx) = create_active_stream();
         client.tx.close_channel();
         Connections::add(&conn, client);
 
-        let tcp_mock = Builder::new()
-            .build();
+        let tcp_mock = Builder::new().build();
         let _ = process_tcp_stream(&conn, active_stream, tcp_mock).await;
 
         assert_eq!(client_rx.next().await, None);
@@ -378,7 +410,8 @@ mod process_tcp_stream_test {
     }
 
     #[tokio::test]
-    async fn stop_wait_read_when_tunnel_stream_is_closed() -> Result<(), Box<dyn std::error::Error>> {
+    async fn stop_wait_read_when_tunnel_stream_is_closed() -> Result<(), Box<dyn std::error::Error>>
+    {
         let (conn, client, active_stream, _stream_rx, mut client_rx) = create_active_stream();
         Connections::add(&conn, client);
 
@@ -394,15 +427,12 @@ mod process_tcp_stream_test {
 mod tunnel_to_stream_test {
     use super::*;
     use futures::channel::mpsc::unbounded;
-    use tokio_test::io::Builder;
     use std::io;
+    use tokio_test::io::Builder;
 
     #[tokio::test]
     async fn mock_test() -> Result<(), Box<dyn std::error::Error>> {
-        let mut tcp_mock = Builder::new()
-            .write(b"foobarbaz")
-            .write(b"piyo")
-            .build();
+        let mut tcp_mock = Builder::new().write(b"foobarbaz").write(b"piyo").build();
 
         // writed data must be exactly same as builder args
         // any grouping is accepted because of stream
@@ -410,17 +440,15 @@ mod tunnel_to_stream_test {
         tcp_mock.write(b"bazpiyo").await?;
         Ok(())
     }
-    
     #[tokio::test]
     async fn must_exit_from_loop_when_tcp_raises_error() -> Result<(), Box<dyn std::error::Error>> {
         let error = io::Error::new(io::ErrorKind::Other, "cruel");
-        let tcp_mock = Builder::new()
-            .write_error(error)
-            .build();
+        let tcp_mock = Builder::new().write_error(error).build();
         let (mut tx, rx) = unbounded();
 
         tx.send(StreamMessage::Data(b"foobar".to_vec())).await?;
-        let reason = tunnel_to_stream("foobar".to_string(), StreamId::generate(), tcp_mock, rx).await;
+        let reason =
+            tunnel_to_stream("foobar".to_string(), StreamId::generate(), tcp_mock, rx).await;
 
         assert_eq!(reason, TunnelToStreamExitReason::TcpClosed);
         assert_eq!(tx.is_closed(), true);
@@ -428,25 +456,27 @@ mod tunnel_to_stream_test {
     }
 
     #[tokio::test]
-    async fn tcp_stream_must_shutdown_when_queue_is_closed() -> Result<(), Box<dyn std::error::Error>> {
-        let tcp_mock = Builder::new()
-            .build();
+    async fn tcp_stream_must_shutdown_when_queue_is_closed(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let tcp_mock = Builder::new().build();
         let (tx, rx) = unbounded();
         tx.close_channel();
 
-        let reason = tunnel_to_stream("foobar".to_string(), StreamId::generate(), tcp_mock, rx).await;
+        let reason =
+            tunnel_to_stream("foobar".to_string(), StreamId::generate(), tcp_mock, rx).await;
         assert_eq!(reason, TunnelToStreamExitReason::QueueClosed);
         Ok(())
     }
 
     #[tokio::test]
-    async fn tcp_stream_must_shutdown_when_tunnel_refused() -> Result<(), Box<dyn std::error::Error>> {
-        let tcp_mock = Builder::new()
-            .build();
+    async fn tcp_stream_must_shutdown_when_tunnel_refused() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let tcp_mock = Builder::new().build();
         let (mut tx, rx) = unbounded();
 
         tx.send(StreamMessage::TunnelRefused).await?;
-        let reason = tunnel_to_stream("foobar".to_string(), StreamId::generate(), tcp_mock, rx).await;
+        let reason =
+            tunnel_to_stream("foobar".to_string(), StreamId::generate(), tcp_mock, rx).await;
 
         assert_eq!(reason, TunnelToStreamExitReason::QueueClosed);
         assert_eq!(tx.is_closed(), true);
@@ -454,13 +484,14 @@ mod tunnel_to_stream_test {
     }
 
     #[tokio::test]
-    async fn tcp_stream_must_shutdown_when_no_client_tunnel() -> Result<(), Box<dyn std::error::Error>> {
-        let tcp_mock = Builder::new()
-            .build();
+    async fn tcp_stream_must_shutdown_when_no_client_tunnel(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let tcp_mock = Builder::new().build();
         let (mut tx, rx) = unbounded();
 
         tx.send(StreamMessage::NoClientTunnel).await?;
-        let reason = tunnel_to_stream("foobar".to_string(), StreamId::generate(), tcp_mock, rx).await;
+        let reason =
+            tunnel_to_stream("foobar".to_string(), StreamId::generate(), tcp_mock, rx).await;
 
         assert_eq!(reason, TunnelToStreamExitReason::QueueClosed);
         assert_eq!(tx.is_closed(), true);
@@ -469,31 +500,29 @@ mod tunnel_to_stream_test {
 
     #[tokio::test]
     async fn forward_data() -> Result<(), Box<dyn std::error::Error>> {
-        let tcp_mock = Builder::new()
-            .write(b"foobarbaz")
-            .build();
+        let tcp_mock = Builder::new().write(b"foobarbaz").build();
         let (mut tx, rx) = unbounded();
 
         tx.send(StreamMessage::Data(b"foobarbaz".to_vec())).await?;
         tx.close_channel();
-        let reason = tunnel_to_stream("foobar".to_string(), StreamId::generate(), tcp_mock, rx).await;
+        let reason =
+            tunnel_to_stream("foobar".to_string(), StreamId::generate(), tcp_mock, rx).await;
 
         assert_eq!(reason, TunnelToStreamExitReason::QueueClosed);
         Ok(())
     }
 }
 
-
 #[cfg(test)]
 mod spawn_remote_test {
     use super::*;
+    use crate::connected_clients::ConnectedClient;
+    use dashmap::DashMap;
     use futures::channel::mpsc::unbounded;
     use lazy_static::lazy_static;
     use std::io;
-    use std::time::Duration;
     use std::sync::Arc;
-    use dashmap::DashMap;
-    use crate::connected_clients::ConnectedClient;
+    use std::time::Duration;
 
     async fn launch_remote(remote_port: u16) -> io::Result<CancelHander> {
         lazy_static! {
@@ -513,7 +542,13 @@ mod spawn_remote_test {
         };
         Connections::add(&CONNECTIONS, client.clone());
 
-        spawn_remote(&CONNECTIONS, &ACTIVE_STREAMS, format!("[::]:{}", remote_port), "host-aaa".to_string()).await
+        spawn_remote(
+            &CONNECTIONS,
+            &ACTIVE_STREAMS,
+            format!("[::]:{}", remote_port),
+            "host-aaa".to_string(),
+        )
+        .await
     }
 
     #[tokio::test]
@@ -521,17 +556,21 @@ mod spawn_remote_test {
         let remote_port = 5678;
         let _remote_cancel_handler = launch_remote(remote_port).await?;
 
-        let _ = TcpStream::connect(format!("127.0.0.1:{}", remote_port)).await.expect("Failed to connect to remote port");
+        let _ = TcpStream::connect(format!("127.0.0.1:{}", remote_port))
+            .await
+            .expect("Failed to connect to remote port");
         Ok(())
     }
 
     #[tokio::test]
-    async fn reject_remote_connection_after_cancellation() -> Result<(), Box<dyn std::error::Error>> {
+    async fn reject_remote_connection_after_cancellation() -> Result<(), Box<dyn std::error::Error>>
+    {
         let remote_port = 5679;
         let remote_cancel_handler = launch_remote(remote_port).await?;
 
-        let _ = TcpStream::connect(format!("127.0.0.1:{}", remote_port)).await.expect("Failed to connect to remote port");
-        
+        let _ = TcpStream::connect(format!("127.0.0.1:{}", remote_port))
+            .await
+            .expect("Failed to connect to remote port");
         remote_cancel_handler.send(()).unwrap();
         tokio::time::sleep(Duration::from_secs(3)).await;
 

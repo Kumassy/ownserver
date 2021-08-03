@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use rand::prelude::*;
+use serde::{Deserialize, Serialize};
 use sha2::Digest;
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
@@ -70,9 +70,7 @@ impl ControlPacket {
             ControlPacket::Data(sid, data) => [vec![0x02], sid.0.to_vec(), data].concat(),
             ControlPacket::Refused(sid) => [vec![0x03], sid.0.to_vec()].concat(),
             ControlPacket::End(sid) => [vec![0x04], sid.0.to_vec()].concat(),
-            ControlPacket::Ping => {
-                [vec![0x05], EMPTY_STREAM.0.to_vec()].concat()
-            }
+            ControlPacket::Ping => [vec![0x05], EMPTY_STREAM.0.to_vec()].concat(),
         }
     }
 
@@ -90,9 +88,7 @@ impl ControlPacket {
             0x02 => ControlPacket::Data(stream_id, data[9..].to_vec()),
             0x03 => ControlPacket::Refused(stream_id),
             0x04 => ControlPacket::End(stream_id),
-            0x05 => {
-                ControlPacket::Ping
-            }
+            0x05 => ControlPacket::Ping,
             _ => return Err("invalid control byte in DataPacket".into()),
         };
 
@@ -137,7 +133,10 @@ mod try_client_handshake_test {
         let expected_packet = ControlPacket::Data(stream_id.clone(), b"some data".to_vec());
         let deserialized_packet = ControlPacket::deserialize(&expected_packet.serialize())?;
 
-        assert_eq!(ControlPacket::Data(EMPTY_STREAM, b"some data".to_vec()), deserialized_packet);
+        assert_eq!(
+            ControlPacket::Data(EMPTY_STREAM, b"some data".to_vec()),
+            deserialized_packet
+        );
         Ok(())
     }
 

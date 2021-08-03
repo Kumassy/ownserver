@@ -1,7 +1,7 @@
-use std::sync::{Arc, RwLock};
-use std::collections::HashMap;
-use magic_tunnel_lib::StreamId;
 use futures::channel::mpsc::UnboundedSender;
+use magic_tunnel_lib::StreamId;
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
 
 pub type ActiveStreams = Arc<RwLock<HashMap<StreamId, UnboundedSender<StreamMessage>>>>;
 
@@ -13,4 +13,3 @@ pub enum StreamMessage {
 pub mod error;
 pub mod local;
 pub mod proxy_client;
-

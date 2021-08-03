@@ -1,38 +1,36 @@
-pub use magic_tunnel_lib::{StreamId, ClientId, ClientHello, ServerHello, ControlPacket};
 use futures::{
-    Sink,
-    SinkExt,
-    Stream,
-    StreamExt,
-    channel::mpsc::{
-        unbounded,
-        SendError,
-    }
+    channel::mpsc::{unbounded, SendError},
+    Sink, SinkExt, Stream, StreamExt,
 };
 use log::*;
+pub use magic_tunnel_lib::{ClientHello, ClientId, ControlPacket, ServerHello, StreamId};
+use std::convert::Infallible;
 use std::net::SocketAddr;
 use tokio::task::JoinHandle;
 use tracing::Instrument;
-use warp::{Filter, ws::{Ws, WebSocket, Message}, Error as WarpError};
-use std::convert::Infallible;
+use warp::{
+    ws::{Message, WebSocket, Ws},
+    Error as WarpError, Filter,
+};
 
 use dashmap::DashMap;
+use rand::{rngs::StdRng, SeedableRng};
+use std::ops::Range;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use std::ops::Range;
-use rand::{rngs::StdRng, SeedableRng};
 
+use crate::active_stream::{ActiveStream, ActiveStreams, StreamMessage};
 use crate::connected_clients::{ConnectedClient, Connections};
-use crate::active_stream::{ActiveStreams, ActiveStream, StreamMessage};
-use crate::remote::{self, CancelHander};
 use crate::port_allocator::PortAllocator;
+use crate::remote::{self, CancelHander};
 
 pub fn spawn<A: Into<SocketAddr>>(
     conn: &'static Connections,
     active_streams: &'static ActiveStreams,
     alloc: Arc<Mutex<PortAllocator<Range<u16>>>>,
     remote_cancellers: Arc<DashMap<ClientId, CancelHander>>,
-    addr: A) -> JoinHandle<()> {
+    addr: A,
+) -> JoinHandle<()> {
     let health_check = warp::get().and(warp::path("health_check")).map(|| {
         tracing::debug!("Health Check #2 triggered");
         "ok"
@@ -42,8 +40,18 @@ pub fn spawn<A: Into<SocketAddr>>(
             let alloc_clone = alloc.clone();
             let remote_cancellers_clone = remote_cancellers.clone();
             ws.on_upgrade(move |w| {
-                async move { handle_new_connection(conn, active_streams, alloc_clone, remote_cancellers_clone, client_addr, w).await }
-                    .instrument(tracing::info_span!("handle_websocket"))
+                async move {
+                    handle_new_connection(
+                        conn,
+                        active_streams,
+                        alloc_clone,
+                        remote_cancellers_clone,
+                        client_addr,
+                        w,
+                    )
+                    .await
+                }
+                .instrument(tracing::info_span!("handle_websocket"))
             })
         },
     );
@@ -58,23 +66,20 @@ pub fn spawn<A: Into<SocketAddr>>(
 fn client_addr() -> impl Filter<Extract = (SocketAddr,), Error = Infallible> + Copy {
     warp::any()
         .and(warp::addr::remote())
-        .map(
-            |remote: Option<SocketAddr>| {
-                remote
-                    .unwrap_or(SocketAddr::from(([0, 0, 0, 0], 0)))
-            },
-        )
+        .map(|remote: Option<SocketAddr>| remote.unwrap_or(SocketAddr::from(([0, 0, 0, 0], 0))))
 }
 
 pub struct ClientHandshake {
     pub id: ClientId,
     // pub sub_domain: String,
     // pub is_anonymous: bool,
-    pub port: u16
+    pub port: u16,
 }
 
-async fn try_client_handshake(websocket: &mut WebSocket, alloc: Arc<Mutex<PortAllocator<Range<u16>>>>) -> Option<ClientHandshake>
-{
+async fn try_client_handshake(
+    websocket: &mut WebSocket,
+    alloc: Arc<Mutex<PortAllocator<Range<u16>>>>,
+) -> Option<ClientHandshake> {
     let client_hello = match verify_client_handshake(websocket).await {
         Some(client_hello) => client_hello,
         _ => {
@@ -94,44 +99,52 @@ async fn try_client_handshake(websocket: &mut WebSocket, alloc: Arc<Mutex<PortAl
     };
 
     let client_id = match respond_with_server_hello(websocket, port).await {
-        Ok(ServerHello::Success { client_id, assigned_port, version }) => client_id,
+        Ok(ServerHello::Success {
+            client_id,
+            assigned_port,
+            version,
+        }) => client_id,
         Err(error) => {
             tracing::info!("failed to send server hello: {}", error);
             return None;
-        },
+        }
         _ => unimplemented!(),
     };
 
     Some(ClientHandshake {
         id: client_id,
-        port
+        port,
     })
 }
 // async fn verify_client_handshake(websocket: &mut WebSocket) -> Option<ClientHello> {
-async fn verify_client_handshake(websocket: &mut (impl Unpin + Stream<Item=Result<Message, WarpError>>)) -> Option<ClientHello> {
+async fn verify_client_handshake(
+    websocket: &mut (impl Unpin + Stream<Item = Result<Message, WarpError>>),
+) -> Option<ClientHello> {
     let client_hello_data = match websocket.next().await {
         Some(Ok(msg)) if (msg.is_binary() || msg.is_text()) && !msg.as_bytes().is_empty() => {
             msg.into_bytes()
         }
         _ => {
             tracing::error!("no client init message");
-            return None
-        },
+            return None;
+        }
     };
 
     let client_hello: ClientHello = match serde_json::from_slice(&client_hello_data) {
         Ok(client_hello) => client_hello,
         _ => {
             tracing::error!("failed to deserialize client hello");
-            return None
+            return None;
         }
     };
     Some(client_hello)
 }
 
-// async fn respond_with_server_hello(websocket: &mut (impl Unpin + Sink<Message>)) -> Result<(), WarpError> 
-async fn respond_with_server_hello<T>(websocket: &mut T, port: u16) -> Result<ServerHello, T::Error> 
-    where T: Unpin + Sink<Message> {
+// async fn respond_with_server_hello(websocket: &mut (impl Unpin + Sink<Message>)) -> Result<(), WarpError>
+async fn respond_with_server_hello<T>(websocket: &mut T, port: u16) -> Result<ServerHello, T::Error>
+where
+    T: Unpin + Sink<Message>,
+{
     // Send server hello success
     let client_id = ClientId::generate();
 
@@ -140,8 +153,7 @@ async fn respond_with_server_hello<T>(websocket: &mut T, port: u16) -> Result<Se
         assigned_port: port,
         version: 0,
     };
-    let data = serde_json::to_vec(&server_hello)
-        .unwrap_or_default();
+    let data = serde_json::to_vec(&server_hello).unwrap_or_default();
 
     websocket.send(Message::binary(data.clone())).await?;
 
@@ -154,23 +166,24 @@ async fn handle_new_connection(
     alloc: Arc<Mutex<PortAllocator<Range<u16>>>>,
     remote_cancellers: Arc<DashMap<ClientId, CancelHander>>,
     client_ip: SocketAddr,
-    mut websocket: WebSocket) {
+    mut websocket: WebSocket,
+) {
     let handshake = match try_client_handshake(&mut websocket, alloc).await {
         Some(ws) => ws,
         None => return,
     };
     let client_id = handshake.id;
     tracing::info!(client_ip=%client_ip, id=%client_id, port=%handshake.port, "open tunnel");
-    
     let host = format!("host-foobar-{}", handshake.port);
     let listen_addr = format!("[::]:{}", handshake.port);
-    let canceller = match remote::spawn_remote(conn, active_streams, listen_addr, host.clone()).await {
-        Ok(canceller) => canceller,
-        Err(_) => {
-            tracing::error!("failed to bind to allocated port");
-            return;
-        }
-    };
+    let canceller =
+        match remote::spawn_remote(conn, active_streams, listen_addr, host.clone()).await {
+            Ok(canceller) => canceller,
+            Err(_) => {
+                tracing::error!("failed to bind to allocated port");
+                return;
+            }
+        };
     remote_cancellers.insert(client_id.clone(), canceller);
 
     let (tx, rx) = unbounded::<ControlPacket>();
@@ -226,8 +239,14 @@ pub async fn send_client_stream_init(mut stream: ActiveStream) -> Result<(), Sen
 #[must_use]
 #[tracing::instrument(skip(client_conn, active_streams))]
 // pub async fn process_client_messages(active_streams: ActiveStreams, connections: &Connections, client: ConnectedClient, mut client_conn: SplitStream<WebSocket>) {
-pub async fn process_client_messages<T>(active_streams: ActiveStreams, client: ConnectedClient, mut client_conn: T) -> ConnectedClient
-where T: Stream<Item=Result<Message, WarpError>> + Unpin {
+pub async fn process_client_messages<T>(
+    active_streams: ActiveStreams,
+    client: ConnectedClient,
+    mut client_conn: T,
+) -> ConnectedClient
+where
+    T: Stream<Item = Result<Message, WarpError>> + Unpin,
+{
     loop {
         let result = client_conn.next().await;
 
@@ -290,15 +309,18 @@ where T: Stream<Item=Result<Message, WarpError>> + Unpin {
 //     client: ConnectedClient,
 //     mut sink: SplitSink<WebSocket, Message>,
 //     mut queue: UnboundedReceiver<ControlPacket>,
-// ) -> ConnectedClient 
+// ) -> ConnectedClient
 #[must_use]
 #[tracing::instrument(skip(sink, queue))]
 pub async fn tunnel_client<T, U>(
     client: ConnectedClient,
     mut sink: T,
     mut queue: U,
-) -> ConnectedClient 
-where T: Sink<Message> + Unpin, U: Stream<Item=ControlPacket> + Unpin, T::Error: std::fmt::Debug
+) -> ConnectedClient
+where
+    T: Sink<Message> + Unpin,
+    U: Stream<Item = ControlPacket> + Unpin,
+    T::Error: std::fmt::Debug,
 {
     loop {
         match queue.next().await {
@@ -317,7 +339,6 @@ where T: Sink<Message> + Unpin, U: Stream<Item=ControlPacket> + Unpin, T::Error:
     }
 }
 
-
 #[cfg(test)]
 mod verify_client_handshake_test {
     use super::*;
@@ -330,7 +351,8 @@ mod verify_client_handshake_test {
         let hello = serde_json::to_vec(&ClientHello {
             id: ClientId::generate(),
             version: 0,
-        }).unwrap_or_default();
+        })
+        .unwrap_or_default();
 
         tx.send(Ok(Message::binary(hello))).await?;
         let hello = verify_client_handshake(&mut rx).await;
@@ -361,7 +383,6 @@ mod verify_client_handshake_test {
     }
 }
 
-
 #[cfg(test)]
 mod respond_with_server_hello_test {
     use super::*;
@@ -371,10 +392,13 @@ mod respond_with_server_hello_test {
     async fn it_works() -> Result<(), Box<dyn std::error::Error>> {
         let (mut tx, mut rx) = mpsc::unbounded();
 
-        respond_with_server_hello(&mut tx, 12345).await.expect("failed to write to websocket");
+        respond_with_server_hello(&mut tx, 12345)
+            .await
+            .expect("failed to write to websocket");
 
         let server_hello_data = rx.next().await.unwrap().into_bytes();
-        let server_hello: ServerHello = serde_json::from_slice(&server_hello_data).expect("server hello is malformed");
+        let server_hello: ServerHello =
+            serde_json::from_slice(&server_hello_data).expect("server hello is malformed");
 
         assert!(matches!(server_hello, ServerHello::Success{ .. }));
         Ok(())
@@ -384,11 +408,14 @@ mod respond_with_server_hello_test {
 #[cfg(test)]
 mod process_client_messages_test {
     use super::*;
-    use futures::channel::mpsc::{unbounded, UnboundedReceiver};
     use dashmap::DashMap;
+    use futures::channel::mpsc::{unbounded, UnboundedReceiver};
     use std::sync::Arc;
 
-    async fn send_messages_to_client_and_process_client_message(is_add_stream_to_streams: bool, messages: Vec<Box<dyn Fn(StreamId) -> Message>>) -> Result<UnboundedReceiver<StreamMessage>, Box<dyn std::error::Error>> {
+    async fn send_messages_to_client_and_process_client_message(
+        is_add_stream_to_streams: bool,
+        messages: Vec<Box<dyn Fn(StreamId) -> Message>>,
+    ) -> Result<UnboundedReceiver<StreamMessage>, Box<dyn std::error::Error>> {
         let (mut stream_tx, stream_rx) = unbounded::<Result<Message, WarpError>>();
         let active_streams = Arc::new(DashMap::new());
 
@@ -396,7 +423,7 @@ mod process_client_messages_test {
         let client = ConnectedClient {
             id: ClientId::generate(),
             host: "foobar".into(),
-            tx
+            tx,
         };
 
         let (active_stream, queue_rx) = ActiveStream::new(client.clone());
@@ -420,37 +447,49 @@ mod process_client_messages_test {
     }
 
     #[tokio::test]
-    async fn discard_control_packet_data_no_active_stream() -> Result<(), Box<dyn std::error::Error>> {
+    async fn discard_control_packet_data_no_active_stream() -> Result<(), Box<dyn std::error::Error>>
+    {
         let message = |stream_id| {
             let packet = ControlPacket::Data(stream_id, b"foobarbaz".to_vec());
             Message::binary(packet.serialize())
         };
-        let mut queue_rx = send_messages_to_client_and_process_client_message(false, vec![Box::new(message)]).await?;
+        let mut queue_rx =
+            send_messages_to_client_and_process_client_message(false, vec![Box::new(message)])
+                .await?;
         assert_eq!(queue_rx.next().await, None);
         Ok(())
     }
 
     #[tokio::test]
-    async fn forward_control_packet_data_to_appropriate_stream() -> Result<(), Box<dyn std::error::Error>> {
+    async fn forward_control_packet_data_to_appropriate_stream(
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let message = |stream_id| {
             let packet = ControlPacket::Data(stream_id, b"foobarbaz".to_vec());
             Message::binary(packet.serialize())
         };
-        let mut queue_rx = send_messages_to_client_and_process_client_message(true, vec![Box::new(message)]).await?;
+        let mut queue_rx =
+            send_messages_to_client_and_process_client_message(true, vec![Box::new(message)])
+                .await?;
 
         // ControlPacket::Data must be sent to ActiveStream
-        assert_eq!(queue_rx.next().await, Some(StreamMessage::Data(b"foobarbaz".to_vec())));
+        assert_eq!(
+            queue_rx.next().await,
+            Some(StreamMessage::Data(b"foobarbaz".to_vec()))
+        );
         assert_eq!(queue_rx.next().await, None);
         Ok(())
     }
 
     #[tokio::test]
-    async fn forward_control_packet_refused_to_appropriate_stream() -> Result<(), Box<dyn std::error::Error>> {
+    async fn forward_control_packet_refused_to_appropriate_stream(
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let message = |stream_id| {
             let packet = ControlPacket::Refused(stream_id);
             Message::binary(packet.serialize())
         };
-        let mut queue_rx = send_messages_to_client_and_process_client_message(true, vec![Box::new(message)]).await?;
+        let mut queue_rx =
+            send_messages_to_client_and_process_client_message(true, vec![Box::new(message)])
+                .await?;
 
         // ControlPacket::Data must be sent to ActiveStream
         assert_eq!(queue_rx.next().await, Some(StreamMessage::TunnelRefused));
@@ -460,10 +499,10 @@ mod process_client_messages_test {
 
     #[tokio::test]
     async fn close_stream_remove_client() -> Result<(), Box<dyn std::error::Error>> {
-        let message = |_| {
-            Message::close()
-        };
-        let mut queue_rx = send_messages_to_client_and_process_client_message(true, vec![Box::new(message)]).await?;
+        let message = |_| Message::close();
+        let mut queue_rx =
+            send_messages_to_client_and_process_client_message(true, vec![Box::new(message)])
+                .await?;
 
         assert_eq!(queue_rx.next().await, None);
         Ok(())
@@ -475,13 +514,15 @@ mod tunnel_client_test {
     use super::*;
     use futures::channel::mpsc::{unbounded, UnboundedReceiver};
 
-    async fn send_control_packet_and_forward_to_websocket(packets: Vec<Box<dyn Fn(StreamId) -> ControlPacket>>) -> Result<(StreamId, UnboundedReceiver<Message>), Box<dyn std::error::Error>> {
+    async fn send_control_packet_and_forward_to_websocket(
+        packets: Vec<Box<dyn Fn(StreamId) -> ControlPacket>>,
+    ) -> Result<(StreamId, UnboundedReceiver<Message>), Box<dyn std::error::Error>> {
         let (tx, _rx) = unbounded::<ControlPacket>();
         let client_id = ClientId::generate();
         let client = ConnectedClient {
             id: client_id.clone(),
             host: "foobar".into(),
-            tx
+            tx,
         };
 
         let (ws_tx, ws_rx) = unbounded::<Message>();
@@ -502,7 +543,8 @@ mod tunnel_client_test {
     #[tokio::test]
     async fn forward_control_packet_to_websocket() -> Result<(), Box<dyn std::error::Error>> {
         let packet = |stream_id| ControlPacket::Init(stream_id);
-        let (stream_id, mut ws_rx) = send_control_packet_and_forward_to_websocket(vec![Box::new(packet)]).await?;
+        let (stream_id, mut ws_rx) =
+            send_control_packet_and_forward_to_websocket(vec![Box::new(packet)]).await?;
 
         let payload = ws_rx.next().await.unwrap().into_bytes();
         let packet = ControlPacket::deserialize(&payload)?;

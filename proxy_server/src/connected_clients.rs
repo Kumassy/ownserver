@@ -1,7 +1,7 @@
-pub use magic_tunnel_lib::{ClientId, ControlPacket};
 use dashmap::DashMap;
-use std::fmt::Formatter;
 use futures::channel::mpsc::UnboundedSender;
+pub use magic_tunnel_lib::{ClientId, ControlPacket};
+use std::fmt::Formatter;
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -67,22 +67,15 @@ impl Connections {
     }
 
     pub fn add(connection: &Self, client: ConnectedClient) {
-        connection
-            .clients
-            .insert(client.id.clone(), client.clone());
+        connection.clients.insert(client.id.clone(), client.clone());
         connection.hosts.insert(client.host.clone(), client);
     }
 
     pub fn clear(connection: &Self) {
-        connection
-            .clients
-            .clear();
-        connection
-            .hosts
-            .clear();
+        connection.clients.clear();
+        connection.hosts.clear();
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -96,7 +89,7 @@ mod tests {
         let client = ConnectedClient {
             id: client_id.clone(),
             host: "foobar".into(),
-            tx
+            tx,
         };
 
         (conn, client, client_id)
@@ -131,7 +124,12 @@ mod tests {
 
         Connections::add(&conn, client);
 
-        assert_eq!(Connections::find_by_host(&conn, &"foobar".to_owned()).unwrap().id, client_id);
+        assert_eq!(
+            Connections::find_by_host(&conn, &"foobar".to_owned())
+                .unwrap()
+                .id,
+            client_id
+        );
     }
 
     #[test]
@@ -174,7 +172,7 @@ mod tests {
         Connections::remove(&conn, &client);
         Connections::remove(&conn, &client);
         Connections::remove(&conn, &client);
-        
+
         assert_eq!(conn.clients.len(), 0);
         assert_eq!(conn.hosts.len(), 0);
     }
@@ -185,7 +183,7 @@ mod tests {
 
         Connections::add(&conn, client.clone());
         Connections::clear(&conn);
-        
+
         assert_eq!(conn.clients.len(), 0);
         assert_eq!(conn.hosts.len(), 0);
     }

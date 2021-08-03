@@ -1,7 +1,7 @@
-use magic_tunnel_lib::StreamId;
 use crate::connected_clients::ConnectedClient;
 use dashmap::DashMap;
-use futures::channel::mpsc::{UnboundedSender, UnboundedReceiver, unbounded};
+use futures::channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
+use magic_tunnel_lib::StreamId;
 use std::sync::Arc;
 
 #[derive(Debug, Clone)]
