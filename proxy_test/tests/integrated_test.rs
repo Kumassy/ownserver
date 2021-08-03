@@ -4,24 +4,17 @@ use std::time::Duration;
 use std::collections::HashMap;
 use dashmap::DashMap;
 use lazy_static::lazy_static;
-use tokio_tungstenite::{
-    connect_async, WebSocketStream, MaybeTlsStream,
-    tungstenite::Message,
-};
 use tokio::net::{TcpStream, TcpListener};
 use tokio::sync::Mutex;
-use url::Url;
-use futures::{StreamExt, SinkExt};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::oneshot::{self, Receiver};
-use magic_tunnel_lib::{ControlPacket, ClientId};
+use magic_tunnel_lib::ClientId;
 use magic_tunnel_server::{
     proxy_server,
     active_stream::ActiveStreams as ActiveStreamsServer,
     connected_clients::Connections,
     remote::{
         HTTP_TUNNEL_REFUSED_RESPONSE,
-        HTTP_ERROR_LOCATING_HOST_RESPONSE,
         CancelHander,   
     },
     port_allocator::PortAllocator,
@@ -78,7 +71,7 @@ mod proxy_client_server_test {
         Ok(ACTIVE_STREAMS_SERVER.clone())
     }
 
-    async fn launch_proxy_client(control_port: u16, remote_port: u16, local_port: u16) -> Result<(ActiveStreamsClient, Receiver<ClientInfo>), Box<dyn std::error::Error>> {
+    async fn launch_proxy_client(control_port: u16, local_port: u16) -> Result<(ActiveStreamsClient, Receiver<ClientInfo>), Box<dyn std::error::Error>> {
         lazy_static! {
             pub static ref ACTIVE_STREAMS_CLIENT: ActiveStreamsClient = Arc::new(RwLock::new(HashMap::new()));
         }
@@ -87,7 +80,7 @@ mod proxy_client_server_test {
 
         let (tx, rx) = oneshot::channel();
         tokio::spawn(async move {
-            let (client_info, handle_client_to_control, handle_control_to_client) = proxy_client::run(&ACTIVE_STREAMS_CLIENT, control_port, remote_port, local_port).await.expect("failed to launch proxy_client");
+            let (client_info, handle_client_to_control, handle_control_to_client) = proxy_client::run(&ACTIVE_STREAMS_CLIENT, control_port, local_port).await.expect("failed to launch proxy_client");
             tx.send(client_info).unwrap();
 
             let (client_to_control, control_to_client) = futures::join!(handle_client_to_control, handle_control_to_client);
@@ -125,7 +118,6 @@ mod proxy_client_server_test {
     #[serial]
     async fn forward_remote_traffic_to_local() -> Result<(), Box<dyn std::error::Error>> {
         let control_port: u16 = 5000;
-        let remote_port: u16 = 8080;
         let local_port: u16 = 3000;
 
         let active_streams_server = launch_proxy_server(control_port).await?;
@@ -133,7 +125,7 @@ mod proxy_client_server_test {
         tokio::time::sleep(Duration::from_secs(3)).await;
 
         launch_local_server(local_port).await;
-        let (active_streams_client, client_info) = launch_proxy_client(control_port, remote_port, local_port).await?;
+        let (active_streams_client, client_info) = launch_proxy_client(control_port, local_port).await?;
         let remote_port_for_client = client_info.await?.assigned_port;
         // wait until client is ready
         tokio::time::sleep(Duration::from_secs(3)).await;
@@ -159,7 +151,6 @@ mod proxy_client_server_test {
     #[serial]
     async fn forward_multiple_remote_traffic_to_local() -> Result<(), Box<dyn std::error::Error>> {
         let control_port: u16 = 5000;
-        let remote_port: u16 = 8080;
         let local_port: u16 = 3000;
 
         let active_streams_server = launch_proxy_server(control_port).await?;
@@ -167,7 +158,7 @@ mod proxy_client_server_test {
         tokio::time::sleep(Duration::from_secs(3)).await;
 
         launch_local_server(local_port).await;
-        let (active_streams_client, client_info) = launch_proxy_client(control_port, remote_port, local_port).await?;
+        let (active_streams_client, client_info) = launch_proxy_client(control_port, local_port).await?;
         let remote_port_for_client = client_info.await?.assigned_port;
         // wait until client is ready
         tokio::time::sleep(Duration::from_secs(3)).await;
@@ -197,14 +188,13 @@ mod proxy_client_server_test {
     #[serial]
     async fn refuse_remote_traffic_when_local_server_not_running() -> Result<(), Box<dyn std::error::Error>> {
         let control_port: u16 = 5000;
-        let remote_port: u16 = 8080;
         let local_port: u16 = 3000;
 
         let active_streams_server = launch_proxy_server(control_port).await?;
         // wait until server is ready
         tokio::time::sleep(Duration::from_secs(3)).await;
 
-        let (active_streams_client, client_info) = launch_proxy_client(control_port, remote_port, local_port).await?;
+        let (active_streams_client, client_info) = launch_proxy_client(control_port, local_port).await?;
         let remote_port_for_client = client_info.await?.assigned_port;
         // wait until client is ready
         tokio::time::sleep(Duration::from_secs(3)).await;

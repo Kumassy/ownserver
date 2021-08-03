@@ -1,5 +1,4 @@
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tokio::io::{ReadHalf, WriteHalf};
 use tokio::net::{TcpStream, TcpListener, ToSocketAddrs};
 use tokio::sync::oneshot;
 use std::io;
@@ -9,12 +8,17 @@ use futures::prelude::*;
 use futures::channel::mpsc::UnboundedReceiver;
 
 use crate::active_stream::{ActiveStream, StreamMessage, ActiveStreams};
-use crate::connected_clients::{ConnectedClient, Connections};
+use crate::connected_clients::Connections;
 use crate::control_server;
 pub use magic_tunnel_lib::{StreamId, ClientId, ControlPacket};
 
 pub type CancelHander = oneshot::Sender<()>;
-pub async fn spawn_remote(conn: &'static Connections, active_streams: &'static ActiveStreams, listen_addr: impl ToSocketAddrs, host: String) -> io::Result<CancelHander> {
+pub async fn spawn_remote(
+    conn: &'static Connections,
+    active_streams: &'static ActiveStreams,
+    listen_addr: impl ToSocketAddrs,
+    host: String
+) -> io::Result<CancelHander> {
     // create our accept any server
     let listener = TcpListener::bind(listen_addr)
         .await?;
@@ -244,10 +248,12 @@ mod process_tcp_stream_test {
     use futures::channel::mpsc::{unbounded, UnboundedReceiver};
     use tokio_test::io::Builder;
 
-    use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, ReadBuf};
-    use std::task::{self, Poll, Waker};
+    use tokio::io::{AsyncRead, ReadBuf};
+    use std::task::{self, Poll};
     use std::pin::Pin;
     use std::io;
+
+    use crate::connected_clients::ConnectedClient;
 
     struct InfiniteRead {
     }
@@ -258,8 +264,8 @@ mod process_tcp_stream_test {
     }
     impl AsyncRead for InfiniteRead {
         fn poll_read(
-            mut self: Pin<&mut Self>,
-            cx: &mut task::Context<'_>,
+            self: Pin<&mut Self>,
+            _cx: &mut task::Context<'_>,
             buf: &mut ReadBuf<'_>,
         ) -> Poll<io::Result<()>> {
             buf.put_slice(b"infinite source");
@@ -375,7 +381,6 @@ mod process_tcp_stream_test {
     async fn stop_wait_read_when_tunnel_stream_is_closed() -> Result<(), Box<dyn std::error::Error>> {
         let (conn, client, active_stream, _stream_rx, mut client_rx) = create_active_stream();
         Connections::add(&conn, client);
-        let stream_id = active_stream.id.clone();
 
         client_rx.close();
         let infinite_reader = InfiniteRead::new();
@@ -388,7 +393,7 @@ mod process_tcp_stream_test {
 #[cfg(test)]
 mod tunnel_to_stream_test {
     use super::*;
-    use futures::channel::mpsc::{unbounded, UnboundedReceiver};
+    use futures::channel::mpsc::unbounded;
     use tokio_test::io::Builder;
     use std::io;
 
@@ -482,14 +487,13 @@ mod tunnel_to_stream_test {
 #[cfg(test)]
 mod spawn_remote_test {
     use super::*;
-    use futures::channel::mpsc::{unbounded, UnboundedReceiver};
-    use tokio_test::io::Builder;
+    use futures::channel::mpsc::unbounded;
     use lazy_static::lazy_static;
     use std::io;
     use std::time::Duration;
     use std::sync::Arc;
     use dashmap::DashMap;
-
+    use crate::connected_clients::ConnectedClient;
 
     async fn launch_remote(remote_port: u16) -> io::Result<CancelHander> {
         lazy_static! {
@@ -501,8 +505,8 @@ mod spawn_remote_test {
         Connections::clear(&CONNECTIONS);
         ACTIVE_STREAMS.clear();
 
-        let (tx, rx) = unbounded::<ControlPacket>();
-        let mut client = ConnectedClient {
+        let (tx, _rx) = unbounded::<ControlPacket>();
+        let client = ConnectedClient {
             id: ClientId::generate(),
             host: "host-aaa".to_string(),
             tx,

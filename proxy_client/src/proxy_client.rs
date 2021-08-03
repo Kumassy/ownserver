@@ -7,12 +7,8 @@ use tokio_tungstenite::{
 };
 use url::Url;
 use anyhow::Result;
-use std::collections::HashMap;
-use std::env;
-use std::sync::{Arc, RwLock};
 use std::time::Duration;
-use tokio::time;
-use tokio::task::{JoinHandle, JoinError};
+use tokio::task::JoinHandle;
 
 use crate::error::Error;
 use crate::local;
@@ -22,7 +18,6 @@ use magic_tunnel_lib::{StreamId, ClientId, ClientHello, ControlPacket, ServerHel
 pub async fn run(
     active_streams: &'static ActiveStreams,
     control_port: u16,
-    remote_port: u16,
     local_port: u16
 ) -> Result<(ClientInfo, JoinHandle<()>, JoinHandle<Result<(), Error>>)> {
     let url = Url::parse(&format!("wss://localhost:{}/tunnel", control_port))?;
@@ -228,9 +223,11 @@ mod process_control_flow_message {
 
     use tokio::net::TcpListener;
     use tokio::sync::oneshot;
-    use tokio::io::{AsyncWriteExt, AsyncWrite, AsyncReadExt, split};
-    // use serial_test::serial;
+    use tokio::io::{AsyncWriteExt, AsyncReadExt, split};
     use futures::channel::mpsc::{UnboundedReceiver};
+    use std::collections::HashMap;
+    use std::sync::{Arc, RwLock};
+
 
     async fn setup() -> (ActiveStreams, UnboundedSender<ControlPacket>, UnboundedReceiver<ControlPacket>, StreamId, u16, UnboundedReceiver<Vec<u8>>) {
         let active_streams = Arc::new(RwLock::new(HashMap::new()));

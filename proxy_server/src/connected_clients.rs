@@ -2,7 +2,7 @@ pub use magic_tunnel_lib::{ClientId, ControlPacket};
 use dashmap::DashMap;
 use std::fmt::Formatter;
 use futures::channel::mpsc::UnboundedSender;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct ConnectedClient {

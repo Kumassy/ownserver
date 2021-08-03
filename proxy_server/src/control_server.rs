@@ -1,10 +1,19 @@
 pub use magic_tunnel_lib::{StreamId, ClientId, ClientHello, ServerHello, ControlPacket};
-use futures::{SinkExt, StreamExt, Stream, Sink, AsyncRead, AsyncWrite, AsyncReadExt, AsyncWriteExt, stream::{SplitStream, SplitSink}, channel::mpsc::{unbounded, UnboundedReceiver, SendError}};
-// use log::*;
-use std::net::{SocketAddr, IpAddr};
+use futures::{
+    Sink,
+    SinkExt,
+    Stream,
+    StreamExt,
+    channel::mpsc::{
+        unbounded,
+        SendError,
+    }
+};
+use log::*;
+use std::net::SocketAddr;
 use tokio::task::JoinHandle;
-use tracing::{error, info, Instrument};
-use warp::{Filter, Rejection, ws::{Ws, WebSocket, Message}, Error as WarpError};
+use tracing::Instrument;
+use warp::{Filter, ws::{Ws, WebSocket, Message}, Error as WarpError};
 use std::convert::Infallible;
 
 use dashmap::DashMap;
@@ -165,7 +174,7 @@ async fn handle_new_connection(
     remote_cancellers.insert(client_id.clone(), canceller);
 
     let (tx, rx) = unbounded::<ControlPacket>();
-    let mut client = ConnectedClient {
+    let client = ConnectedClient {
         id: client_id.clone(),
         host,
         tx,
@@ -240,15 +249,15 @@ where T: Stream<Item=Result<Message, WarpError>> + Unpin {
 
         let packet = match ControlPacket::deserialize(&message) {
             Ok(packet) => packet,
-            Err(error) => {
-                error!(?error, "invalid data packet");
+            Err(e) => {
+                error!("invalid data packet {:?}", e);
                 continue;
             }
         };
 
         let (stream_id, message) = match packet {
             ControlPacket::Data(stream_id, data) => {
-                tracing::debug!(?stream_id, num_bytes=?data.len(),"forwarding to stream");
+                tracing::debug!(?stream_id, num_bytes=?data.len(), "forwarding to stream");
                 (stream_id, StreamMessage::Data(data))
             }
             ControlPacket::Refused(stream_id) => {
@@ -375,7 +384,7 @@ mod respond_with_server_hello_test {
 #[cfg(test)]
 mod process_client_messages_test {
     use super::*;
-    use futures::channel::mpsc::unbounded;
+    use futures::channel::mpsc::{unbounded, UnboundedReceiver};
     use dashmap::DashMap;
     use std::sync::Arc;
 
@@ -464,7 +473,7 @@ mod process_client_messages_test {
 #[cfg(test)]
 mod tunnel_client_test {
     use super::*;
-    use futures::channel::mpsc::unbounded;
+    use futures::channel::mpsc::{unbounded, UnboundedReceiver};
 
     async fn send_control_packet_and_forward_to_websocket(packets: Vec<Box<dyn Fn(StreamId) -> ControlPacket>>) -> Result<(StreamId, UnboundedReceiver<Message>), Box<dyn std::error::Error>> {
         let (tx, _rx) = unbounded::<ControlPacket>();

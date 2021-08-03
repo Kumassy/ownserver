@@ -11,13 +11,12 @@ use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use url::Url;
 use futures::{StreamExt, SinkExt};
-use futures::channel::mpsc::{unbounded, UnboundedReceiver};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use magic_tunnel_lib::{ControlPacket, ClientId};
 use magic_tunnel_server::{
     proxy_server::run,
     active_stream::ActiveStreams,
-    connected_clients::{Connections, ConnectedClient},
+    connected_clients::Connections,
     remote::CancelHander,
     port_allocator::PortAllocator,
 };

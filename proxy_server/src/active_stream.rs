@@ -1,9 +1,8 @@
-use magic_tunnel_lib::{StreamId, ControlPacket};
+use magic_tunnel_lib::StreamId;
 use crate::connected_clients::ConnectedClient;
 use dashmap::DashMap;
-use std::fmt::Formatter;
 use futures::channel::mpsc::{UnboundedSender, UnboundedReceiver, unbounded};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub struct ActiveStream {
