@@ -75,6 +75,14 @@ impl Connections {
         connection.clients.clear();
         connection.hosts.clear();
     }
+
+    pub fn len_clients(connection: &Self) -> usize {
+        connection.clients.len()
+    }
+
+    pub fn len_hosts(connection: &Self) -> usize {
+        connection.hosts.len()
+    }
 }
 
 #[cfg(test)]

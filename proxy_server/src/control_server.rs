@@ -137,6 +137,7 @@ async fn verify_client_handshake(
             return None;
         }
     };
+    tracing::debug!("got client handshake {:?}", client_hello);
     Some(client_hello)
 }
 
@@ -153,6 +154,7 @@ where
         assigned_port: port,
         version: 0,
     };
+    tracing::debug!("send server handshake {:?}", server_hello);
     let data = serde_json::to_vec(&server_hello).unwrap_or_default();
 
     websocket.send(Message::binary(data.clone())).await?;
@@ -173,7 +175,7 @@ async fn handle_new_connection(
         None => return,
     };
     let client_id = handshake.id;
-    tracing::info!(client_ip=%client_ip, id=%client_id, port=%handshake.port, "open tunnel");
+    tracing::info!("cid={} client_ip={} port={} open tunnel", client_id, client_ip, handshake.port);
     let host = format!("host-foobar-{}", handshake.port);
     let listen_addr = format!("[::]:{}", handshake.port);
     let canceller =
@@ -185,6 +187,7 @@ async fn handle_new_connection(
             }
         };
     remote_cancellers.insert(client_id.clone(), canceller);
+    tracing::debug!("cid={} register remote_cancellers len={}", client_id, remote_cancellers.len());
 
     let (tx, rx) = unbounded::<ControlPacket>();
     let client = ConnectedClient {
@@ -193,6 +196,7 @@ async fn handle_new_connection(
         tx,
     };
     Connections::add(conn, client.clone());
+    tracing::debug!("cid={} register client to connections len_clients={} len_hosts={}", client_id, Connections::len_clients(conn), Connections::len_hosts(conn));
     let active_streams = active_streams.clone();
     let (sink, stream) = websocket.split();
 
@@ -201,23 +205,30 @@ async fn handle_new_connection(
     let client_id_clone = client_id.clone();
     tokio::spawn(
         async move {
-            let client = tunnel_client(client_clone, sink, rx).await;
+            let client = client_clone;
+            let remote_cancellers = remote_cancellers_clone;
+            let client_id = client_id_clone;
+
+            let client = tunnel_client(client, sink, rx).await;
             Connections::remove(conn, &client);
-            if let Some((cid, handler)) = remote_cancellers_clone.remove(&client_id_clone) {
-                if let Err(_) = handler.send(()) {
-                    tracing::error!("failed to cancel remote for {:?}", client_id_clone);
+            tracing::debug!("cid={} remove client from connections len_clients={} len_hosts={}", client_id, Connections::len_clients(conn), Connections::len_hosts(conn));
+            if let Some((_cid, handler)) = remote_cancellers.remove(&client_id) {
+                tracing::debug!("cid={} cancel remote process", client_id);
+                if handler.send(()).is_err() {
+                    tracing::error!("failed to cancel remote for {:?}", client_id);
                 }
             }
         }
         .instrument(tracing::info_span!("tunnel_client")),
     );
-    let client_clone = client.clone();
     tokio::spawn(
         async move {
-            let client = process_client_messages(active_streams, client_clone, stream).await;
+            let client = process_client_messages(active_streams, client, stream).await;
             Connections::remove(conn, &client);
-            if let Some((cid, handler)) = remote_cancellers.remove(&client_id) {
-                if let Err(_) = handler.send(()) {
+            tracing::debug!("cid={} remove client from connections len_clients={} len_hosts={}", client_id, Connections::len_clients(conn), Connections::len_hosts(conn));
+            if let Some((_cid, handler)) = remote_cancellers.remove(&client_id) {
+                tracing::debug!("cid={} cancel remote process", client_id);
+                if handler.send(()).is_err() {
                     tracing::error!("failed to cancel remote for {:?}", client_id);
                 }
             }
@@ -237,8 +248,7 @@ pub async fn send_client_stream_init(mut stream: ActiveStream) -> Result<(), Sen
 
 /// Process client control messages
 #[must_use]
-#[tracing::instrument(skip(client_conn, active_streams))]
-// pub async fn process_client_messages(active_streams: ActiveStreams, connections: &Connections, client: ConnectedClient, mut client_conn: SplitStream<WebSocket>) {
+#[tracing::instrument(skip(client_conn, active_streams, client))]
 pub async fn process_client_messages<T>(
     active_streams: ActiveStreams,
     client: ConnectedClient,
@@ -269,7 +279,7 @@ where
         let packet = match ControlPacket::deserialize(&message) {
             Ok(packet) => packet,
             Err(e) => {
-                error!("invalid data packet {:?}", e);
+                tracing::error!("invalid data packet {:?}", e);
                 continue;
             }
         };

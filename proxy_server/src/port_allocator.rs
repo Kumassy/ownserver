@@ -40,7 +40,7 @@ where
     }
 
     pub fn allocate_port(&mut self, rng: &mut impl Rng) -> Result<u16, PortAllocatorError> {
-        if let Some(n) = self.available_ports.iter().choose(rng).map(|n| n.clone()) {
+        if let Some(n) = self.available_ports.iter().choose(rng).copied() {
             self.available_ports.remove(&n);
             Ok(n)
         } else {

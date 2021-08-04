@@ -1,5 +1,4 @@
 use dashmap::DashMap;
-use log::*;
 pub use magic_tunnel_lib::{ClientHello, ClientId, ControlPacket, ServerHello, StreamId};
 use std::ops::Range;
 use std::sync::Arc;
@@ -27,6 +26,6 @@ pub async fn run(
         remote_cancellers,
         ([0, 0, 0, 0], control_port),
     );
-    info!("started tunnelto server on 0.0.0.0:{}", control_port);
+    tracing::info!("started tunnelto server on 0.0.0.0:{}", control_port);
     handle.await.unwrap(); // TODO: fix unwrap
 }
