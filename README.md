@@ -20,7 +20,7 @@ TODO
 - [ ] add admin api: get available port count for load balancing 
 - [ ] monitoring
     - [ ] cpu, # of open tcp port
-- [ ] no unwrap, expect
+- [x] no unwrap, expect
 - [ ] 2 hour auto delete
     - for rolling update
     

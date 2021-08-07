@@ -20,7 +20,7 @@ async fn main() {
 
     let alloc = Arc::new(Mutex::new(PortAllocator::new(3000..4000)));
     let remote_cancellers: Arc<DashMap<ClientId, CancelHander>> = Arc::new(DashMap::new());
-    run(
+    let handle = run(
         &CONNECTIONS,
         &ACTIVE_STREAMS,
         alloc,
@@ -28,4 +28,14 @@ async fn main() {
         control_port,
     )
     .await;
+    
+    let server = handle.await;
+    match server {
+        Err(join_error) => {
+            tracing::error!("join error {:?} for proxy_server", join_error);
+        }
+        Ok(_) => {
+            tracing::info!("proxy_server successfully terminated");
+        }
+    }
 }

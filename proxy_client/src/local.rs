@@ -85,10 +85,10 @@ pub async fn process_local_tcp(
         );
 
         let packet = ControlPacket::Data(stream_id.clone(), data.clone());
-        tunnel
-            .send(packet)
-            .await
-            .expect("failed to tunnel packet from local tcp to tunnel");
+        if let Err(e) = tunnel.send(packet).await {
+            error!("sid={} failed to tunnel packet from local tcp to tunnel: {:?}", &stream_id.to_string(), e);
+            return;
+        }
     }
 }
 
@@ -109,9 +109,10 @@ async fn forward_to_local_tcp(
             }
         };
 
-        sink.write_all(&data)
-            .await
-            .expect("failed to write packet data to local tcp socket");
+        if let Err(e) = sink.write_all(&data).await {
+            error!("sid={} failed to write packet data to local tcp socket: {:?}", &stream_id.to_string(), e);
+            return;
+        }
         debug!("sid={} wrote to local service: {}", &stream_id.to_string(), data.len());
     }
 }

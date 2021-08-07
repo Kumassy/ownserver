@@ -28,4 +28,7 @@ pub enum Error {
 
     #[error("The server timed out sending us something.")]
     Timeout,
+    
+    #[error("Could not connect to server.")]
+    ServerDown,
 }

@@ -21,7 +21,7 @@ pub async fn run(
     local_port: u16,
 ) -> Result<(ClientInfo, JoinHandle<()>, JoinHandle<Result<(), Error>>)> {
     let url = Url::parse(&format!("wss://localhost:{}/tunnel", control_port))?;
-    let (mut websocket, _) = connect_async(url).await.expect("failed to connect");
+    let (mut websocket, _) = connect_async(url).await.map_err(|_| Error::ServerDown)?;
 
     info!("WebSocket handshake has been successfully completed");
 
@@ -80,11 +80,11 @@ pub async fn run(
                 }
                 Some(Err(e)) => {
                     warn!("cid={} websocket read error: {:?}", client_id, e);
-                    return Err(Error::Timeout.into());
+                    return Err(Error::Timeout);
                 }
                 None => {
                     warn!("cid={} websocket sent none", client_id);
-                    return Err(Error::Timeout.into());
+                    return Err(Error::Timeout);
                 }
             }
         }

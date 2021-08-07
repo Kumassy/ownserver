@@ -42,12 +42,12 @@ impl ClientId {
         ))
     }
 
-    pub fn to_string(&self) -> String {
-        format!(
-            "client_{}",
-            base64::encode_config(&self.0, base64::URL_SAFE_NO_PAD)
-        )
-    }
+    // pub fn to_string(&self) -> String {
+    //     format!(
+    //         "client_{}",
+    //         base64::encode_config(&self.0, base64::URL_SAFE_NO_PAD)
+    //     )
+    // }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

@@ -3,6 +3,7 @@ pub use magic_tunnel_lib::{ClientHello, ClientId, ControlPacket, ServerHello, St
 use std::ops::Range;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tokio::task::JoinHandle;
 
 use crate::active_stream::ActiveStreams;
 use crate::connected_clients::Connections;
@@ -16,7 +17,7 @@ pub async fn run(
     alloc: Arc<Mutex<PortAllocator<Range<u16>>>>,
     remote_cancellers: Arc<DashMap<ClientId, CancelHander>>,
     control_port: u16,
-) {
+) -> JoinHandle<()> {
     tracing::info!("starting server!");
 
     let handle = control_server::spawn(
@@ -27,5 +28,5 @@ pub async fn run(
         ([0, 0, 0, 0], control_port),
     );
     tracing::info!("started tunnelto server on 0.0.0.0:{}", control_port);
-    handle.await.unwrap(); // TODO: fix unwrap
+    handle
 }
