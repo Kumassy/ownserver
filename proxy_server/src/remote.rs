@@ -73,22 +73,33 @@ pub async fn accept_connection(
             return;
         }
     };
+    let client_id = client.id.clone();
 
     // allocate a new stream for this request
     let (active_stream, queue_rx) = ActiveStream::new(client.clone());
     let stream_id = active_stream.id.clone();
 
-    tracing::info!("remote={} cid={} sid={} new stream connected", host, client.id, active_stream.id.to_string());
+    tracing::info!("remote={} cid={} sid={} new stream connected", host, client_id, active_stream.id.to_string());
     let (stream, sink) = tokio::io::split(socket);
 
     // add our stream
     active_streams.insert(stream_id.clone(), active_stream.clone());
-    tracing::debug!("remote={} cid={} sid={} register stream to active_streams len={}", host, client.id, stream_id.to_string(), active_streams.len());
+    tracing::debug!("remote={} cid={} sid={} register stream to active_streams len={}", host, client_id, stream_id.to_string(), active_streams.len());
+
 
     // read from socket, write to client
+    let active_streams_clone = active_streams.clone();
+    let stream_id_clone = stream_id.clone();
+    let client_id_clone = client_id.clone();
     tokio::spawn(
         async move {
+            let active_streams = active_streams_clone;
+            let stream_id = stream_id_clone;
+            let client_id = client_id_clone;
+
             process_tcp_stream(conn, active_stream, stream).await;
+            active_streams.remove(&stream_id);
+            tracing::debug!("cid={} sid={} remove stream from active_streams, process_tcp_stream len={}", client_id, stream_id.to_string(), active_streams.len());
         }
         .instrument(tracing::info_span!("process_tcp_stream")),
     );
@@ -98,10 +109,10 @@ pub async fn accept_connection(
         async move {
             let reason = tunnel_to_stream(host.clone(), stream_id.clone(), sink, queue_rx).await;
             tracing::debug!(
-                "remote={} cid={} sid={} tunnel_to_stream closed with reason: {:?}", host, client.id, stream_id.to_string(), reason
+                "remote={} cid={} sid={} tunnel_to_stream closed with reason: {:?}", host, client_id, stream_id.to_string(), reason
             );
             active_streams.remove(&stream_id);
-            tracing::debug!("cid={} sid={} remove stream from active_streams len={}", client.id, stream_id.to_string(), active_streams.len());
+            tracing::debug!("cid={} sid={} remove stream from active_streams, tunnel_to_stream len={}", client_id, stream_id.to_string(), active_streams.len());
         }
         .instrument(tracing::info_span!("tunnel_to_stream")),
     );
