@@ -28,6 +28,9 @@ TODO
 integration test
 - [x] if server send ControlPacket::Init, then client set up local stream
 
+stress test
+- [ ] HTTP server for client-side server
+- [ ] Minecraft headless server for client-side server
 
 (host, client_id) の組は一通りではない...？
 https://github.com/agrinman/tunnelto/blob/master/tunnelto_server/src/connected_clients.rs#L49
