@@ -5,10 +5,10 @@ TODO
 - [x] server hello, connect_wormhole
 - [x] make ACTIVE_STREAMS to DI
 - [x] write test to process_client_messages
-- [ ] skip tracing, make log clean
-- [ ] more meaningful log
-    - [ ] include stream id to each log 
-    - [ ] num of client, stream at create/delete client, stream
+- [x] skip tracing, make log clean
+- [x] more meaningful log
+    - [x] include stream id to each log 
+    - [x] num of client, stream at create/delete client, stream
 - [x] client: run_wormhole
 - [x] add version field to handshake
 - [x] host -> port addresssing

@@ -2,7 +2,6 @@ use futures::{
     channel::mpsc::{unbounded, SendError},
     Sink, SinkExt, Stream, StreamExt,
 };
-use log::*;
 pub use magic_tunnel_lib::{ClientHello, ClientId, ControlPacket, ServerHello, StreamId};
 use std::convert::Infallible;
 use std::net::SocketAddr;
@@ -284,21 +283,22 @@ where
             }
         };
 
+        tracing::trace!("cid={} got control packet from client {}", client.id, packet);
         let (stream_id, message) = match packet {
             ControlPacket::Data(stream_id, data) => {
-                tracing::debug!(?stream_id, num_bytes=?data.len(), "forwarding to stream");
+                tracing::debug!("cid={} sid={} forwarding to stream: {}", client.id, stream_id.to_string(), data.len());
                 (stream_id, StreamMessage::Data(data))
             }
             ControlPacket::Refused(stream_id) => {
-                tracing::debug!("tunnel says: refused");
+                tracing::debug!("cid={} sid={} tunnel says: refused", client.id, stream_id.to_string());
                 (stream_id, StreamMessage::TunnelRefused)
             }
-            ControlPacket::Init(_) | ControlPacket::End(_) => {
-                error!("invalid protocol control::init message");
+            ControlPacket::Init(stream_id) | ControlPacket::End(stream_id) => {
+                tracing::error!("cid={} sid={} invalid protocol control::init message", client.id, stream_id.to_string());
                 continue;
             }
             ControlPacket::Ping => {
-                tracing::trace!("pong");
+                tracing::trace!("cid={} pong", client.id);
                 // Connections::add(connections, client.clone());
                 continue;
             }
@@ -306,10 +306,10 @@ where
 
         let stream = active_streams.get(&stream_id).map(|s| s.value().clone());
 
-        info!("found stream: {:?}", stream);
         if let Some(mut stream) = stream {
+            tracing::info!("cid={} sid={} forward message to active stream", client.id, stream.id.to_string());
             let _ = stream.tx.send(message).await.map_err(|error| {
-                tracing::trace!(?error, "Failed to send to stream tx");
+                tracing::debug!("cid={} sid={} Failed to send to stream tx: {:?}", client.id, stream.id.to_string(), error);
             });
         }
     }
@@ -321,7 +321,7 @@ where
 //     mut queue: UnboundedReceiver<ControlPacket>,
 // ) -> ConnectedClient
 #[must_use]
-#[tracing::instrument(skip(sink, queue))]
+#[tracing::instrument(skip(sink, queue, client))]
 pub async fn tunnel_client<T, U>(
     client: ConnectedClient,
     mut sink: T,
@@ -337,12 +337,12 @@ where
             Some(packet) => {
                 let result = sink.send(Message::binary(packet.serialize())).await;
                 if let Err(error) = result {
-                    tracing::trace!(?error, "client disconnected: aborting.");
+                    tracing::debug!("cid={} client disconnected: aborting: {:?}", client.id, error);
                     return client;
                 }
             }
             None => {
-                tracing::debug!("ending client tunnel");
+                tracing::debug!("cid={} ending client tunnel", client.id);
                 return client;
             }
         };
