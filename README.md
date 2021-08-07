@@ -21,6 +21,9 @@ TODO
 - [ ] monitoring
     - [ ] cpu, # of open tcp port
 - [ ] no unwrap, expect
+- [ ] 2 hour auto delete
+    - for rolling update
+    
 
 integration test
 - [x] if server send ControlPacket::Init, then client set up local stream
