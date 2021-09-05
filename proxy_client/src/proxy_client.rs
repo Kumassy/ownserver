@@ -374,7 +374,6 @@ mod process_control_flow_message {
     }
 
     #[tokio::test]
-    #[ignore]
     async fn handle_control_packet_end() {
         let (active_streams, tunnel_tx, _tunnel_rx, stream_id, local_port, _) = setup().await;
 
