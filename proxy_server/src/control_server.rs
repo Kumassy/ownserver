@@ -3,6 +3,7 @@ use futures::{
     Sink, SinkExt, Stream, StreamExt,
 };
 pub use magic_tunnel_lib::{ClientHello, ClientId, ControlPacket, ServerHello, StreamId};
+use magic_tunnel_auth::decode_jwt;
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use tokio::task::JoinHandle;
@@ -17,13 +18,17 @@ use rand::{rngs::StdRng, SeedableRng};
 use std::ops::Range;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use once_cell::sync::OnceCell;
+use thiserror::Error;
 
 use crate::active_stream::{ActiveStream, ActiveStreams, StreamMessage};
 use crate::connected_clients::{ConnectedClient, Connections};
 use crate::port_allocator::PortAllocator;
 use crate::remote::{self, CancelHander};
+use crate::{Config, ProxyServerError};
 
 pub fn spawn<A: Into<SocketAddr>>(
+    config: &'static OnceCell<Config>,
     conn: &'static Connections,
     active_streams: &'static ActiveStreams,
     alloc: Arc<Mutex<PortAllocator<Range<u16>>>>,
@@ -41,6 +46,7 @@ pub fn spawn<A: Into<SocketAddr>>(
             ws.on_upgrade(move |w| {
                 async move {
                     handle_new_connection(
+                        config,
                         conn,
                         active_streams,
                         alloc_clone,
@@ -77,12 +83,13 @@ pub struct ClientHandshake {
 
 async fn try_client_handshake(
     websocket: &mut WebSocket,
+    config: &'static OnceCell<Config>,
     alloc: Arc<Mutex<PortAllocator<Range<u16>>>>,
 ) -> Option<ClientHandshake> {
-    let client_hello = match verify_client_handshake(websocket).await {
-        Some(client_hello) => client_hello,
-        _ => {
-            tracing::error!("failed to parse client hello");
+    let client_hello = match verify_client_handshake(websocket, config).await {
+        Ok(client_hello) => client_hello,
+        Err(e) => {
+            tracing::error!("failed to verify client hello: {:?}", e);
             return None;
         }
     };
@@ -115,17 +122,37 @@ async fn try_client_handshake(
         port,
     })
 }
+
+#[derive(Error, Debug, PartialEq)]
+pub enum VerifyClientHandshakeError {
+    #[error("Client sent no init message.")]
+    NoClientMessage,
+
+    #[error("Failed to deserialize client hello.")]
+    InvalidClientHello,
+
+    #[error("Failed to parse client jwt.")]
+    InvalidJWT,
+
+    #[error("Client tried to access different host.")]
+    IllegalHost,
+
+    #[error("Other internal error: {0}.")]
+    Other(#[from] ProxyServerError),
+}
+
 // async fn verify_client_handshake(websocket: &mut WebSocket) -> Option<ClientHello> {
 async fn verify_client_handshake(
     websocket: &mut (impl Unpin + Stream<Item = Result<Message, WarpError>>),
-) -> Option<ClientHello> {
+    config: &'static OnceCell<Config>,
+) -> Result<ClientHello, VerifyClientHandshakeError> {
     let client_hello_data = match websocket.next().await {
         Some(Ok(msg)) if (msg.is_binary() || msg.is_text()) && !msg.as_bytes().is_empty() => {
             msg.into_bytes()
         }
         _ => {
             tracing::error!("no client init message");
-            return None;
+            return Err(VerifyClientHandshakeError::NoClientMessage);
         }
     };
 
@@ -133,11 +160,35 @@ async fn verify_client_handshake(
         Ok(client_hello) => client_hello,
         _ => {
             tracing::error!("failed to deserialize client hello");
-            return None;
+            return Err(VerifyClientHandshakeError::InvalidClientHello);
         }
     };
+
+    let (token_secret, host) = match config.get() {
+        Some(config) => (&config.token_secret, &config.host),
+        None => {
+            tracing::error!("failed to read config");
+            return Err(VerifyClientHandshakeError::Other(ProxyServerError::ConfigNotInitialized));
+        }
+    };
+
+    let claim = decode_jwt(token_secret, &client_hello.token);
+    match claim.map(|c| &c.host == host) {
+        Ok(true) => {
+            tracing::info!("successfully validate client jwt");
+        },
+        Ok(false) => {
+            tracing::info!("client jwt was valid but different host");
+            return Err(VerifyClientHandshakeError::IllegalHost);
+        },
+        Err(e) => {
+            tracing::info!("failed to parse client jwt: {:?}", e);
+            return Err(VerifyClientHandshakeError::InvalidJWT);
+        }
+    };
+
     tracing::debug!("got client handshake {:?}", client_hello);
-    Some(client_hello)
+    Ok(client_hello)
 }
 
 // async fn respond_with_server_hello(websocket: &mut (impl Unpin + Sink<Message>)) -> Result<(), WarpError>
@@ -162,6 +213,7 @@ where
 }
 
 async fn handle_new_connection(
+    config: &'static OnceCell<Config>,
     conn: &'static Connections,
     active_streams: &'static ActiveStreams,
     alloc: Arc<Mutex<PortAllocator<Range<u16>>>>,
@@ -169,7 +221,7 @@ async fn handle_new_connection(
     client_ip: SocketAddr,
     mut websocket: WebSocket,
 ) {
-    let handshake = match try_client_handshake(&mut websocket, alloc).await {
+    let handshake = match try_client_handshake(&mut websocket, config, alloc).await {
         Some(ws) => ws,
         None => return,
     };
@@ -353,42 +405,134 @@ where
 mod verify_client_handshake_test {
     use super::*;
     use futures::channel::mpsc;
+    use magic_tunnel_auth::make_jwt;
+    use chrono::Duration;
+
+    static CONFIG: OnceCell<Config> = OnceCell::new();
+    static EMPTY_CONFIG: OnceCell<Config> = OnceCell::new();
+
+    fn get_config() -> &'static OnceCell<Config> {
+        CONFIG.get_or_init(||
+            Config {
+                control_port: 5000,
+                token_secret: "supersecret".to_string(),
+                host: "foohost.test.local".to_string(),
+                remote_port_start: 10010,
+                remote_port_end: 10011,
+            }
+        );
+        &CONFIG
+    }
 
     #[tokio::test]
     async fn accept_client_hello() -> Result<(), Box<dyn std::error::Error>> {
+        let config = get_config();
         let (mut tx, mut rx) = mpsc::unbounded();
 
         let hello = serde_json::to_vec(&ClientHello {
             id: ClientId::generate(),
             version: 0,
+            token: make_jwt("supersecret", Duration::minutes(10), "foohost.test.local".to_string())?,
         })
         .unwrap_or_default();
-
         tx.send(Ok(Message::binary(hello))).await?;
-        let hello = verify_client_handshake(&mut rx).await;
-        assert!(hello.is_some());
+
+        let hello = verify_client_handshake(&mut rx, config).await;
+        assert!(hello.is_ok());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn reject_empty_init() -> Result<(), Box<dyn std::error::Error>> {
+        let config = get_config();
+        let (tx, mut rx) = mpsc::unbounded();
+
+        tx.close_channel();
+        let handshake= verify_client_handshake(&mut rx, config).await;
+        let handshake_error = handshake.err().unwrap();
+        assert_eq!(handshake_error, VerifyClientHandshakeError::NoClientMessage);
         Ok(())
     }
 
     #[tokio::test]
     async fn reject_invalid_text_hello() -> Result<(), Box<dyn std::error::Error>> {
+        let config = get_config();
         let (mut tx, mut rx) = mpsc::unbounded();
 
         tx.send(Ok(Message::text("foobarbaz".to_string()))).await?;
-        let hello = verify_client_handshake(&mut rx).await;
-        assert!(hello.is_none());
+        let handshake= verify_client_handshake(&mut rx, config).await;
+        let handshake_error = handshake.err().unwrap();
+        assert_eq!(handshake_error, VerifyClientHandshakeError::InvalidClientHello);
         Ok(())
     }
 
     #[tokio::test]
     async fn reject_invalid_serialized_hello() -> Result<(), Box<dyn std::error::Error>> {
+        let config = get_config();
         let (mut tx, mut rx) = mpsc::unbounded();
 
         let hello = serde_json::to_vec(&"malformed".to_string()).unwrap_or_default();
 
         tx.send(Ok(Message::binary(hello))).await?;
-        let hello = verify_client_handshake(&mut rx).await;
-        assert!(hello.is_none());
+        let handshake= verify_client_handshake(&mut rx, config).await;
+        let handshake_error = handshake.err().unwrap();
+        assert_eq!(handshake_error, VerifyClientHandshakeError::InvalidClientHello);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn reject_invalid_jwt() -> Result<(), Box<dyn std::error::Error>> {
+        let config = get_config();
+        let (mut tx, mut rx) = mpsc::unbounded();
+
+        let hello = serde_json::to_vec(&ClientHello {
+            id: ClientId::generate(),
+            version: 0,
+            token: "invalid jwt".to_string(),
+        })
+        .unwrap_or_default();
+        tx.send(Ok(Message::binary(hello))).await?;
+
+        let handshake= verify_client_handshake(&mut rx, config).await;
+        let handshake_error = handshake.err().unwrap();
+        assert_eq!(handshake_error, VerifyClientHandshakeError::InvalidJWT);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn reject_illegal_host() -> Result<(), Box<dyn std::error::Error>> {
+        let config = get_config();
+        let (mut tx, mut rx) = mpsc::unbounded();
+
+        let hello = serde_json::to_vec(&ClientHello {
+            id: ClientId::generate(),
+            version: 0,
+            token: make_jwt("supersecret", Duration::minutes(10), "other.host.test.local".to_string())?,
+        })
+        .unwrap_or_default();
+        tx.send(Ok(Message::binary(hello))).await?;
+
+        let handshake= verify_client_handshake(&mut rx, config).await;
+        let handshake_error = handshake.err().unwrap();
+        assert_eq!(handshake_error, VerifyClientHandshakeError::IllegalHost);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn reject_when_config_not_initialized() -> Result<(), Box<dyn std::error::Error>> {
+        let (mut tx, mut rx) = mpsc::unbounded();
+
+        let hello = serde_json::to_vec(&ClientHello {
+            id: ClientId::generate(),
+            version: 0,
+            token: make_jwt("supersecret", Duration::minutes(10), "foohost.test.local".to_string())?,
+        })
+        .unwrap_or_default();
+        tx.send(Ok(Message::binary(hello))).await?;
+
+        let handshake= verify_client_handshake(&mut rx, &EMPTY_CONFIG).await;
+        let handshake_error = handshake.err().unwrap();
+        assert_eq!(handshake_error, VerifyClientHandshakeError::Other(ProxyServerError::ConfigNotInitialized));
         Ok(())
     }
 }

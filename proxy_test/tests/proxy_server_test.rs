@@ -15,11 +15,17 @@ use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
 use url::Url;
+use once_cell::sync::OnceCell;
+use magic_tunnel_server::Config;
+use magic_tunnel_auth::make_jwt;
+use chrono::Duration as CDuration;
 
 #[cfg(test)]
 mod proxy_server_test {
     use super::*;
     use serial_test::serial;
+
+    static CONFIG: OnceCell<Config> = OnceCell::new();
 
     macro_rules! assert_control_packet_type_matches {
         ($expr:expr, $pat:pat) => {
@@ -64,30 +70,44 @@ mod proxy_server_test {
             pub static ref CONNECTIONS: Connections = Connections::new();
             pub static ref ACTIVE_STREAMS: ActiveStreams = Arc::new(DashMap::new());
         }
+
+        let config = CONFIG.get_or_init(||
+            Config {
+                control_port: 5000,
+                token_secret: "supersecret".to_string(),
+                host: "integrated.test.local".to_string(),
+                remote_port_start: 4000,
+                remote_port_end: 4010,
+            }
+        );
+
         // we must clear CONNECTIONS, ACTIVE_STREAMS
         // because they are shared across test
         Connections::clear(&CONNECTIONS);
         ACTIVE_STREAMS.clear();
-        let alloc = Arc::new(Mutex::new(PortAllocator::new(4000..4010)));
+        let alloc = Arc::new(Mutex::new(PortAllocator::new(config.remote_port_start..config.remote_port_end)));
         let remote_cancellers: Arc<DashMap<ClientId, CancelHander>> = Arc::new(DashMap::new());
 
         tokio::spawn(async move {
             run(
+                &CONFIG,
                 &CONNECTIONS,
                 &ACTIVE_STREAMS,
                 alloc,
                 remote_cancellers,
-                control_port,
             )
-            .await;
+            .await.unwrap();
         });
 
         // setup proxy client
+        // --- generate valid jwt
+        let token = make_jwt("supersecret", CDuration::minutes(10), "integrated.test.local".to_string())?;
+
         // --- handshake
         let url = Url::parse(&format!("wss://localhost:{}/tunnel", control_port))?;
         let (mut websocket, _) = connect_async(url).await.expect("failed to connect");
 
-        send_client_hello(&mut websocket).await?;
+        send_client_hello(&mut websocket, token).await?;
         let client_info = verify_server_hello(&mut websocket).await?;
 
         Ok((websocket, ACTIVE_STREAMS.clone(), client_info))

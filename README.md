@@ -23,6 +23,7 @@ TODO
 - [x] no unwrap, expect
 - [ ] 2 hour auto delete
     - for rolling update
+- [ ] add test, which checks api version field
     
 
 integration test

@@ -26,6 +26,9 @@ base64 = "0.13"
 dashmap = "4.0"
 thiserror = "1.0"
 rand = { version = "0.8", features = ["small_rng"] }
+magic-tunnel-auth = { git = "ssh://git@github.com/Kumassy/magic-tunnel-auth.git", branch = "main" }
+once_cell = "1.8"
+chrono = "0.4"
 
 [dev-dependencies]
 tokio-test = "0.4"
