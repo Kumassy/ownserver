@@ -1,11 +1,14 @@
-name: Rotate
+name: Test
 
 on: [push, pull_request]
 jobs:
-  build:
+  test:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v1
+    - uses: actions/checkout@v2
+    - uses: webfactory/ssh-agent@v0.5.3
+      with:
+        ssh-private-key: ${{ secrets.DEPLOY_KEY_SECRET }}
     - name: Run
       run: cargo test
