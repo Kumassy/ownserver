@@ -12,7 +12,9 @@ use magic_tunnel_server::{
     port_allocator::PortAllocator,
     proxy_server,
     remote::{CancelHander, HTTP_TUNNEL_REFUSED_RESPONSE},
+    Config,
 };
+use magic_tunnel_auth::build_routes;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
@@ -20,11 +22,14 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::oneshot::{self, Receiver};
 use tokio::sync::Mutex;
+use once_cell::sync::OnceCell;
 
 #[cfg(test)]
 mod proxy_client_server_test {
     use super::*;
     use serial_test::serial;
+
+    static CONFIG: OnceCell<Config> = OnceCell::new();
 
     // macro_rules! assert_control_packet_type_matches {
     //     ($expr:expr, $pat:pat) => {
@@ -55,9 +60,18 @@ mod proxy_client_server_test {
         };
     }
 
-    async fn launch_proxy_server(
-        control_port: u16,
-    ) -> Result<ActiveStreamsServer, Box<dyn std::error::Error>> {
+    async fn launch_token_server() {
+        let hosts = vec![
+            "integrated.test.local".to_string(),
+        ];
+        let routes = build_routes("supersecret", hosts);
+
+        tokio::spawn(async move {
+            warp::serve(routes).run(([127, 0, 0, 1], 8888)).await;
+        });
+    }
+
+    async fn launch_proxy_server() -> Result<ActiveStreamsServer, Box<dyn std::error::Error>> {
         lazy_static! {
             pub static ref CONNECTIONS: Connections = Connections::new();
             pub static ref ACTIVE_STREAMS_SERVER: ActiveStreamsServer = Arc::new(DashMap::new());
@@ -66,18 +80,28 @@ mod proxy_client_server_test {
         // because they are shared across test
         Connections::clear(&CONNECTIONS);
         ACTIVE_STREAMS_SERVER.clear();
-        let alloc = Arc::new(Mutex::new(PortAllocator::new(4000..4010)));
+
+        let config = CONFIG.get_or_init(||
+            Config {
+                control_port: 5000,
+                token_secret: "supersecret".to_string(),
+                host: "integrated.test.local".to_string(),
+                remote_port_start: 4000,
+                remote_port_end: 4010,
+            }
+        );
+        let alloc = Arc::new(Mutex::new(PortAllocator::new(config.remote_port_start..config.remote_port_end)));
         let remote_cancellers: Arc<DashMap<ClientId, CancelHander>> = Arc::new(DashMap::new());
 
         tokio::spawn(async move {
             proxy_server::run(
+                &CONFIG,
                 &CONNECTIONS,
                 &ACTIVE_STREAMS_SERVER,
                 alloc,
                 remote_cancellers,
-                control_port,
             )
-            .await;
+            .await.unwrap();
         });
 
         Ok(ACTIVE_STREAMS_SERVER.clone())
@@ -97,7 +121,7 @@ mod proxy_client_server_test {
         let (tx, rx) = oneshot::channel();
         tokio::spawn(async move {
             let (client_info, handle_client_to_control, handle_control_to_client) =
-                proxy_client::run(&ACTIVE_STREAMS_CLIENT, control_port, local_port)
+                proxy_client::run(&ACTIVE_STREAMS_CLIENT, control_port, local_port, "http://127.0.0.1:8888/request_token")
                     .await
                     .expect("failed to launch proxy_client");
             tx.send(client_info).unwrap();
@@ -148,7 +172,8 @@ mod proxy_client_server_test {
         let control_port: u16 = 5000;
         let local_port: u16 = 3000;
 
-        let active_streams_server = launch_proxy_server(control_port).await?;
+        launch_token_server().await;
+        let active_streams_server = launch_proxy_server().await?;
         // wait until server is ready
         tokio::time::sleep(Duration::from_secs(3)).await;
 
@@ -200,7 +225,8 @@ mod proxy_client_server_test {
         let control_port: u16 = 5000;
         let local_port: u16 = 3000;
 
-        let active_streams_server = launch_proxy_server(control_port).await?;
+        launch_token_server().await;
+        let active_streams_server = launch_proxy_server().await?;
         // wait until server is ready
         tokio::time::sleep(Duration::from_secs(3)).await;
 
@@ -259,7 +285,8 @@ mod proxy_client_server_test {
         let control_port: u16 = 5000;
         let local_port: u16 = 3000;
 
-        let active_streams_server = launch_proxy_server(control_port).await?;
+        launch_token_server().await;
+        let active_streams_server = launch_proxy_server().await?;
         // wait until server is ready
         tokio::time::sleep(Duration::from_secs(3)).await;
 
@@ -309,10 +336,10 @@ mod proxy_client_server_test {
     #[serial]
     async fn refuse_remote_traffic_when_remote_process_not_running(
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let control_port: u16 = 5000;
         let remote_port: u16 = 8080;
 
-        let active_streams_server = launch_proxy_server(control_port).await?;
+        launch_token_server().await;
+        let active_streams_server = launch_proxy_server().await?;
         // wait until server is ready
         tokio::time::sleep(Duration::from_secs(3)).await;
 

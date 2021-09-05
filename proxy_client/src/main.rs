@@ -14,9 +14,10 @@ async fn main() -> Result<()> {
     pretty_env_logger::init();
     let control_port: u16 = 5000;
     let local_port: u16 = 3000;
+    let token_server = "http://localhost:4567";
 
     let (client_info, handle_client_to_control, handle_control_to_client) =
-        run(&ACTIVE_STREAMS, control_port, local_port).await?;
+        run(&ACTIVE_STREAMS, control_port, local_port, token_server).await?;
     info!("client is running under configuration: {:?}", client_info);
 
     let (client_to_control, control_to_client) =

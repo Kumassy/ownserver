@@ -14,18 +14,22 @@ use crate::error::Error;
 use crate::local;
 use crate::{ActiveStreams, StreamMessage};
 use magic_tunnel_lib::{ClientHello, ClientId, ControlPacket, ServerHello, StreamId};
+use magic_tunnel_auth::post_request_token;
 
 pub async fn run(
     active_streams: &'static ActiveStreams,
     control_port: u16,
     local_port: u16,
+    token_server: &str,
 ) -> Result<(ClientInfo, JoinHandle<()>, JoinHandle<Result<(), Error>>)> {
     let url = Url::parse(&format!("wss://localhost:{}/tunnel", control_port))?;
     let (mut websocket, _) = connect_async(url).await.map_err(|_| Error::ServerDown)?;
-
     info!("WebSocket handshake has been successfully completed");
 
-    send_client_hello(&mut websocket).await?;
+    let token = post_request_token(token_server).await?;
+    info!("got token {:?}", token);
+ 
+    send_client_hello(&mut websocket, token).await?;
     let client_info = verify_server_hello(&mut websocket).await?;
     info!("cid={} got client_info from server: {:?}", client_info.client_id, client_info);
 
@@ -97,13 +101,14 @@ pub async fn run(
     ))
 }
 
-pub async fn send_client_hello<T>(websocket: &mut T) -> Result<(), T::Error>
+pub async fn send_client_hello<T>(websocket: &mut T, token: String) -> Result<(), T::Error>
 where
     T: Unpin + Sink<Message>,
 {
     let hello = ClientHello {
         id: ClientId::generate(),
         version: 0,
+        token,
     };
     debug!("Sent client hello: {:?}", hello);
     let hello_data = serde_json::to_vec(&hello).unwrap_or_default();
@@ -314,7 +319,7 @@ mod process_control_flow_message {
 
     #[tokio::test]
     async fn handle_control_packet_init() {
-        let (active_streams, tunnel_tx, _, stream_id, local_port, _) = setup().await;
+        let (active_streams, tunnel_tx, _tunnel_rx, stream_id, local_port, _) = setup().await;
 
         // ensure active_streams has registered
         assert_eq!(
@@ -356,7 +361,7 @@ mod process_control_flow_message {
     #[tokio::test]
     #[should_panic(expected = "ControlPacket::Refused may be unimplemented")]
     async fn handle_control_packet_refused() {
-        let (active_streams, tunnel_tx, _, stream_id, local_port, _) = setup().await;
+        let (active_streams, tunnel_tx, _tunnel_rx, stream_id, local_port, _) = setup().await;
 
         let _ = process_control_flow_message(
             active_streams.clone(),
@@ -370,7 +375,7 @@ mod process_control_flow_message {
 
     #[tokio::test]
     async fn handle_control_packet_end() {
-        let (active_streams, tunnel_tx, _, stream_id, local_port, _) = setup().await;
+        let (active_streams, tunnel_tx, _tunnel_rx, stream_id, local_port, _) = setup().await;
 
         // set up local connection
         let _ = process_control_flow_message(
@@ -402,7 +407,7 @@ mod process_control_flow_message {
 
     #[tokio::test]
     async fn handle_control_packet_data() {
-        let (active_streams, tunnel_tx, _, stream_id, local_port, mut msg_rx) = setup().await;
+        let (active_streams, tunnel_tx, _tunnel_rx, stream_id, local_port, mut msg_rx) = setup().await;
 
         // set up local connection
         let _ = process_control_flow_message(
@@ -459,7 +464,7 @@ mod send_client_hello_test {
     async fn it_sends_client_hello() -> Result<(), Box<dyn std::error::Error>> {
         let (mut tx, mut rx) = mpsc::unbounded();
 
-        send_client_hello(&mut tx)
+        send_client_hello(&mut tx, "footoken".to_string())
             .await
             .expect("failed to write to websocket");
 

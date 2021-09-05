@@ -54,8 +54,10 @@ impl ClientId {
 pub struct ClientHello {
     // depricated
     // send JWT
+    // TODO: remove id
     pub id: ClientId,
     pub version: u16,
+    pub token: String,
     // game id
 }
 
