@@ -314,7 +314,7 @@ mod process_control_flow_message {
 
     #[tokio::test]
     async fn handle_control_packet_init() {
-        let (active_streams, tunnel_tx, _, stream_id, local_port, _) = setup().await;
+        let (active_streams, tunnel_tx, _tunnel_rx, stream_id, local_port, _) = setup().await;
 
         // ensure active_streams has registered
         assert_eq!(
@@ -356,7 +356,7 @@ mod process_control_flow_message {
     #[tokio::test]
     #[should_panic(expected = "ControlPacket::Refused may be unimplemented")]
     async fn handle_control_packet_refused() {
-        let (active_streams, tunnel_tx, _, stream_id, local_port, _) = setup().await;
+        let (active_streams, tunnel_tx, _tunnel_rx, stream_id, local_port, _) = setup().await;
 
         let _ = process_control_flow_message(
             active_streams.clone(),
@@ -370,7 +370,7 @@ mod process_control_flow_message {
 
     #[tokio::test]
     async fn handle_control_packet_end() {
-        let (active_streams, tunnel_tx, _, stream_id, local_port, _) = setup().await;
+        let (active_streams, tunnel_tx, _tunnel_rx, stream_id, local_port, _) = setup().await;
 
         // set up local connection
         let _ = process_control_flow_message(
@@ -402,7 +402,7 @@ mod process_control_flow_message {
 
     #[tokio::test]
     async fn handle_control_packet_data() {
-        let (active_streams, tunnel_tx, _, stream_id, local_port, mut msg_rx) = setup().await;
+        let (active_streams, tunnel_tx, _tunnel_rx, stream_id, local_port, mut msg_rx) = setup().await;
 
         // set up local connection
         let _ = process_control_flow_message(
