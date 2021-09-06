@@ -51,14 +51,18 @@ impl ClientId {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum Payload {
+    Other = 0,
+    Http = 80,
+    Minecraft = 25565,
+    Factorio = 34197,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ClientHello {
-    // depricated
-    // send JWT
-    // TODO: remove id
-    pub id: ClientId,
     pub version: u16,
     pub token: String,
-    // game id
+    pub payload: Payload,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -121,17 +125,14 @@ impl std::fmt::Display for ControlPacket {
 #[serde(rename_all = "snake_case")]
 pub enum ServerHello {
     Success {
-        // sub_domain: String,
-        // hostname: String,
         client_id: ClientId,
         assigned_port: u16,
         version: u16,
     },
-    // TODO: this may not be used
-    // SubDomainInUse,
-    // InvalidSubDomain,
-    // AuthFailed,
-    // Error(String),
+    BadRequest,
+    ServiceTemporaryUnavailable,
+    IllegalHost,
+    InternalServerError,
 }
 
 #[cfg(test)]
