@@ -147,8 +147,23 @@ where
         } => {
             info!("cid={} Server accepted our connection.", client_id);
             (client_id, assigned_port)
-        }
-        _ => unimplemented!(), // TODO
+        },
+        ServerHello::BadRequest => {
+            error!("Server send an error: {:?}", Error::BadRequest);
+            return Err(Error::BadRequest)
+        },
+        ServerHello::ServiceTemporaryUnavailable => {
+            error!("Server send an error: {:?}", Error::ServiceTemporaryUnavailable);
+            return Err(Error::ServiceTemporaryUnavailable)
+        },
+        ServerHello::IllegalHost => {
+            error!("Server send an error: {:?}", Error::IllegalHost);
+            return Err(Error::IllegalHost)
+        },
+        ServerHello::InternalServerError => {
+            error!("Server send an error: {:?}", Error::InternalServerError);
+            return Err(Error::InternalServerError)
+        },
     };
 
     Ok(ClientInfo {
