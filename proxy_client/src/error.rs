@@ -29,25 +29,9 @@ pub enum Error {
     #[error("Server encountered some errors.")]
     InternalServerError,
 
-    //// TODO: delete below items
-
-    // #[error("Server denied the connection.")]
-    // AuthenticationFailed,
-
     #[error("Server sent a malformed message.")]
     MalformedMessageFromServer,
 
-    // #[error("Invalid sub-domain specified.")]
-    // InvalidSubDomain,
-
-    // #[error("Cannot use this sub-domain, it is already taken.")]
-    // SubDomainInUse,
-
-    // #[error("{0}")]
-    // ServerError(String),
-
     #[error("The server timed out sending us something.")]
     Timeout,
-
-    
 }
