@@ -13,7 +13,7 @@ use url::Url;
 use crate::error::Error;
 use crate::local;
 use crate::{ActiveStreams, StreamMessage};
-use magic_tunnel_lib::{ClientHello, ClientId, ControlPacket, ServerHello, StreamId};
+use magic_tunnel_lib::{ClientHello, ClientId, ControlPacket, ServerHello, StreamId, Payload};
 use magic_tunnel_auth::post_request_token;
 
 pub async fn run(
@@ -106,9 +106,9 @@ where
     T: Unpin + Sink<Message>,
 {
     let hello = ClientHello {
-        id: ClientId::generate(),
         version: 0,
         token,
+        payload: Payload::Other,
     };
     debug!("Sent client hello: {:?}", hello);
     let hello_data = serde_json::to_vec(&hello).unwrap_or_default();
@@ -147,8 +147,23 @@ where
         } => {
             info!("cid={} Server accepted our connection.", client_id);
             (client_id, assigned_port)
-        }
-        _ => unimplemented!(),
+        },
+        ServerHello::BadRequest => {
+            error!("Server send an error: {:?}", Error::BadRequest);
+            return Err(Error::BadRequest)
+        },
+        ServerHello::ServiceTemporaryUnavailable => {
+            error!("Server send an error: {:?}", Error::ServiceTemporaryUnavailable);
+            return Err(Error::ServiceTemporaryUnavailable)
+        },
+        ServerHello::IllegalHost => {
+            error!("Server send an error: {:?}", Error::IllegalHost);
+            return Err(Error::IllegalHost)
+        },
+        ServerHello::InternalServerError => {
+            error!("Server send an error: {:?}", Error::InternalServerError);
+            return Err(Error::InternalServerError)
+        },
     };
 
     Ok(ClientInfo {
