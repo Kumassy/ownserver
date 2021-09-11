@@ -2,6 +2,8 @@ use rand::prelude::*;
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 
+pub const CLIENT_HELLO_VERSION: u16 = 0;
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 #[serde(transparent)]
 pub struct StreamId(pub [u8; 8]);
@@ -127,12 +129,12 @@ pub enum ServerHello {
     Success {
         client_id: ClientId,
         assigned_port: u16,
-        version: u16,
     },
     BadRequest,
     ServiceTemporaryUnavailable,
     IllegalHost,
     InternalServerError,
+    VersionMismatch,
 }
 
 #[cfg(test)]

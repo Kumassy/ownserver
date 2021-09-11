@@ -29,6 +29,9 @@ pub enum Error {
     #[error("Server encountered some errors.")]
     InternalServerError,
 
+    #[error("Current client handshake version is not supported.")]
+    ClientHandshakeVersionMismatch,
+
     #[error("Server sent a malformed message.")]
     MalformedMessageFromServer,
 
