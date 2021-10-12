@@ -13,7 +13,7 @@ use url::Url;
 use crate::error::Error;
 use crate::local;
 use crate::{ActiveStreams, StreamMessage};
-use magic_tunnel_lib::{ClientHello, ClientId, ControlPacket, ServerHello, StreamId, Payload};
+use magic_tunnel_lib::{ClientHello, ClientId, ControlPacket, ServerHello, StreamId, Payload, CLIENT_HELLO_VERSION};
 use magic_tunnel_auth::post_request_token;
 
 pub async fn run(
@@ -106,7 +106,7 @@ where
     T: Unpin + Sink<Message>,
 {
     let hello = ClientHello {
-        version: 0,
+        version: CLIENT_HELLO_VERSION,
         token,
         payload: Payload::Other,
     };
@@ -160,6 +160,10 @@ where
             error!("Server send an error: {:?}", Error::IllegalHost);
             return Err(Error::IllegalHost)
         },
+        ServerHello::VersionMismatch => {
+            error!("Server send an error: {:?}", Error::ClientHandshakeVersionMismatch);
+            return Err(Error::ClientHandshakeVersionMismatch)
+        }
         ServerHello::InternalServerError => {
             error!("Server send an error: {:?}", Error::InternalServerError);
             return Err(Error::InternalServerError)
@@ -504,7 +508,6 @@ mod verify_server_hello_test {
         let hello = serde_json::to_vec(&ServerHello::Success {
             client_id: cid.clone(),
             assigned_port: 256,
-            version: 0,
         })
         .unwrap_or_default();
         tx.send(Ok(Message::binary(hello))).await?;

@@ -23,7 +23,7 @@ TODO
 - [x] no unwrap, expect
 - [ ] 2 hour auto delete
     - for rolling update
-- [ ] add test, which checks api version field
+- [x] add test, which checks api version field
 - [x] remove client id from client hello
 - [x] add error in server hello
 - [x] handle error in server_hello

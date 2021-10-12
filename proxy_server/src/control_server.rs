@@ -2,7 +2,7 @@ use futures::{
     channel::mpsc::{unbounded, SendError},
     Sink, SinkExt, Stream, StreamExt,
 };
-pub use magic_tunnel_lib::{ClientHello, ClientId, ControlPacket, ServerHello, StreamId};
+pub use magic_tunnel_lib::{ClientHello, ClientId, ControlPacket, ServerHello, StreamId, CLIENT_HELLO_VERSION};
 use magic_tunnel_auth::decode_jwt;
 use std::convert::Infallible;
 use std::net::SocketAddr;
@@ -106,7 +106,6 @@ async fn try_client_handshake(
                     let server_hello = ServerHello::Success {
                         client_id: client_id.clone(),
                         assigned_port: port,
-                        version: 0,
                     };
 
                     if let Err(e) = send_server_hello(websocket, server_hello).await {
@@ -157,6 +156,15 @@ async fn try_client_handshake(
             }
             None
         },
+        Err(VerifyClientHandshakeError::VersionMismatch) => {
+            tracing::warn!("client sent not supported client handshake version");
+
+            let server_hello = ServerHello::VersionMismatch;
+            if let Err(e) = send_server_hello(websocket, server_hello).await {
+                tracing::warn!("failed to send server hello: {}", e);
+            }
+            None
+        }
         Err(VerifyClientHandshakeError::Other(e)) => {
             tracing::error!("proxy server encountered internal server error: {:?}", e);
             let server_hello = ServerHello::InternalServerError;
@@ -178,6 +186,9 @@ pub enum VerifyClientHandshakeError {
 
     #[error("Client tried to access different host.")]
     IllegalHost,
+
+    #[error("Client sends unsupported client handshake version.")]
+    VersionMismatch,
 
     #[error("Other internal error: {0}.")]
     Other(#[from] ProxyServerError),
@@ -203,6 +214,11 @@ async fn verify_client_handshake(
         }
     };
     tracing::debug!("got client handshake {:?}", client_hello);
+
+    if client_hello.version != CLIENT_HELLO_VERSION {
+        tracing::debug!("client sernt client hello version {} but server accept version {}", client_hello.version, CLIENT_HELLO_VERSION);
+        return Err(VerifyClientHandshakeError::VersionMismatch);
+    }
 
     let claim = decode_jwt(token_secret, &client_hello.token);
     match claim.map(|c| &c.host == host) {
@@ -468,7 +484,7 @@ mod verify_client_handshake_test {
         let config = get_config();
 
         let hello = serde_json::to_vec(&ClientHello {
-            version: 0,
+            version: CLIENT_HELLO_VERSION,
             token: make_jwt("supersecret", Duration::minutes(10), "foohost.test.local".to_string())?,
             payload: Payload::Other,
         })
@@ -509,7 +525,7 @@ mod verify_client_handshake_test {
         let config = get_config();
 
         let hello = serde_json::to_vec(&ClientHello {
-            version: 0,
+            version: CLIENT_HELLO_VERSION,
             token: "invalid jwt".to_string(),
             payload: Payload::Other,
         })
@@ -527,7 +543,7 @@ mod verify_client_handshake_test {
         let config = get_config();
 
         let hello = serde_json::to_vec(&ClientHello {
-            version: 0,
+            version: CLIENT_HELLO_VERSION,
             token: make_jwt("supersecret", Duration::minutes(10), "other.host.test.local".to_string())?,
             payload: Payload::Other,
         })
@@ -543,7 +559,7 @@ mod verify_client_handshake_test {
     #[tokio::test]
     async fn reject_when_config_not_initialized() -> Result<(), Box<dyn std::error::Error>> {
         let hello = serde_json::to_vec(&ClientHello {
-            version: 0,
+            version: CLIENT_HELLO_VERSION,
             token: make_jwt("supersecret", Duration::minutes(10), "foohost.test.local".to_string())?,
             payload: Payload::Other,
         })
@@ -553,6 +569,23 @@ mod verify_client_handshake_test {
         let handshake= verify_client_handshake(&EMPTY_CONFIG, client_hello_data).await;
         let handshake_error = handshake.err().unwrap();
         assert_eq!(handshake_error, VerifyClientHandshakeError::Other(ProxyServerError::ConfigNotInitialized));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn reject_when_version_mismatch() -> Result<(), Box<dyn std::error::Error>> {
+        let config = get_config();
+
+        let hello = serde_json::to_vec(&ClientHello {
+            version: CLIENT_HELLO_VERSION,
+            token: make_jwt("supersecret", Duration::minutes(10), "foohost.test.local".to_string())?,
+            payload: Payload::Other,
+        })
+        .unwrap_or_default();
+        let client_hello_data = Message::binary(hello).into_bytes();
+
+        let hello = verify_client_handshake(config, client_hello_data).await;
+        assert!(hello.is_ok());
         Ok(())
     }
 }
