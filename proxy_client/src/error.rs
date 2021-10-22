@@ -37,4 +37,7 @@ pub enum Error {
 
     #[error("The server timed out sending us something.")]
     Timeout,
+
+    #[error("Join error.")]
+    JoinError(#[from] tokio::task::JoinError),
 }
