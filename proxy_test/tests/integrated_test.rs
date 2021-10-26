@@ -22,6 +22,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::oneshot::{self, Receiver};
 use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
 use once_cell::sync::OnceCell;
 
 #[cfg(test)]
@@ -110,6 +111,7 @@ mod proxy_client_server_test {
     async fn launch_proxy_client(
         control_port: u16,
         local_port: u16,
+        cancellation_token: CancellationToken,
     ) -> Result<(ActiveStreamsClient, Receiver<ClientInfo>), Box<dyn std::error::Error>> {
         lazy_static! {
             pub static ref ACTIVE_STREAMS_CLIENT: ActiveStreamsClient =
@@ -120,16 +122,13 @@ mod proxy_client_server_test {
 
         let (tx, rx) = oneshot::channel();
         tokio::spawn(async move {
-            let (client_info, handle_client_to_control, handle_control_to_client) =
-                proxy_client::run(&ACTIVE_STREAMS_CLIENT, control_port, local_port, "http://127.0.0.1:8888/request_token")
+            let (client_info, handle) =
+                proxy_client::run(&ACTIVE_STREAMS_CLIENT, control_port, local_port, "http://127.0.0.1:8888/request_token", cancellation_token)
                     .await
                     .expect("failed to launch proxy_client");
             tx.send(client_info).unwrap();
 
-            let (client_to_control, control_to_client) =
-                futures::join!(handle_client_to_control, handle_control_to_client);
-            client_to_control.unwrap();
-            control_to_client.unwrap().unwrap();
+            handle.await.unwrap().unwrap();
         });
 
         Ok((ACTIVE_STREAMS_CLIENT.clone(), rx))
@@ -145,21 +144,23 @@ mod proxy_client_server_test {
                 let (mut socket, _) = listener.accept().await.expect("No connections to accept");
 
                 tokio::spawn(async move {
-                    let mut buf = [0; 4 * 1024];
-                    let n = socket
-                        .read(&mut buf)
-                        .await
-                        .expect("failed to read data from socket");
-                    if n == 0 {
-                        return;
-                    }
+                    loop {
+                        let mut buf = [0; 4 * 1024];
+                        let n = socket
+                            .read(&mut buf)
+                            .await
+                            .expect("failed to read data from socket");
+                        if n == 0 {
+                            return;
+                        }
 
-                    let mut msg = b"hello, ".to_vec();
-                    msg.append(&mut buf[..n].to_vec());
-                    socket
-                        .write_all(&msg)
-                        .await
-                        .expect("failed to write packet data to local tcp socket");
+                        let mut msg = b"hello, ".to_vec();
+                        msg.append(&mut buf[..n].to_vec());
+                        socket
+                            .write_all(&msg)
+                            .await
+                            .expect("failed to write packet data to local tcp socket");
+                    }
                 });
             }
         };
@@ -171,6 +172,7 @@ mod proxy_client_server_test {
     async fn forward_remote_traffic_to_local() -> Result<(), Box<dyn std::error::Error>> {
         let control_port: u16 = 5000;
         let local_port: u16 = 3000;
+        let cancellation_token = CancellationToken::new();
 
         launch_token_server().await;
         let active_streams_server = launch_proxy_server().await?;
@@ -179,7 +181,7 @@ mod proxy_client_server_test {
 
         launch_local_server(local_port).await;
         let (active_streams_client, client_info) =
-            launch_proxy_client(control_port, local_port).await?;
+            launch_proxy_client(control_port, local_port, cancellation_token).await?;
         let remote_port_for_client = client_info.await?.assigned_port;
         // wait until client is ready
         tokio::time::sleep(Duration::from_secs(3)).await;
@@ -224,6 +226,7 @@ mod proxy_client_server_test {
     async fn forward_multiple_remote_traffic_to_local() -> Result<(), Box<dyn std::error::Error>> {
         let control_port: u16 = 5000;
         let local_port: u16 = 3000;
+        let cancellation_token = CancellationToken::new();
 
         launch_token_server().await;
         let active_streams_server = launch_proxy_server().await?;
@@ -232,7 +235,7 @@ mod proxy_client_server_test {
 
         launch_local_server(local_port).await;
         let (active_streams_client, client_info) =
-            launch_proxy_client(control_port, local_port).await?;
+            launch_proxy_client(control_port, local_port, cancellation_token).await?;
         let remote_port_for_client = client_info.await?.assigned_port;
         // wait until client is ready
         tokio::time::sleep(Duration::from_secs(3)).await;
@@ -284,6 +287,7 @@ mod proxy_client_server_test {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let control_port: u16 = 5000;
         let local_port: u16 = 3000;
+        let cancellation_token = CancellationToken::new();
 
         launch_token_server().await;
         let active_streams_server = launch_proxy_server().await?;
@@ -291,7 +295,7 @@ mod proxy_client_server_test {
         tokio::time::sleep(Duration::from_secs(3)).await;
 
         let (active_streams_client, client_info) =
-            launch_proxy_client(control_port, local_port).await?;
+            launch_proxy_client(control_port, local_port, cancellation_token).await?;
         let remote_port_for_client = client_info.await?.assigned_port;
         // wait until client is ready
         tokio::time::sleep(Duration::from_secs(3)).await;
@@ -352,6 +356,137 @@ mod proxy_client_server_test {
         // access remote port
         let remote = TcpStream::connect(format!("127.0.0.1:{}", remote_port)).await;
         assert!(remote.is_err());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn refuse_remote_traffic_when_client_canceled() -> Result<(), Box<dyn std::error::Error>> {
+        let control_port: u16 = 5000;
+        let local_port: u16 = 3000;
+        let cancellation_token = CancellationToken::new();
+
+        launch_token_server().await;
+        let active_streams_server = launch_proxy_server().await?;
+        // wait until server is ready
+        tokio::time::sleep(Duration::from_secs(3)).await;
+
+        launch_local_server(local_port).await;
+        let (active_streams_client, client_info) =
+            launch_proxy_client(control_port, local_port, cancellation_token.clone()).await?;
+        let remote_port_for_client = client_info.await?.assigned_port;
+        // wait until client is ready
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        
+        // cancel client
+        cancellation_token.cancel();
+
+        assert_eq!(
+            active_streams_server.iter().count(),
+            0,
+            "active_streams should be empty until remote connection established"
+        );
+        assert_eq!(
+            active_streams_client.read().unwrap().iter().count(),
+            0,
+            "active_streams should be empty until remote connection established"
+        );
+
+        // access remote port
+        // we can access remote server because remote_port_for_client remains open
+        // even if client has cancelled
+        let mut remote = TcpStream::connect(format!("127.0.0.1:{}", remote_port_for_client))
+            .await
+            .expect("Failed to connect to remote port");
+        // wait until remote access has registered to ACTIVE_STREAMS
+        tokio::time::sleep(Duration::from_secs(3)).await;
+
+        assert_eq!(
+            active_streams_server.iter().count(),
+            0,
+            "server stream should be empty after client has exited"
+        );
+        assert_eq!(
+            active_streams_client.read().unwrap().iter().count(),
+            0,
+            "client stream should be empty after client has exited"
+        );
+
+        remote.write_all(&b"foobar".to_vec()).await?;
+        assert_socket_bytes_matches!(remote, b"HTTP/1.1 500\r\nContent-Length: 27\r\n\r\nError: Error finding tunnel");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn refuse_remote_traffic_after_client_canceled() -> Result<(), Box<dyn std::error::Error>> {
+        let control_port: u16 = 5000;
+        let local_port: u16 = 3000;
+        let cancellation_token = CancellationToken::new();
+
+        launch_token_server().await;
+        let active_streams_server = launch_proxy_server().await?;
+        // wait until server is ready
+        tokio::time::sleep(Duration::from_secs(3)).await;
+
+        launch_local_server(local_port).await;
+        let (active_streams_client, client_info) =
+            launch_proxy_client(control_port, local_port, cancellation_token.clone()).await?;
+        let remote_port_for_client = client_info.await?.assigned_port;
+        // wait until client is ready
+        tokio::time::sleep(Duration::from_secs(3)).await;
+
+        assert_eq!(
+            active_streams_server.iter().count(),
+            0,
+            "active_streams should be empty until remote connection established"
+        );
+        assert_eq!(
+            active_streams_client.read().unwrap().iter().count(),
+            0,
+            "active_streams should be empty until remote connection established"
+        );
+
+        // access remote port
+        let mut remote = TcpStream::connect(format!("127.0.0.1:{}", remote_port_for_client))
+            .await
+            .expect("Failed to connect to remote port");
+        // wait until remote access has registered to ACTIVE_STREAMS
+        tokio::time::sleep(Duration::from_secs(3)).await;
+
+        assert_eq!(
+            active_streams_server.iter().count(),
+            1,
+            "remote socket should be accepted and registered"
+        );
+        assert_eq!(
+            active_streams_client.read().unwrap().iter().count(),
+            1,
+            "remote socket should be forwared through control packet"
+        );
+
+        remote.write_all(&b"foobar".to_vec()).await?;
+        assert_socket_bytes_matches!(remote, b"hello, foobar");
+
+        // cancel client
+        cancellation_token.cancel();
+        tokio::time::sleep(Duration::from_secs(6)).await;
+
+        remote.write_all(&b"foobar".to_vec()).await?;
+        assert_socket_bytes_matches!(remote, b"HTTP/1.1 404\r\nContent-Length: 23\r\n\r\nError: Tunnel Not Found");
+
+        assert_eq!(
+            active_streams_server.iter().count(),
+            0,
+            "server stream should be empty after client has exited"
+        );
+        assert_eq!(
+            active_streams_client.read().unwrap().iter().count(),
+            1,
+            "client stream should remain same after client has exited"
+        );
 
         Ok(())
     }

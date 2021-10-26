@@ -9,6 +9,7 @@ use tokio_tungstenite::{
     tungstenite::{Error as WsError, Message},
 };
 use url::Url;
+use tokio_util::sync::CancellationToken;
 
 use crate::error::Error;
 use crate::local;
@@ -21,7 +22,8 @@ pub async fn run(
     control_port: u16,
     local_port: u16,
     token_server: &str,
-) -> Result<(ClientInfo, JoinHandle<()>, JoinHandle<Result<(), Error>>)> {
+    cancellation_token: CancellationToken,
+) -> Result<(ClientInfo, JoinHandle<Result<(), Error>>)> {
     let url = Url::parse(&format!("wss://localhost:{}/tunnel", control_port))?;
     let (mut websocket, _) = connect_async(url).await.map_err(|_| Error::ServerDown)?;
     info!("WebSocket handshake has been successfully completed");
@@ -41,63 +43,94 @@ pub async fn run(
 
     let client_id = client_info.client_id.clone();
     let client_id_clone = client_id.clone();
+    let ct = cancellation_token.child_token();
     // continuously write to websocket tunnel
     let handle_client_to_control: JoinHandle<()> = tokio::spawn(async move {
         let client_id = client_id_clone;
         loop {
-            let packet = match tunnel_rx.next().await {
-                Some(data) => data,
-                None => {
-                    warn!("cid={} control flow didn't send anything!", client_id);
+            tokio::select! {
+                v = tunnel_rx.next() => {
+                    let packet = match v {
+                        Some(data) => data,
+                        None => {
+                            warn!("cid={} control flow didn't send anything!", client_id);
+                            return;
+                        }
+                    };
+                    if let Err(e) = ws_sink.send(Message::binary(packet.serialize())).await {
+                        warn!("cid={} failed to write message to tunnel websocket: {:?}", client_id, e);
+                        return;
+                    }
+                },
+                _ = ct.cancelled() => {
                     return;
                 }
-            };
-
-            if let Err(e) = ws_sink.send(Message::binary(packet.serialize())).await {
-                warn!("cid={} failed to write message to tunnel websocket: {:?}", client_id, e);
-                return;
             }
         }
     });
 
+    let ct = cancellation_token.child_token();
     let handle_control_to_client: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
         // continuously read from websocket tunnel
         loop {
-            match ws_stream.next().await {
-                Some(Ok(message)) if message.is_close() => {
-                    debug!("cid={} got close message", client_id);
+            tokio::select! {
+                v = ws_stream.next() => {
+                    match v {
+                        Some(Ok(message)) if message.is_close() => {
+                            debug!("cid={} got close message", client_id);
+                            return Ok(());
+                        }
+                        Some(Ok(message)) => {
+                            let packet = process_control_flow_message(
+                                active_streams.clone(),
+                                tunnel_tx.clone(),
+                                message.into_data(),
+                                local_port,
+                            )
+                            .await
+                            .map_err(|e| {
+                                error!("cid={} Malformed protocol control packet: {:?}", client_id, e);
+                                Error::MalformedMessageFromServer
+                            })?;
+                            debug!("cid={} Processed data packet: {}", client_id, packet);
+                        }
+                        Some(Err(e)) => {
+                            warn!("cid={} websocket read error: {:?}", client_id, e);
+                            return Err(Error::Timeout);
+                        }
+                        None => {
+                            warn!("cid={} websocket sent none", client_id);
+                            return Err(Error::Timeout);
+                        }
+                    }
+                },
+                _ = ct.cancelled() => {
                     return Ok(());
                 }
-                Some(Ok(message)) => {
-                    let packet = process_control_flow_message(
-                        active_streams.clone(),
-                        tunnel_tx.clone(),
-                        message.into_data(),
-                        local_port,
-                    )
-                    .await
-                    .map_err(|e| {
-                        error!("cid={} Malformed protocol control packet: {:?}", client_id, e);
-                        Error::MalformedMessageFromServer
-                    })?;
-                    debug!("cid={} Processed data packet: {}", client_id, packet);
-                }
-                Some(Err(e)) => {
-                    warn!("cid={} websocket read error: {:?}", client_id, e);
-                    return Err(Error::Timeout);
-                }
-                None => {
-                    warn!("cid={} websocket sent none", client_id);
-                    return Err(Error::Timeout);
-                }
             }
+        }
+    });
+
+    let handle = tokio::spawn(async move {
+        match tokio::join!(handle_client_to_control, handle_control_to_client) {
+            (Ok(_), Ok(Ok(_))) => {
+                Ok(())
+            },
+            (Ok(_), Ok(Err(e))) => {
+                Err(e)
+            },
+            (Err(join_error), _) => {
+                Err(join_error.into())
+            },
+            (_, Err(join_error)) => {
+                Err(join_error.into())
+            },
         }
     });
 
     Ok((
         client_info,
-        handle_client_to_control,
-        handle_control_to_client,
+        handle,
     ))
 }
 

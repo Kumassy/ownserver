@@ -2,8 +2,9 @@ use anyhow::Result;
 use log::*;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
+use tokio_util::sync::CancellationToken;
 
-use magic_tunnel_client::{proxy_client::run, ActiveStreams};
+use magic_tunnel_client::{proxy_client::run, ActiveStreams, error::Error};
 
 lazy_static::lazy_static! {
     pub static ref ACTIVE_STREAMS: ActiveStreams = Arc::new(RwLock::new(HashMap::new()));
@@ -15,32 +16,25 @@ async fn main() -> Result<()> {
     let control_port: u16 = 5000;
     let local_port: u16 = 3000;
     let token_server = "http://localhost:4567";
+    let cancellation_token = CancellationToken::new();
 
-    let (client_info, handle_client_to_control, handle_control_to_client) =
-        run(&ACTIVE_STREAMS, control_port, local_port, token_server).await?;
+    let (client_info, handle) =
+        run(&ACTIVE_STREAMS, control_port, local_port, token_server, cancellation_token).await?;
     info!("client is running under configuration: {:?}", client_info);
 
-    let (client_to_control, control_to_client) =
-        futures::join!(handle_client_to_control, handle_control_to_client);
 
-    match client_to_control {
-        Err(join_error) => {
-            error!("join error {:?} for client_to_control", join_error);
+    match handle.await {
+        Err(e) => {
+            error!("join error {:?} for client", e);
         }
-        Ok(_) => {
-            info!("client_to_control successfully terminated");
+        Ok(Err(Error::JoinError(e))) => {
+            error!("internal join error {:?} for client", e);
         }
-    }
-
-    match control_to_client {
-        Err(join_error) => {
-            error!("join error {:?} for control_to_client", join_error);
-        }
-        Ok(Err(error)) => {
-            info!("client exited. reason: {:?}", error);
+        Ok(Err(e)) => {
+            error!("client exited. reason: {:?}", e);
         }
         Ok(Ok(_)) => {
-            info!("control_to_client successfully terminated");
+            info!("client successfully terminated");
         }
     }
 
