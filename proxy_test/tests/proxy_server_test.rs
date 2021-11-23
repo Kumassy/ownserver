@@ -75,7 +75,7 @@ mod proxy_server_test {
             Config {
                 control_port: 5000,
                 token_secret: "supersecret".to_string(),
-                host: "localhost".to_string(),
+                host: "127.0.0.1".to_string(),
                 remote_port_start: 4000,
                 remote_port_end: 4010,
             }
@@ -101,7 +101,7 @@ mod proxy_server_test {
 
         // setup proxy client
         // --- generate valid jwt
-        let token = make_jwt("supersecret", CDuration::minutes(10), "localhost".to_string())?;
+        let token = make_jwt("supersecret", CDuration::minutes(10), "127.0.0.1".to_string())?;
 
         // --- handshake
         let url = Url::parse(&format!("wss://localhost:{}/tunnel", control_port))?;

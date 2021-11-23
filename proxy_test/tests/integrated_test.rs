@@ -63,7 +63,7 @@ mod proxy_client_server_test {
 
     async fn launch_token_server() {
         let hosts = vec![
-            "integrated.test.local".to_string(),
+            "127.0.0.1".to_string(),
         ];
         let routes = build_routes("supersecret", hosts);
 
@@ -86,7 +86,7 @@ mod proxy_client_server_test {
             Config {
                 control_port: 5000,
                 token_secret: "supersecret".to_string(),
-                host: "integrated.test.local".to_string(),
+                host: "127.0.0.1".to_string(),
                 remote_port_start: 4000,
                 remote_port_end: 4010,
             }
