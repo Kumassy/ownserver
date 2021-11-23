@@ -63,7 +63,7 @@ mod proxy_client_server_test {
 
     async fn launch_token_server() {
         let hosts = vec![
-            "integrated.test.local".to_string(),
+            "127.0.0.1".to_string(),
         ];
         let routes = build_routes("supersecret", hosts);
 
@@ -86,7 +86,7 @@ mod proxy_client_server_test {
             Config {
                 control_port: 5000,
                 token_secret: "supersecret".to_string(),
-                host: "integrated.test.local".to_string(),
+                host: "127.0.0.1".to_string(),
                 remote_port_start: 4000,
                 remote_port_end: 4010,
             }
@@ -182,7 +182,7 @@ mod proxy_client_server_test {
         launch_local_server(local_port).await;
         let (active_streams_client, client_info) =
             launch_proxy_client(control_port, local_port, cancellation_token).await?;
-        let remote_port_for_client = client_info.await?.assigned_port;
+        let remote_addr = client_info.await?.remote_addr;
         // wait until client is ready
         tokio::time::sleep(Duration::from_secs(3)).await;
 
@@ -198,7 +198,7 @@ mod proxy_client_server_test {
         );
 
         // access remote port
-        let mut remote = TcpStream::connect(format!("127.0.0.1:{}", remote_port_for_client))
+        let mut remote = TcpStream::connect(remote_addr)
             .await
             .expect("Failed to connect to remote port");
         // wait until remote access has registered to ACTIVE_STREAMS
@@ -236,7 +236,7 @@ mod proxy_client_server_test {
         launch_local_server(local_port).await;
         let (active_streams_client, client_info) =
             launch_proxy_client(control_port, local_port, cancellation_token).await?;
-        let remote_port_for_client = client_info.await?.assigned_port;
+        let remote_addr = client_info.await?.remote_addr;
         // wait until client is ready
         tokio::time::sleep(Duration::from_secs(3)).await;
 
@@ -252,10 +252,10 @@ mod proxy_client_server_test {
         );
 
         // access remote port
-        let mut remote = TcpStream::connect(format!("127.0.0.1:{}", remote_port_for_client))
+        let mut remote = TcpStream::connect(remote_addr.clone())
             .await
             .expect("Failed to connect to remote port");
-        let mut remote2 = TcpStream::connect(format!("127.0.0.1:{}", remote_port_for_client))
+        let mut remote2 = TcpStream::connect(remote_addr.clone())
             .await
             .expect("Failed to connect to remote port");
         // wait until remote access has registered to ACTIVE_STREAMS
@@ -296,7 +296,7 @@ mod proxy_client_server_test {
 
         let (active_streams_client, client_info) =
             launch_proxy_client(control_port, local_port, cancellation_token).await?;
-        let remote_port_for_client = client_info.await?.assigned_port;
+        let remote_addr = client_info.await?.remote_addr;
         // wait until client is ready
         tokio::time::sleep(Duration::from_secs(3)).await;
 
@@ -312,7 +312,7 @@ mod proxy_client_server_test {
         );
 
         // access remote port
-        let mut remote = TcpStream::connect(format!("127.0.0.1:{}", remote_port_for_client))
+        let mut remote = TcpStream::connect(remote_addr)
             .await
             .expect("Failed to connect to remote port");
         // wait until remote access has registered to ACTIVE_STREAMS
@@ -375,7 +375,7 @@ mod proxy_client_server_test {
         launch_local_server(local_port).await;
         let (active_streams_client, client_info) =
             launch_proxy_client(control_port, local_port, cancellation_token.clone()).await?;
-        let remote_port_for_client = client_info.await?.assigned_port;
+        let remote_addr = client_info.await?.remote_addr;
         // wait until client is ready
         tokio::time::sleep(Duration::from_secs(3)).await;
         
@@ -396,7 +396,7 @@ mod proxy_client_server_test {
         // access remote port
         // we can access remote server because remote_port_for_client remains open
         // even if client has cancelled
-        let mut remote = TcpStream::connect(format!("127.0.0.1:{}", remote_port_for_client))
+        let mut remote = TcpStream::connect(remote_addr)
             .await
             .expect("Failed to connect to remote port");
         // wait until remote access has registered to ACTIVE_STREAMS
@@ -434,7 +434,7 @@ mod proxy_client_server_test {
         launch_local_server(local_port).await;
         let (active_streams_client, client_info) =
             launch_proxy_client(control_port, local_port, cancellation_token.clone()).await?;
-        let remote_port_for_client = client_info.await?.assigned_port;
+        let remote_addr = client_info.await?.remote_addr;
         // wait until client is ready
         tokio::time::sleep(Duration::from_secs(3)).await;
 
@@ -450,7 +450,7 @@ mod proxy_client_server_test {
         );
 
         // access remote port
-        let mut remote = TcpStream::connect(format!("127.0.0.1:{}", remote_port_for_client))
+        let mut remote = TcpStream::connect(remote_addr)
             .await
             .expect("Failed to connect to remote port");
         // wait until remote access has registered to ACTIVE_STREAMS

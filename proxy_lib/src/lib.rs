@@ -128,7 +128,8 @@ impl std::fmt::Display for ControlPacket {
 pub enum ServerHello {
     Success {
         client_id: ClientId,
-        assigned_port: u16,
+        /// remote addr in fqdn: foo.bar.local:43312
+        remote_addr: String,
     },
     BadRequest,
     ServiceTemporaryUnavailable,

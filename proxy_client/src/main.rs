@@ -15,7 +15,7 @@ async fn main() -> Result<()> {
     pretty_env_logger::init();
     let control_port: u16 = 5000;
     let local_port: u16 = 3000;
-    let token_server = "http://localhost:8123";
+    let token_server = "http://localhost:8123/request_token";
     let cancellation_token = CancellationToken::new();
 
     let (client_info, handle) =
