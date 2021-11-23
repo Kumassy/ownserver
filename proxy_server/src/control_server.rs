@@ -86,6 +86,16 @@ async fn try_client_handshake(
     config: &'static OnceCell<Config>,
     alloc: Arc<Mutex<PortAllocator<Range<u16>>>>,
 ) -> Option<ClientHandshake> {
+    let host = match config.get() {
+        Some(config) => {
+            &config.host
+        },
+        None => {
+            tracing::error!("failed to read config");
+            return None;
+        }
+    };
+
     let client_hello_data = match read_client_hello(websocket).await {
         Some(client_hello_data) => {
             tracing::debug!("read client hello");
@@ -105,7 +115,7 @@ async fn try_client_handshake(
                     let client_id = ClientId::generate();
                     let server_hello = ServerHello::Success {
                         client_id: client_id.clone(),
-                        assigned_port: port,
+                        remote_addr: format!("{}:{}", host, port),
                     };
 
                     if let Err(e) = send_server_hello(websocket, server_hello).await {

@@ -75,7 +75,7 @@ mod proxy_server_test {
             Config {
                 control_port: 5000,
                 token_secret: "supersecret".to_string(),
-                host: "integrated.test.local".to_string(),
+                host: "localhost".to_string(),
                 remote_port_start: 4000,
                 remote_port_end: 4010,
             }
@@ -101,7 +101,7 @@ mod proxy_server_test {
 
         // setup proxy client
         // --- generate valid jwt
-        let token = make_jwt("supersecret", CDuration::minutes(10), "integrated.test.local".to_string())?;
+        let token = make_jwt("supersecret", CDuration::minutes(10), "localhost".to_string())?;
 
         // --- handshake
         let url = Url::parse(&format!("wss://localhost:{}/tunnel", control_port))?;
@@ -127,7 +127,7 @@ mod proxy_server_test {
         );
 
         // access remote port
-        let mut remote = TcpStream::connect(format!("127.0.0.1:{}", client_info.assigned_port))
+        let mut remote = TcpStream::connect(client_info.remote_addr)
             .await
             .expect("Failed to connect to remote port");
         // wait until remote access has registered to ACTIVE_STREAMS
@@ -169,7 +169,7 @@ mod proxy_server_test {
         );
 
         // access remote port
-        let mut remote = TcpStream::connect(format!("127.0.0.1:{}", client_info.assigned_port))
+        let mut remote = TcpStream::connect(client_info.remote_addr)
             .await
             .expect("Failed to connect to remote port");
         // wait until remote access has registered to ACTIVE_STREAMS
@@ -205,7 +205,7 @@ mod proxy_server_test {
         );
 
         // access remote port
-        let mut remote1 = TcpStream::connect(format!("127.0.0.1:{}", client_info.assigned_port))
+        let mut remote1 = TcpStream::connect(client_info.remote_addr.clone())
             .await
             .expect("Failed to connect to remote port");
         // wait until remote access has registered to ACTIVE_STREAMS
@@ -217,7 +217,7 @@ mod proxy_server_test {
         );
         let stream_id1 = active_streams.iter().next().unwrap().id.clone();
 
-        let mut remote2 = TcpStream::connect(format!("127.0.0.1:{}", client_info.assigned_port))
+        let mut remote2 = TcpStream::connect(client_info.remote_addr.clone())
             .await
             .expect("Failed to connect to remote port");
         // wait until remote access has registered to ACTIVE_STREAMS
@@ -280,7 +280,7 @@ mod proxy_server_test {
         );
 
         // access remote port
-        let mut remote1 = TcpStream::connect(format!("127.0.0.1:{}", client_info.assigned_port))
+        let mut remote1 = TcpStream::connect(client_info.remote_addr.clone())
             .await
             .expect("Failed to connect to remote port");
         // wait until remote access has registered to ACTIVE_STREAMS
@@ -292,7 +292,7 @@ mod proxy_server_test {
         );
         let stream_id1 = active_streams.iter().next().unwrap().id.clone();
 
-        let mut remote2 = TcpStream::connect(format!("127.0.0.1:{}", client_info.assigned_port))
+        let mut remote2 = TcpStream::connect(client_info.remote_addr.clone())
             .await
             .expect("Failed to connect to remote port");
         // wait until remote access has registered to ACTIVE_STREAMS

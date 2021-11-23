@@ -154,7 +154,7 @@ where
 #[derive(Debug)]
 pub struct ClientInfo {
     pub client_id: ClientId,
-    pub assigned_port: u16,
+    pub remote_addr: String,
 }
 
 pub async fn verify_server_hello<T>(websocket: &mut T) -> Result<ClientInfo, Error>
@@ -172,14 +172,14 @@ where
     })?;
     debug!("Got server hello: {:?}", server_hello);
 
-    let (client_id, assigned_port) = match server_hello {
+    let (client_id, remote_addr) = match server_hello {
         ServerHello::Success {
             client_id,
-            assigned_port,
+            remote_addr,
             ..
         } => {
             info!("cid={} Server accepted our connection.", client_id);
-            (client_id, assigned_port)
+            (client_id, remote_addr)
         },
         ServerHello::BadRequest => {
             error!("Server send an error: {:?}", Error::BadRequest);
@@ -205,7 +205,7 @@ where
 
     Ok(ClientInfo {
         client_id,
-        assigned_port,
+        remote_addr,
     })
 }
 
@@ -540,7 +540,7 @@ mod verify_server_hello_test {
         let cid = ClientId::generate();
         let hello = serde_json::to_vec(&ServerHello::Success {
             client_id: cid.clone(),
-            assigned_port: 256,
+            remote_addr: "foo.bar.local:256".to_string(),
         })
         .unwrap_or_default();
         tx.send(Ok(Message::binary(hello))).await?;
@@ -550,10 +550,10 @@ mod verify_server_hello_test {
             .expect("unexpected server hello error");
         let ClientInfo {
             client_id,
-            assigned_port,
+            remote_addr,
         } = client_info;
         assert_eq!(cid, client_id);
-        assert_eq!(256, assigned_port);
+        assert_eq!("foo.bar.local:256".to_string(), remote_addr);
 
         Ok(())
     }
