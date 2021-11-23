@@ -24,13 +24,13 @@ pub async fn run(
     token_server: &str,
     cancellation_token: CancellationToken,
 ) -> Result<(ClientInfo, JoinHandle<Result<(), Error>>)> {
-    let url = Url::parse(&format!("wss://localhost:{}/tunnel", control_port))?;
+    let (token, host) = post_request_token(token_server).await?;
+    info!("got token: {}, host: {}", token, host);
+
+    let url = Url::parse(&format!("wss://{}:{}/tunnel", host, control_port))?;
     let (mut websocket, _) = connect_async(url).await.map_err(|_| Error::ServerDown)?;
     info!("WebSocket handshake has been successfully completed");
 
-    let token = post_request_token(token_server).await?;
-    info!("got token {:?}", token);
- 
     send_client_hello(&mut websocket, token).await?;
     let client_info = verify_server_hello(&mut websocket).await?;
     info!("cid={} got client_info from server: {:?}", client_info.client_id, client_info);

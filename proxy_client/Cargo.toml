@@ -24,7 +24,7 @@ warp = "0.3"
 lazy_static = "1.4"
 base64 = "0.13"
 thiserror = "1.0"
-magic-tunnel-auth = { git = "ssh://git@github.com/Kumassy/magic-tunnel-auth.git", branch = "main" }
+magic-tunnel-auth = { git = "ssh://git@github.com/Kumassy/magic-tunnel-auth.git", branch = "main", version = "0.1.1" }
 
 [dev-dependencies]
 serial_test = "*"
