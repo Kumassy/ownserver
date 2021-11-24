@@ -152,7 +152,7 @@ where
 }
 
 // Wormhole
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClientInfo {
     pub client_id: ClientId,
     pub remote_addr: String,
