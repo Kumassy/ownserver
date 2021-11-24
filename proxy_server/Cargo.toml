@@ -8,7 +8,7 @@ edition = "2018"
 
 [dependencies]
 magic_tunnel_lib = { version = "0.1.1", path = "../proxy_lib" }
-magic_tunnel_client = { version = "0.1.0", path = "../proxy_client" }
+magic_tunnel_client = { version = "0.1.1", path = "../proxy_client" }
 tokio-tungstenite = { version = '0.14', features = ["rustls"] }
 tokio = { version = "1", features = ["full"] }
 futures = "0.3"

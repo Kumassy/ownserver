@@ -10,6 +10,7 @@ use tokio_tungstenite::{
 };
 use url::Url;
 use tokio_util::sync::CancellationToken;
+use serde::{Serialize, Deserialize};
 
 use crate::error::Error;
 use crate::local;
@@ -151,7 +152,7 @@ where
 }
 
 // Wormhole
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ClientInfo {
     pub client_id: ClientId,
     pub remote_addr: String,
