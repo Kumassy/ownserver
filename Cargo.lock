@@ -612,8 +612,8 @@ dependencies = [
 
 [[package]]
 name = "magic-tunnel-auth"
-version = "0.1.1"
-source = "git+ssh://git@github.com/Kumassy/magic-tunnel-auth.git?branch=main#170991fecf3305eddb1a97b0b7ceb5fc65c27eee"
+version = "0.1.2"
+source = "git+ssh://git@github.com/Kumassy/magic-tunnel-auth.git?branch=main#e27d747d6adf01b53603bdfba03f80e98c1a056e"
 dependencies = [
  "chrono",
  "jsonwebtoken",
