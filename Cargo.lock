@@ -699,6 +699,7 @@ dependencies = [
  "tokio",
  "tokio-test",
  "tokio-tungstenite 0.14.0",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
  "url",
