@@ -14,11 +14,11 @@ impl StreamId {
         rand::thread_rng().fill_bytes(&mut id);
         StreamId(id)
     }
-    pub fn to_string(&self) -> String {
-        format!(
-            "stream_{}",
-            base64::encode_config(&self.0, base64::URL_SAFE_NO_PAD)
-        )
+}
+
+impl std::fmt::Display for StreamId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "stream_{}", base64::encode_config(&self.0, base64::URL_SAFE_NO_PAD))
     }
 }
 
@@ -43,13 +43,6 @@ impl ClientId {
             &sha2::Sha256::digest(self.0.as_bytes()).to_vec(),
         ))
     }
-
-    // pub fn to_string(&self) -> String {
-    //     format!(
-    //         "client_{}",
-    //         base64::encode_config(&self.0, base64::URL_SAFE_NO_PAD)
-    //     )
-    // }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -145,7 +138,7 @@ mod try_client_handshake_test {
     #[test]
     fn test_control_packet_init() -> Result<(), Box<dyn std::error::Error>> {
         let stream_id = EMPTY_STREAM;
-        let expected_packet = ControlPacket::Init(stream_id.clone());
+        let expected_packet = ControlPacket::Init(stream_id);
         let deserialized_packet = ControlPacket::deserialize(&expected_packet.serialize())?;
 
         assert_eq!(ControlPacket::Init(EMPTY_STREAM), deserialized_packet);
@@ -155,7 +148,7 @@ mod try_client_handshake_test {
     #[test]
     fn test_control_packet_data() -> Result<(), Box<dyn std::error::Error>> {
         let stream_id = EMPTY_STREAM;
-        let expected_packet = ControlPacket::Data(stream_id.clone(), b"some data".to_vec());
+        let expected_packet = ControlPacket::Data(stream_id, b"some data".to_vec());
         let deserialized_packet = ControlPacket::deserialize(&expected_packet.serialize())?;
 
         assert_eq!(
@@ -168,7 +161,7 @@ mod try_client_handshake_test {
     #[test]
     fn test_control_packet_refused() -> Result<(), Box<dyn std::error::Error>> {
         let stream_id = EMPTY_STREAM;
-        let expected_packet = ControlPacket::Refused(stream_id.clone());
+        let expected_packet = ControlPacket::Refused(stream_id);
         let deserialized_packet = ControlPacket::deserialize(&expected_packet.serialize())?;
 
         assert_eq!(ControlPacket::Refused(EMPTY_STREAM), deserialized_packet);
@@ -178,7 +171,7 @@ mod try_client_handshake_test {
     #[test]
     fn test_control_packet_end() -> Result<(), Box<dyn std::error::Error>> {
         let stream_id = EMPTY_STREAM;
-        let expected_packet = ControlPacket::End(stream_id.clone());
+        let expected_packet = ControlPacket::End(stream_id);
         let deserialized_packet = ControlPacket::deserialize(&expected_packet.serialize())?;
 
         assert_eq!(ControlPacket::End(EMPTY_STREAM), deserialized_packet);
