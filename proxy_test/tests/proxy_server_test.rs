@@ -6,7 +6,7 @@ use magic_tunnel_client::proxy_client::{send_client_hello, verify_server_hello, 
 use magic_tunnel_lib::{ClientId, ControlPacket};
 use magic_tunnel_server::{
     active_stream::ActiveStreams, connected_clients::Connections, port_allocator::PortAllocator,
-    proxy_server::run, remote::CancelHander,
+    proxy_server::run,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -19,6 +19,7 @@ use once_cell::sync::OnceCell;
 use magic_tunnel_server::Config;
 use magic_tunnel_auth::make_jwt;
 use chrono::Duration as CDuration;
+use tokio_util::sync::CancellationToken;
 
 #[cfg(test)]
 mod proxy_server_test {
@@ -86,7 +87,7 @@ mod proxy_server_test {
         Connections::clear(&CONNECTIONS);
         ACTIVE_STREAMS.clear();
         let alloc = Arc::new(Mutex::new(PortAllocator::new(config.remote_port_start..config.remote_port_end)));
-        let remote_cancellers: Arc<DashMap<ClientId, CancelHander>> = Arc::new(DashMap::new());
+        let remote_cancellers: Arc<DashMap<ClientId, CancellationToken>> = Arc::new(DashMap::new());
 
         tokio::spawn(async move {
             run(

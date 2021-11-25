@@ -5,24 +5,25 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, ToSocketAddrs};
 use tokio::sync::oneshot;
 use tracing::Instrument;
+use tokio_util::sync::CancellationToken;
 
 use crate::active_stream::{ActiveStream, ActiveStreams, StreamMessage};
 use crate::connected_clients::Connections;
 use crate::control_server;
 pub use magic_tunnel_lib::{ClientId, ControlPacket, StreamId};
 
-pub type CancelHander = oneshot::Sender<()>;
 pub async fn spawn_remote(
     conn: &'static Connections,
     active_streams: &'static ActiveStreams,
     listen_addr: impl ToSocketAddrs + std::fmt::Debug + Clone,
     host: String,
-) -> io::Result<CancelHander> {
+) -> io::Result<CancellationToken> {
     // create our accept any server
     let listener = TcpListener::bind(listen_addr.clone()).await?;
     tracing::info!("remote={} remote process listening on {:?}", host, listen_addr);
 
-    let (cancel_tx, mut cancel_rx) = oneshot::channel::<()>();
+    let cancellation_token = CancellationToken::new();
+    let ct = cancellation_token.clone();
 
     tokio::spawn(async move {
         loop {
@@ -36,7 +37,7 @@ pub async fn spawn_remote(
                         }
                     }
                 },
-                _ = (&mut cancel_rx) => {
+                _ = ct.cancelled() => {
                     tracing::info!("remote={} tcp listener is cancelled.", host);
                     return;
                 },
@@ -51,7 +52,7 @@ pub async fn spawn_remote(
             );
         }
     });
-    Ok(cancel_tx)
+    Ok(cancellation_token)
 }
 
 // stream has selected because each stream listen different port
@@ -537,7 +538,7 @@ mod spawn_remote_test {
     use std::sync::Arc;
     use std::time::Duration;
 
-    async fn launch_remote(remote_port: u16) -> io::Result<CancelHander> {
+    async fn launch_remote(remote_port: u16) -> io::Result<CancellationToken> {
         lazy_static! {
             pub static ref CONNECTIONS: Connections = Connections::new();
             pub static ref ACTIVE_STREAMS: ActiveStreams = Arc::new(DashMap::new());
@@ -584,7 +585,7 @@ mod spawn_remote_test {
         let _ = TcpStream::connect(format!("127.0.0.1:{}", remote_port))
             .await
             .expect("Failed to connect to remote port");
-        remote_cancel_handler.send(()).unwrap();
+        remote_cancel_handler.cancel();
         tokio::time::sleep(Duration::from_secs(3)).await;
 
         let remote = TcpStream::connect(format!("127.0.0.1:{}", remote_port)).await;

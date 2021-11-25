@@ -11,7 +11,7 @@ use magic_tunnel_server::{
     connected_clients::Connections,
     port_allocator::PortAllocator,
     proxy_server,
-    remote::{CancelHander, HTTP_TUNNEL_REFUSED_RESPONSE},
+    remote::HTTP_TUNNEL_REFUSED_RESPONSE,
     Config,
 };
 use magic_tunnel_auth::build_routes;
@@ -92,7 +92,7 @@ mod proxy_client_server_test {
             }
         );
         let alloc = Arc::new(Mutex::new(PortAllocator::new(config.remote_port_start..config.remote_port_end)));
-        let remote_cancellers: Arc<DashMap<ClientId, CancelHander>> = Arc::new(DashMap::new());
+        let remote_cancellers: Arc<DashMap<ClientId, CancellationToken>> = Arc::new(DashMap::new());
 
         tokio::spawn(async move {
             proxy_server::run(

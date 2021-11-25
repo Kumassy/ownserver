@@ -3,12 +3,13 @@ use lazy_static::lazy_static;
 use magic_tunnel_lib::ClientId;
 pub use magic_tunnel_server::{
     active_stream::ActiveStreams, connected_clients::Connections, port_allocator::PortAllocator,
-    proxy_server::run, remote::CancelHander,
+    proxy_server::run,
     Config,
 };
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use once_cell::sync::OnceCell;
+use tokio_util::sync::CancellationToken;
 
 lazy_static! {
     pub static ref CONNECTIONS: Connections = Connections::new();
@@ -44,7 +45,7 @@ async fn main() {
     };
 
     let alloc = Arc::new(Mutex::new(PortAllocator::new(remote_port_start..remote_port_end)));
-    let remote_cancellers: Arc<DashMap<ClientId, CancelHander>> = Arc::new(DashMap::new());
+    let remote_cancellers: Arc<DashMap<ClientId, CancellationToken>> = Arc::new(DashMap::new());
     let handle = run(
         &CONFIG,
         &CONNECTIONS,

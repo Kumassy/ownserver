@@ -20,11 +20,12 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use once_cell::sync::OnceCell;
 use thiserror::Error;
+use tokio_util::sync::CancellationToken;
 
 use crate::active_stream::{ActiveStream, ActiveStreams, StreamMessage};
 use crate::connected_clients::{ConnectedClient, Connections};
 use crate::port_allocator::PortAllocator;
-use crate::remote::{self, CancelHander};
+use crate::remote;
 use crate::{Config, ProxyServerError};
 
 pub fn spawn<A: Into<SocketAddr>>(
@@ -32,7 +33,7 @@ pub fn spawn<A: Into<SocketAddr>>(
     conn: &'static Connections,
     active_streams: &'static ActiveStreams,
     alloc: Arc<Mutex<PortAllocator<Range<u16>>>>,
-    remote_cancellers: Arc<DashMap<ClientId, CancelHander>>,
+    remote_cancellers: Arc<DashMap<ClientId, CancellationToken>>,
     addr: A,
 ) -> JoinHandle<()> {
     let health_check = warp::get().and(warp::path("health_check")).map(|| {
@@ -281,7 +282,7 @@ async fn handle_new_connection(
     conn: &'static Connections,
     active_streams: &'static ActiveStreams,
     alloc: Arc<Mutex<PortAllocator<Range<u16>>>>,
-    remote_cancellers: Arc<DashMap<ClientId, CancelHander>>,
+    remote_cancellers: Arc<DashMap<ClientId, CancellationToken>>,
     client_ip: SocketAddr,
     mut websocket: WebSocket,
 ) {
@@ -327,11 +328,9 @@ async fn handle_new_connection(
             let client = tunnel_client(client, sink, rx).await;
             Connections::remove(conn, &client);
             tracing::debug!("cid={} remove client from connections len_clients={} len_hosts={}", client_id, Connections::len_clients(conn), Connections::len_hosts(conn));
-            if let Some((_cid, handler)) = remote_cancellers.remove(&client_id) {
+            if let Some((_cid, ct)) = remote_cancellers.remove(&client_id) {
                 tracing::debug!("cid={} cancel remote process", client_id);
-                if handler.send(()).is_err() {
-                    tracing::error!("failed to cancel remote for {:?}", client_id);
-                }
+                ct.cancel();
             }
         }
         .instrument(tracing::info_span!("tunnel_client")),
@@ -341,11 +340,9 @@ async fn handle_new_connection(
             let client = process_client_messages(active_streams, client, stream).await;
             Connections::remove(conn, &client);
             tracing::debug!("cid={} remove client from connections len_clients={} len_hosts={}", client_id, Connections::len_clients(conn), Connections::len_hosts(conn));
-            if let Some((_cid, handler)) = remote_cancellers.remove(&client_id) {
+            if let Some((_cid, ct)) = remote_cancellers.remove(&client_id) {
                 tracing::debug!("cid={} cancel remote process", client_id);
-                if handler.send(()).is_err() {
-                    tracing::error!("failed to cancel remote for {:?}", client_id);
-                }
+                ct.cancel();
             }
         }
         .instrument(tracing::info_span!("process_client")),

@@ -5,12 +5,12 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use once_cell::sync::OnceCell;
+use tokio_util::sync::CancellationToken;
 
 use crate::active_stream::ActiveStreams;
 use crate::connected_clients::Connections;
 use crate::control_server;
 use crate::port_allocator::PortAllocator;
-use crate::remote::CancelHander;
 use crate::{Config, ProxyServerError};
 
 pub async fn run(
@@ -18,7 +18,7 @@ pub async fn run(
     conn: &'static Connections,
     active_streams: &'static ActiveStreams,
     alloc: Arc<Mutex<PortAllocator<Range<u16>>>>,
-    remote_cancellers: Arc<DashMap<ClientId, CancelHander>>,
+    remote_cancellers: Arc<DashMap<ClientId, CancellationToken>>,
 ) -> Result<JoinHandle<()>, ProxyServerError> {
     tracing::info!("starting server!");
 
