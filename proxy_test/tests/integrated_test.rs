@@ -123,7 +123,7 @@ mod proxy_client_server_test {
         let (tx, rx) = oneshot::channel();
         tokio::spawn(async move {
             let (client_info, handle) =
-                proxy_client::run(&ACTIVE_STREAMS_CLIENT, control_port, local_port, "http://127.0.0.1:8888/request_token", cancellation_token)
+                proxy_client::run(&ACTIVE_STREAMS_CLIENT, control_port, local_port, "http://127.0.0.1:8888/v0/request_token", cancellation_token)
                     .await
                     .expect("failed to launch proxy_client");
             tx.send(client_info).unwrap();
