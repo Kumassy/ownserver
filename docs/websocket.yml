@@ -1,0 +1,35 @@
+asyncapi: '2.2.0'
+info:
+  title: Magic Tunnel Proto
+  version: 1.0.0
+  description: Magic Tunnel Proto
+channels:
+  ClientHello:
+    publish:
+      message:
+        $ref: '#/components/messages/ClientHello'
+components:
+  messages:
+    ClientHello:
+      payload: 
+        $ref: '#/components/schemas/ClientHello' 
+  schemas:
+    ClientHello:
+      type: object
+      properties:
+        version:
+          type: integer
+          description: client version
+        token:
+          type: string
+          format: JWT
+          description: JWT issued by magic-tunnel-auth
+        payload:
+          $ref: '#/components/schemas/ClientHelloPayload' 
+    ClientHelloPayload:
+      type: integer
+      enum:
+      - Other (0)
+      - Http (80)
+      - Minecraft (25565)
+      - Factorio (34197)
