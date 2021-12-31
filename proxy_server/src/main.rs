@@ -10,6 +10,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use once_cell::sync::OnceCell;
 use tokio_util::sync::CancellationToken;
+use structopt::StructOpt;
 
 lazy_static! {
     pub static ref CONNECTIONS: Connections = Connections::new();
@@ -18,17 +19,52 @@ lazy_static! {
 
 static CONFIG: OnceCell<Config> = OnceCell::new();
 
+#[derive(StructOpt, Debug)]
+#[structopt(name = "basic")]
+struct Opt {
+    #[structopt(long, default_value = "5000")]
+    control_port: u16,
+
+    #[structopt(long, env = "MT_TOKEN_SECRET")]
+    token_secret: String,
+
+    #[structopt(short, long)]
+    host: String,
+
+    #[structopt(long)]
+    remote_port_start: u16,
+
+    #[structopt(long)]
+    remote_port_end: u16,
+}
+
+impl From<Opt> for Config {
+    fn from(opt: Opt) -> Config {
+        let Opt {
+            control_port,
+            token_secret,
+            host,
+            remote_port_start,
+            remote_port_end,
+        } = opt;
+
+        Config {
+            control_port,
+            token_secret,
+            host,
+            remote_port_start,
+            remote_port_end,
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt::init();
+    let opt = Opt::from_args();
+    tracing::debug!("{:?}", opt);
+    let config = Config::from(opt);
 
-    let config = Config {
-        control_port: 5000,
-        token_secret: "supersecret".to_string(),
-        host: "foohost.local".to_string(),
-        remote_port_start: 3000,
-        remote_port_end: 4000,
-    };
     if CONFIG.set(config).is_err() {
         tracing::error!("failed to initialize config");
         return;
