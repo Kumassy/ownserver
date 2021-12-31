@@ -65,7 +65,7 @@ mod proxy_client_server_test {
         let hosts = vec![
             "127.0.0.1".to_string(),
         ];
-        let routes = build_routes("supersecret", hosts);
+        let routes = build_routes("supersecret".to_string(), hosts);
 
         tokio::spawn(async move {
             warp::serve(routes).run(([127, 0, 0, 1], 8888)).await;
