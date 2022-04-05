@@ -14,9 +14,6 @@ pub enum Error {
     #[error("Could not connect to server.")]
     ServerDown,
 
-    #[error("Could not connect to server: {0}.")]
-    TokenServerError(#[from] magic_tunnel_auth::Error),
-
     #[error("Client hello was invalid or malformed.")]
     BadRequest,
 

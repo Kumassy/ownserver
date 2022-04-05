@@ -1,22 +1,23 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use futures::{Sink, SinkExt, Stream, StreamExt};
 use log::*;
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tokio::task::JoinHandle;
 use tokio_tungstenite::{
     connect_async,
     tungstenite::{Error as WsError, Message},
 };
-use url::Url;
 use tokio_util::sync::CancellationToken;
-use serde::{Serialize, Deserialize};
+use url::Url;
 
 use crate::error::Error;
 use crate::local;
 use crate::{ActiveStreams, StreamMessage};
-use magic_tunnel_lib::{ClientHello, ClientId, ControlPacket, ServerHello, StreamId, Payload, CLIENT_HELLO_VERSION};
-use magic_tunnel_auth::post_request_token;
+use magic_tunnel_lib::{
+    ClientHello, ClientId, ControlPacket, Payload, ServerHello, StreamId, CLIENT_HELLO_VERSION,
+};
 
 pub async fn run(
     active_streams: &'static ActiveStreams,
@@ -25,7 +26,7 @@ pub async fn run(
     token_server: &str,
     cancellation_token: CancellationToken,
 ) -> Result<(ClientInfo, JoinHandle<Result<(), Error>>)> {
-    let (token, host) = post_request_token(token_server).await?;
+    let (token, host) = fetch_token(token_server).await?;
     info!("got token: {}, host: {}", token, host);
 
     let url = Url::parse(&format!("wss://{}:{}/tunnel", host, control_port))?;
@@ -34,7 +35,10 @@ pub async fn run(
 
     send_client_hello(&mut websocket, token).await?;
     let client_info = verify_server_hello(&mut websocket).await?;
-    info!("cid={} got client_info from server: {:?}", client_info.client_id, client_info);
+    info!(
+        "cid={} got client_info from server: {:?}",
+        client_info.client_id, client_info
+    );
 
     // split reading and writing
     let (mut ws_sink, mut ws_stream) = websocket.split();
@@ -114,25 +118,14 @@ pub async fn run(
 
     let handle = tokio::spawn(async move {
         match tokio::join!(handle_client_to_control, handle_control_to_client) {
-            (Ok(_), Ok(Ok(_))) => {
-                Ok(())
-            },
-            (Ok(_), Ok(Err(e))) => {
-                Err(e)
-            },
-            (Err(join_error), _) => {
-                Err(join_error.into())
-            },
-            (_, Err(join_error)) => {
-                Err(join_error.into())
-            },
+            (Ok(_), Ok(Ok(_))) => Ok(()),
+            (Ok(_), Ok(Err(e))) => Err(e),
+            (Err(join_error), _) => Err(join_error.into()),
+            (_, Err(join_error)) => Err(join_error.into()),
         }
     });
 
-    Ok((
-        client_info,
-        handle,
-    ))
+    Ok((client_info, handle))
 }
 
 pub async fn send_client_hello<T>(websocket: &mut T, token: String) -> Result<(), T::Error>
@@ -181,27 +174,33 @@ where
         } => {
             info!("cid={} Server accepted our connection.", client_id);
             (client_id, remote_addr)
-        },
+        }
         ServerHello::BadRequest => {
             error!("Server send an error: {:?}", Error::BadRequest);
-            return Err(Error::BadRequest)
-        },
+            return Err(Error::BadRequest);
+        }
         ServerHello::ServiceTemporaryUnavailable => {
-            error!("Server send an error: {:?}", Error::ServiceTemporaryUnavailable);
-            return Err(Error::ServiceTemporaryUnavailable)
-        },
+            error!(
+                "Server send an error: {:?}",
+                Error::ServiceTemporaryUnavailable
+            );
+            return Err(Error::ServiceTemporaryUnavailable);
+        }
         ServerHello::IllegalHost => {
             error!("Server send an error: {:?}", Error::IllegalHost);
-            return Err(Error::IllegalHost)
-        },
+            return Err(Error::IllegalHost);
+        }
         ServerHello::VersionMismatch => {
-            error!("Server send an error: {:?}", Error::ClientHandshakeVersionMismatch);
-            return Err(Error::ClientHandshakeVersionMismatch)
+            error!(
+                "Server send an error: {:?}",
+                Error::ClientHandshakeVersionMismatch
+            );
+            return Err(Error::ClientHandshakeVersionMismatch);
         }
         ServerHello::InternalServerError => {
             error!("Server send an error: {:?}", Error::InternalServerError);
-            return Err(Error::InternalServerError)
-        },
+            return Err(Error::InternalServerError);
+        }
     };
 
     Ok(ClientInfo {
@@ -250,24 +249,23 @@ pub async fn process_control_flow_message(
             // find the stream
             let stream_id = stream_id.clone();
 
-
             tokio::spawn(async move {
                 let stream = active_streams.read().unwrap().get(&stream_id).cloned();
                 if let Some(mut tx) = stream {
                     tokio::time::sleep(Duration::from_secs(5)).await;
                     let _ = tx.send(StreamMessage::Close).await.map_err(|e| {
-                        error!("sid={} failed to send stream close: {:?}", stream_id.to_string(), e);
+                        error!(
+                            "sid={} failed to send stream close: {:?}",
+                            stream_id.to_string(),
+                            e
+                        );
                     });
                     active_streams.write().unwrap().remove(&stream_id);
                 }
             });
         }
         ControlPacket::Data(stream_id, data) => {
-            debug!(
-                "sid={} new data: {}",
-                stream_id.to_string(),
-                data.len()
-            );
+            debug!("sid={} new data: {}", stream_id.to_string(), data.len());
             // find the right stream
             let active_stream = active_streams.read().unwrap().get(&stream_id).cloned();
 
@@ -276,7 +274,10 @@ pub async fn process_control_flow_message(
                 tx.send(StreamMessage::Data(data.clone())).await?;
                 debug!("sid={} forwarded to local tcp", stream_id.to_string());
             } else {
-                error!("sid={} got data but no stream to send it to.", stream_id.to_string());
+                error!(
+                    "sid={} got data but no stream to send it to.",
+                    stream_id.to_string()
+                );
                 let _ = tunnel_tx
                     .send(ControlPacket::Refused(stream_id.clone()))
                     .await?;
@@ -285,4 +286,71 @@ pub async fn process_control_flow_message(
     };
 
     Ok(control_packet.clone())
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum TokenResponse {
+    Ok { token: String, host: String },
+    Err { message: String },
+}
+
+pub async fn fetch_token(url: &str) -> Result<(String, String)> {
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(url)
+        .send()
+        .await?
+        .json::<TokenResponse>()
+        .await?;
+
+    match resp {
+        TokenResponse::Ok { token, host } => Ok((token, host)),
+        TokenResponse::Err { message } => Err(anyhow!(message)),
+    }
+}
+
+#[cfg(test)]
+mod fetch_token_test {
+    use super::fetch_token;
+    use warp::{http::StatusCode, Filter};
+
+    #[tokio::test]
+    async fn parse_ok_response() -> Result<(), Box<dyn std::error::Error>> {
+        let response = r#"
+        {
+            "token": "json.web.token",
+            "host": "foo.local" 
+        }"#;
+        let routes = warp::any().map(move || response);
+        tokio::spawn(async move {
+            warp::serve(routes).run(([127, 0, 0, 1], 11111)).await;
+        });
+
+        let (token, host) = fetch_token("http://localhost:11111/v0/request_token").await?;
+        assert_eq!(token, "json.web.token".to_string());
+        assert_eq!(host, "foo.local".to_string());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn returns_error_when_token_server_internal_error(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let response = r#"
+        {
+            "message": "failed to generate token"
+        }"#;
+        let routes = warp::any()
+            .map(move || warp::reply::with_status(response, StatusCode::INTERNAL_SERVER_ERROR));
+        tokio::spawn(async move {
+            warp::serve(routes).run(([127, 0, 0, 1], 11112)).await;
+        });
+
+        let result = fetch_token("http://localhost:11112/v0/request_token").await;
+        assert!(result.is_err());
+
+        let error = result.err().unwrap();
+        assert_eq!(error.to_string(), "failed to generate token");
+        Ok(())
+    }
 }
