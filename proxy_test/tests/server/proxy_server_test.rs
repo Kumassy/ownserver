@@ -22,7 +22,7 @@ use chrono::Duration as CDuration;
 use tokio_util::sync::CancellationToken;
 
 #[cfg(test)]
-mod proxy_server_test {
+mod server_test {
     use super::*;
     use serial_test::serial;
 

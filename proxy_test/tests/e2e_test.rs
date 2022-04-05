@@ -26,7 +26,7 @@ use tokio_util::sync::CancellationToken;
 use once_cell::sync::OnceCell;
 
 #[cfg(test)]
-mod proxy_client_server_test {
+mod e2e_test {
     use super::*;
     use serial_test::serial;
 
