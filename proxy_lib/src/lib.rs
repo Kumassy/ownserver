@@ -132,7 +132,7 @@ pub enum ServerHello {
 }
 
 #[cfg(test)]
-mod try_client_handshake_test {
+mod control_packet_test {
     use super::*;
 
     #[test]
