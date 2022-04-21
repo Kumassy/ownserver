@@ -6,6 +6,7 @@ pub use magic_tunnel_server::{
     proxy_server::run,
     Config,
 };
+use tracing_subscriber::prelude::*;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use once_cell::sync::OnceCell;
@@ -60,7 +61,16 @@ impl From<Opt> for Config {
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+    let tracer = opentelemetry_jaeger::new_pipeline()
+        .with_service_name("magic-tunnel-server")
+        .install_simple()
+        .expect("Failed to initialize tracer");
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::EnvFilter::new("DEBUG"))
+        .with(tracing_opentelemetry::layer().with_tracer(tracer))
+        .try_init()
+        .expect("Failed to register tracer with registry");
+
     let opt = Opt::from_args();
     tracing::debug!("{:?}", opt);
     let config = Config::from(opt);
@@ -108,4 +118,6 @@ async fn main() {
             tracing::info!("proxy_server successfully terminated");
         }
     }
+
+    opentelemetry::global::shutdown_tracer_provider();
 }

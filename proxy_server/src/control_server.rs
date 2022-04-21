@@ -399,7 +399,7 @@ where
         tracing::trace!("cid={} got control packet from client {}", client.id, packet);
         let (stream_id, message) = match packet {
             ControlPacket::Data(stream_id, data) => {
-                tracing::debug!("cid={} sid={} forwarding to stream: {}", client.id, stream_id.to_string(), data.len());
+                tracing::trace!("cid={} sid={} forwarding to stream: {}", client.id, stream_id.to_string(), data.len());
                 (stream_id, StreamMessage::Data(data))
             }
             ControlPacket::Refused(stream_id) => {
@@ -420,7 +420,7 @@ where
         let stream = active_streams.get(&stream_id).map(|s| s.value().clone());
 
         if let Some(mut stream) = stream {
-            tracing::info!("cid={} sid={} forward message to active stream", client.id, stream.id.to_string());
+            tracing::trace!("cid={} sid={} forward message to active stream", client.id, stream.id.to_string());
             let _ = stream.tx.send(message).await.map_err(|error| {
                 tracing::debug!("cid={} sid={} Failed to send to stream tx: {:?}", client.id, stream.id.to_string(), error);
             });
