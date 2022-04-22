@@ -277,6 +277,7 @@ where
     Ok(())
 }
 
+#[tracing::instrument(skip(config, conn, active_streams, alloc, remote_cancellers, websocket))]
 async fn handle_new_connection(
     config: &'static OnceCell<Config>,
     conn: &'static Connections,

@@ -62,6 +62,7 @@ impl From<Opt> for Config {
 #[tokio::main]
 async fn main() {
     let tracer = opentelemetry_jaeger::new_pipeline()
+        .with_collector_endpoint("http://localhost:14268/api/traces")
         .with_service_name("magic-tunnel-server")
         .install_simple()
         .expect("Failed to initialize tracer");
