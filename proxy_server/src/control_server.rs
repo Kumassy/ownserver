@@ -82,6 +82,7 @@ pub struct ClientHandshake {
     pub port: u16,
 }
 
+#[tracing::instrument(skip(websocket, config, alloc))]
 async fn try_client_handshake(
     websocket: &mut WebSocket,
     config: &'static OnceCell<Config>,
@@ -205,6 +206,7 @@ pub enum VerifyClientHandshakeError {
     Other(#[from] ProxyServerError),
 }
 
+#[tracing::instrument(skip(config))]
 async fn verify_client_handshake(
     config: &'static OnceCell<Config>,
     client_hello_data: Vec<u8>,
@@ -249,6 +251,7 @@ async fn verify_client_handshake(
     Ok(())
 }
 
+#[tracing::instrument(skip(websocket))]
 async fn read_client_hello(
     websocket: &mut (impl Unpin + Stream<Item = Result<Message, WarpError>>)
 ) -> Option<Vec<u8>> {
@@ -265,6 +268,7 @@ async fn read_client_hello(
     Some(client_hello_data)
 }
 
+#[tracing::instrument(skip(websocket))]
 async fn send_server_hello<T>(websocket: &mut T, server_hello: ServerHello) -> Result<(), T::Error>
 where
     T: Unpin + Sink<Message>,

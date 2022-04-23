@@ -13,6 +13,7 @@ use crate::control_server;
 use crate::port_allocator::PortAllocator;
 use crate::{Config, ProxyServerError};
 
+#[tracing::instrument(skip(config, conn, active_streams, alloc, remote_cancellers))]
 pub async fn run(
     config: &'static OnceCell<Config>,
     conn: &'static Connections,
@@ -38,8 +39,7 @@ pub async fn run(
         active_streams,
         alloc,
         remote_cancellers,
-        ([0, 0, 0, 0], control_port),
-    );
+        ([0, 0, 0, 0], control_port));
     tracing::info!("started tunnelto server on 0.0.0.0:{}", control_port);
     Ok(handle)
 }

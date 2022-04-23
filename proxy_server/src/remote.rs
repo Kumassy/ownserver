@@ -52,7 +52,7 @@ pub async fn spawn_remote(
                 .instrument(tracing::info_span!("remote_connect")),
             );
         }
-    });
+    }.instrument(tracing::info_span!("spawn_accept_connection")));
     Ok(cancellation_token)
 }
 
