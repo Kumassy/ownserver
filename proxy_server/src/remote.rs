@@ -21,7 +21,7 @@ pub async fn spawn_remote(
 ) -> io::Result<CancellationToken> {
     // create our accept any server
     let listener = TcpListener::bind(listen_addr.clone()).await?;
-    tracing::info!("remote={} remote process listening on {:?}", host, listen_addr);
+    tracing::info!(remote = %host, "remote process listening on {:?}", listen_addr);
 
     let cancellation_token = CancellationToken::new();
     let ct = cancellation_token.clone();
@@ -33,13 +33,13 @@ pub async fn spawn_remote(
                     match socket {
                         Ok((socket, _)) => socket,
                         _ => {
-                            tracing::error!("remote={} failed to accept socket", host);
+                            tracing::error!(remote = %host, "failed to accept socket");
                             continue;
                         }
                     }
                 },
                 _ = ct.cancelled() => {
-                    tracing::info!("remote={} tcp listener is cancelled.", host);
+                    tracing::info!(remote = %host, "tcp listener is cancelled.");
                     return;
                 },
             };
