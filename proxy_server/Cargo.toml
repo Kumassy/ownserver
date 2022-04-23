@@ -23,7 +23,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["std", "env-filter"]}
 tracing-opentelemetry = "0.17"
 opentelemetry-jaeger = { version = "0.16", features = ["collector_client", "isahc"]}
-opentelemetry = "0.16"
+opentelemetry = "0.17"
 warp = "0.3"
 lazy_static = "1.4"
 base64 = "0.13"

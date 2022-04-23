@@ -12,6 +12,7 @@ use tokio::sync::Mutex;
 use once_cell::sync::OnceCell;
 use tokio_util::sync::CancellationToken;
 use structopt::StructOpt;
+use opentelemetry::sdk::trace::{self, XrayIdGenerator};
 
 lazy_static! {
     pub static ref CONNECTIONS: Connections = Connections::new();
@@ -64,6 +65,9 @@ async fn main() {
     let tracer = opentelemetry_jaeger::new_pipeline()
         .with_collector_endpoint("http://localhost:14268/api/traces")
         .with_service_name("magic-tunnel-server")
+        .with_trace_config(
+            trace::config().with_id_generator(XrayIdGenerator::default())
+        )
         .install_simple()
         .expect("Failed to initialize tracer");
     tracing_subscriber::registry()
