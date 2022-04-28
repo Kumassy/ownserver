@@ -210,3 +210,20 @@ service:
 
 $ sudo systemctl restart otelcol
 ```
+
+
+### Run jaeger with persistence
+```
+sudo docker run -d --name jaeger \
+  -p 16686:16686 \
+  -p 14250:14250 \
+  -p 14268:14268 \
+  -p 14269:14269 \
+  -e SPAN_STORAGE_TYPE=badger \
+  -e BADGER_EPHEMERAL=false \
+  -e BADGER_DIRECTORY_VALUE=/badger/data \
+  -e BADGER_DIRECTORY_KEY=/badger/key \
+  -v /srv/badger:/badger \
+  --restart always \
+  jaegertracing/all-in-one:1.33
+```
