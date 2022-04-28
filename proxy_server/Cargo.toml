@@ -22,7 +22,7 @@ serde_json = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["std", "env-filter"]}
 tracing-opentelemetry = "0.17"
-opentelemetry-jaeger = { version = "0.16", features = ["collector_client", "isahc_collector_client", "rt-tokio"]}
+opentelemetry-jaeger = { version = "0.16", features = ["rt-tokio"]}
 opentelemetry = { version = "0.17", features = ["rt-tokio"] }
 warp = "0.3"
 lazy_static = "1.4"
