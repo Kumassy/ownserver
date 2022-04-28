@@ -12,6 +12,7 @@ use crate::connected_clients::Connections;
 use crate::control_server;
 pub use magic_tunnel_lib::{ClientId, ControlPacket, StreamId};
 
+#[tracing::instrument(skip(conn, active_streams, listen_addr))]
 pub async fn spawn_remote(
     conn: &'static Connections,
     active_streams: &'static ActiveStreams,
@@ -20,7 +21,7 @@ pub async fn spawn_remote(
 ) -> io::Result<CancellationToken> {
     // create our accept any server
     let listener = TcpListener::bind(listen_addr.clone()).await?;
-    tracing::info!("remote={} remote process listening on {:?}", host, listen_addr);
+    tracing::info!(remote = %host, "remote process listening on {:?}", listen_addr);
 
     let cancellation_token = CancellationToken::new();
     let ct = cancellation_token.clone();
@@ -32,13 +33,13 @@ pub async fn spawn_remote(
                     match socket {
                         Ok((socket, _)) => socket,
                         _ => {
-                            tracing::error!("remote={} failed to accept socket", host);
+                            tracing::error!(remote = %host, "failed to accept socket");
                             continue;
                         }
                     }
                 },
                 _ = ct.cancelled() => {
-                    tracing::info!("remote={} tcp listener is cancelled.", host);
+                    tracing::info!(remote = %host, "tcp listener is cancelled.");
                     return;
                 },
             };
@@ -51,25 +52,25 @@ pub async fn spawn_remote(
                 .instrument(tracing::info_span!("remote_connect")),
             );
         }
-    });
+    }.instrument(tracing::info_span!("spawn_accept_connection")));
     Ok(cancellation_token)
 }
 
 // stream has selected because each stream listen different port
-#[tracing::instrument(skip(socket, conn, active_streams, host))]
+#[tracing::instrument(skip(conn, active_streams, socket))]
 pub async fn accept_connection(
     conn: &'static Connections,
     active_streams: ActiveStreams,
     mut socket: TcpStream,
     host: String,
 ) {
-    tracing::info!("remote={} new remote connection", host);
+    tracing::info!(remote = %host, "new remote connection");
 
     // find the client listening for this host
     let client = match Connections::find_by_host(conn, &host) {
         Some(client) => client.clone(),
         None => {
-            tracing::error!("remote={} failed to find instance", host);
+            tracing::error!(remote = %host, "failed to find instance");
             let _ = socket.write_all(HTTP_ERROR_LOCATING_HOST_RESPONSE).await;
             return;
         }
@@ -80,13 +81,12 @@ pub async fn accept_connection(
     let (active_stream, queue_rx) = ActiveStream::new(client.clone());
     let stream_id = active_stream.id.clone();
 
-    tracing::info!("remote={} cid={} sid={} new stream connected", host, client_id, active_stream.id.to_string());
+    tracing::info!(remote = %host, cid = %client_id, sid = %active_stream.id.to_string(), "new stream connected");
     let (stream, sink) = tokio::io::split(socket);
 
     // add our stream
     active_streams.insert(stream_id.clone(), active_stream.clone());
-    tracing::debug!("remote={} cid={} sid={} register stream to active_streams len={}", host, client_id, stream_id.to_string(), active_streams.len());
-
+    tracing::info!(remote = %host, cid = %client_id, sid = %active_stream.id.to_string(), "register stream to active_streams len={}", active_streams.len());
 
     // read from socket, write to client
     let active_streams_clone = active_streams.clone();
@@ -100,7 +100,7 @@ pub async fn accept_connection(
 
             process_tcp_stream(conn, active_stream, stream).await;
             active_streams.remove(&stream_id);
-            tracing::debug!("cid={} sid={} remove stream from active_streams, process_tcp_stream len={}", client_id, stream_id.to_string(), active_streams.len());
+            tracing::debug!(cid = %client_id, sid = %stream_id.to_string(), "remove stream from active_streams, process_tcp_stream len={}", active_streams.len());
         }
         .instrument(tracing::info_span!("process_tcp_stream")),
     );
@@ -110,10 +110,10 @@ pub async fn accept_connection(
         async move {
             let reason = tunnel_to_stream(host.clone(), stream_id.clone(), sink, queue_rx).await;
             tracing::debug!(
-                "remote={} cid={} sid={} tunnel_to_stream closed with reason: {:?}", host, client_id, stream_id.to_string(), reason
+                remote = %host, cid = %client_id, sid = %stream_id.to_string(), "tunnel_to_stream closed with reason: {:?}", reason
             );
             active_streams.remove(&stream_id);
-            tracing::debug!("cid={} sid={} remove stream from active_streams, tunnel_to_stream len={}", client_id, stream_id.to_string(), active_streams.len());
+            tracing::debug!(cid = %client_id, sid = %stream_id.to_string(), "remove stream from active_streams, tunnel_to_stream len={}", active_streams.len());
         }
         .instrument(tracing::info_span!("tunnel_to_stream")),
     );
@@ -140,10 +140,10 @@ async fn process_tcp_stream<T>(
     let stream_id = tunnel_stream.id.clone();
     // send initial control stream init to client
     if let Err(e) = control_server::send_client_stream_init(tunnel_stream.clone()).await {
-        tracing::error!("cid={} sid={} failed to send stream init: {:?}", client_id, stream_id.to_string(), e);
+        tracing::error!(cid = %client_id, sid = %stream_id.to_string(), "failed to send stream init: {:?}", e);
         return;
     }
-    tracing::debug!("cid={} sid={} send stream init", client_id, stream_id.to_string());
+    tracing::debug!(cid = %client_id, sid = %stream_id.to_string(), "send stream init");
 
     // now read from stream and forward to clients
     let mut buf = [0; 1024];
@@ -151,7 +151,7 @@ async fn process_tcp_stream<T>(
     loop {
         // client is no longer connected
         if Connections::get(conn, &tunnel_stream.client.id).is_none() {
-            tracing::debug!("cid={} sid={} client disconnected, closing stream", client_id, stream_id.to_string());
+            tracing::debug!(cid = %client_id, sid = %stream_id.to_string(), "client disconnected, closing stream");
 
             // close remote-writer channel
             let _ = tunnel_stream.tx.send(StreamMessage::NoClientTunnel).await;
@@ -163,28 +163,28 @@ async fn process_tcp_stream<T>(
         let n = match tcp_stream.read(&mut buf).await {
             Ok(n) => n,
             Err(e) => {
-                tracing::error!("cid={} sid={} failed to read from tcp socket: {:?}", client_id, stream_id.to_string(), e);
+                tracing::error!(cid = %client_id, sid = %stream_id.to_string(), "failed to read from tcp socket: {:?}", e);
                 return;
             }
         };
 
         if n == 0 {
-            tracing::debug!("cid={} sid={} remote client streams end", client_id, stream_id.to_string());
+            tracing::debug!(cid = %client_id, sid = %stream_id.to_string(), "remote client streams end");
             let _ = tunnel_stream
                 .client
                 .tx
                 .send(ControlPacket::End(tunnel_stream.id.clone()))
                 .await
                 .map_err(|e| {
-                    tracing::error!("cid={} sid={} failed to send end signal: {:?}", client_id, stream_id.to_string(), e);
+                    tracing::error!(cid = %client_id, sid = %stream_id.to_string(), "failed to send end signal: {:?}", e);
                 });
             return;
         }
 
-        tracing::debug!("cid={} sid={} read {} bytes message from remote client", client_id, stream_id.to_string(), n);
+        tracing::debug!(cid = %client_id, sid = %stream_id.to_string(), "read {} bytes message from remote client", n);
 
         if tunnel_stream.tx.is_closed() {
-            tracing::debug!("cid={} sid={} process_tcp_stream closed because active_stream.tx has closed", client_id, stream_id.to_string());
+            tracing::debug!(cid = %client_id, sid = %stream_id.to_string(), "process_tcp_stream closed because active_stream.tx has closed");
             return;
         }
 
@@ -192,14 +192,14 @@ async fn process_tcp_stream<T>(
         let packet = ControlPacket::Data(tunnel_stream.id.clone(), data.to_vec());
 
         match tunnel_stream.client.tx.send(packet.clone()).await {
-            Ok(_) => tracing::debug!("cid={} sid={} sent data packet to client", client_id, stream_id.to_string()),
+            Ok(_) => tracing::debug!(cid = %client_id, sid = %stream_id.to_string(), "sent data packet to client"),
             Err(_) => {
                 // TODO: not tested
                 // This line extecuted when
                 // - Corresponding client not found or closed
-                tracing::error!("cid={} sid={} failed to forward tcp packets to disconnected client. dropping client.", client_id, stream_id.to_string());
+                tracing::error!(cid = %client_id, sid = %stream_id.to_string(), "failed to forward tcp packets to disconnected client. dropping client.");
                 Connections::remove(conn, &tunnel_stream.client);
-                tracing::debug!("cid={} remove client from connections len_clients={} len_hosts={}", client_id, Connections::len_clients(conn), Connections::len_hosts(conn));
+                tracing::debug!(cid = %client_id, "remove client from connections len_clients={} len_hosts={}", Connections::len_clients(conn), Connections::len_hosts(conn));
             }
         }
     }
@@ -230,12 +230,12 @@ where
             match message {
                 StreamMessage::Data(data) => Some(data),
                 StreamMessage::TunnelRefused => {
-                    tracing::debug!("remote={} sid={} tunnel refused", subdomain, stream_id.to_string());
+                    tracing::debug!(remote = %subdomain, sid = %stream_id.to_string(), "tunnel refused");
                     let _ = sink.write_all(HTTP_TUNNEL_REFUSED_RESPONSE).await;
                     None
                 }
                 StreamMessage::NoClientTunnel => {
-                    tracing::info!("remote={} sid={} client tunnel not found", subdomain, stream_id.to_string());
+                    tracing::info!(remote = %subdomain, sid = %stream_id.to_string(), "client tunnel not found");
                     let _ = sink.write_all(HTTP_NOT_FOUND_RESPONSE).await;
                     None
                 }
@@ -247,9 +247,9 @@ where
         let data = match result {
             Some(data) => data,
             None => {
-                tracing::debug!("remote={} sid={} done tunneling to sink", subdomain, stream_id.to_string());
+                tracing::debug!(remote = %subdomain, sid = %stream_id.to_string(), "done tunneling to sink");
                 let _ = sink.shutdown().await.map_err(|_e| {
-                    tracing::error!("remote={} sid={} error shutting down tcp stream", subdomain, stream_id.to_string());
+                    tracing::error!(remote = %subdomain, sid = %stream_id.to_string(), "error shutting down tcp stream");
                 });
 
                 // active_streams.remove(&stream_id);
@@ -261,7 +261,7 @@ where
         let result = sink.write_all(&data).await;
 
         if let Some(error) = result.err() {
-            tracing::warn!("remote={} sid={} stream closed, disconnecting: {:?}", subdomain, stream_id.to_string(), error);
+            tracing::warn!(remote = %subdomain, sid = %stream_id.to_string(), "stream closed, disconnecting: {:?}", error);
             return TunnelToStreamExitReason::TcpClosed;
         }
     }

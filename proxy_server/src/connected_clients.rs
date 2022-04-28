@@ -48,7 +48,7 @@ impl Connections {
         // https://github.com/agrinman/tunnelto/blob/0.1.9/src/server/connected_clients.rs
         connection.hosts.remove(&client.host);
         connection.clients.remove(&client.id);
-        tracing::debug!("rm client: {}", &client.id);
+        tracing::debug!(cid = %client.id, "rm client");
     }
 
     // pub fn client_for_host(connection: &mut Self, host: &String) -> Option<ClientId> {

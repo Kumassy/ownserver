@@ -82,6 +82,7 @@ pub struct ClientHandshake {
     pub port: u16,
 }
 
+#[tracing::instrument(skip(websocket, config, alloc))]
 async fn try_client_handshake(
     websocket: &mut WebSocket,
     config: &'static OnceCell<Config>,
@@ -205,6 +206,7 @@ pub enum VerifyClientHandshakeError {
     Other(#[from] ProxyServerError),
 }
 
+#[tracing::instrument(skip(config))]
 async fn verify_client_handshake(
     config: &'static OnceCell<Config>,
     client_hello_data: Vec<u8>,
@@ -249,6 +251,7 @@ async fn verify_client_handshake(
     Ok(())
 }
 
+#[tracing::instrument(skip(websocket))]
 async fn read_client_hello(
     websocket: &mut (impl Unpin + Stream<Item = Result<Message, WarpError>>)
 ) -> Option<Vec<u8>> {
@@ -265,6 +268,7 @@ async fn read_client_hello(
     Some(client_hello_data)
 }
 
+#[tracing::instrument(skip(websocket))]
 async fn send_server_hello<T>(websocket: &mut T, server_hello: ServerHello) -> Result<(), T::Error>
 where
     T: Unpin + Sink<Message>,
@@ -277,6 +281,7 @@ where
     Ok(())
 }
 
+#[tracing::instrument(skip(config, conn, active_streams, alloc, remote_cancellers, websocket))]
 async fn handle_new_connection(
     config: &'static OnceCell<Config>,
     conn: &'static Connections,
@@ -291,7 +296,7 @@ async fn handle_new_connection(
         None => return,
     };
     let client_id = handshake.id;
-    tracing::info!("cid={} client_ip={} port={} open tunnel", client_id, client_ip, handshake.port);
+    tracing::info!(cid = %client_id, port = %handshake.port, "open tunnel");
     let host = format!("host-foobar-{}", handshake.port);
     let listen_addr = format!("[::]:{}", handshake.port);
     let canceller =
@@ -303,7 +308,7 @@ async fn handle_new_connection(
             }
         };
     remote_cancellers.insert(client_id.clone(), canceller);
-    tracing::debug!("cid={} register remote_cancellers len={}", client_id, remote_cancellers.len());
+    tracing::debug!(cid = %client_id, "register remote_cancellers len={}", remote_cancellers.len());
 
     let (tx, rx) = unbounded::<ControlPacket>();
     let client = ConnectedClient {
@@ -312,7 +317,7 @@ async fn handle_new_connection(
         tx,
     };
     Connections::add(conn, client.clone());
-    tracing::debug!("cid={} register client to connections len_clients={} len_hosts={}", client_id, Connections::len_clients(conn), Connections::len_hosts(conn));
+    tracing::debug!(cid = %client_id, "register client to connections len_clients={} len_hosts={}", Connections::len_clients(conn), Connections::len_hosts(conn));
     let active_streams = active_streams.clone();
     let (sink, stream) = websocket.split();
 
@@ -327,9 +332,9 @@ async fn handle_new_connection(
 
             let client = tunnel_client(client, sink, rx).await;
             Connections::remove(conn, &client);
-            tracing::debug!("cid={} remove client from connections len_clients={} len_hosts={}", client_id, Connections::len_clients(conn), Connections::len_hosts(conn));
+            tracing::debug!(cid = %client_id, "remove client from connections len_clients={} len_hosts={}", Connections::len_clients(conn), Connections::len_hosts(conn));
             if let Some((_cid, ct)) = remote_cancellers.remove(&client_id) {
-                tracing::debug!("cid={} cancel remote process", client_id);
+                tracing::debug!(cid = %client_id, "cancel remote process");
                 ct.cancel();
             }
         }
@@ -339,9 +344,9 @@ async fn handle_new_connection(
         async move {
             let client = process_client_messages(active_streams, client, stream).await;
             Connections::remove(conn, &client);
-            tracing::debug!("cid={} remove client from connections len_clients={} len_hosts={}", client_id, Connections::len_clients(conn), Connections::len_hosts(conn));
+            tracing::debug!(cid = %client_id, "remove client from connections len_clients={} len_hosts={}", Connections::len_clients(conn), Connections::len_hosts(conn));
             if let Some((_cid, ct)) = remote_cancellers.remove(&client_id) {
-                tracing::debug!("cid={} cancel remote process", client_id);
+                tracing::debug!(cid = %client_id, "cancel remote process");
                 ct.cancel();
             }
         }
@@ -359,7 +364,6 @@ pub async fn send_client_stream_init(mut stream: ActiveStream) -> Result<(), Sen
 }
 
 /// Process client control messages
-#[must_use]
 #[tracing::instrument(skip(client_conn, active_streams, client))]
 pub async fn process_client_messages<T>(
     active_streams: ActiveStreams,
@@ -383,7 +387,7 @@ where
                 return client;
             }
             _ => {
-                tracing::debug!(?client.id, "goodbye client");
+                tracing::debug!(cid = %client.id, "goodbye client");
                 return client;
             }
         };
@@ -391,27 +395,27 @@ where
         let packet = match ControlPacket::deserialize(&message) {
             Ok(packet) => packet,
             Err(e) => {
-                tracing::error!("invalid data packet {:?}", e);
+                tracing::error!(error = ?e, "invalid data packet");
                 continue;
             }
         };
 
-        tracing::trace!("cid={} got control packet from client {}", client.id, packet);
+        tracing::trace!(cid = %client.id, ?packet, "got control packet from client");
         let (stream_id, message) = match packet {
             ControlPacket::Data(stream_id, data) => {
-                tracing::debug!("cid={} sid={} forwarding to stream: {}", client.id, stream_id.to_string(), data.len());
+                tracing::trace!(cid = %client.id, sid = %stream_id.to_string(), "forwarding to stream: {}", data.len());
                 (stream_id, StreamMessage::Data(data))
             }
             ControlPacket::Refused(stream_id) => {
-                tracing::debug!("cid={} sid={} tunnel says: refused", client.id, stream_id.to_string());
+                tracing::debug!(cid = %client.id, sid = %stream_id.to_string(), "tunnel says: refused");
                 (stream_id, StreamMessage::TunnelRefused)
             }
             ControlPacket::Init(stream_id) | ControlPacket::End(stream_id) => {
-                tracing::error!("cid={} sid={} invalid protocol control::init message", client.id, stream_id.to_string());
+                tracing::error!(cid = %client.id, sid = %stream_id.to_string(), "invalid protocol control::init message");
                 continue;
             }
             ControlPacket::Ping => {
-                tracing::trace!("cid={} pong", client.id);
+                tracing::trace!(cid = %client.id, "pong");
                 // Connections::add(connections, client.clone());
                 continue;
             }
@@ -420,9 +424,9 @@ where
         let stream = active_streams.get(&stream_id).map(|s| s.value().clone());
 
         if let Some(mut stream) = stream {
-            tracing::info!("cid={} sid={} forward message to active stream", client.id, stream.id.to_string());
+            tracing::trace!(cid = %client.id, sid = %stream_id.to_string(), "forward message to active stream");
             let _ = stream.tx.send(message).await.map_err(|error| {
-                tracing::debug!("cid={} sid={} Failed to send to stream tx: {:?}", client.id, stream.id.to_string(), error);
+                tracing::debug!(cid = %client.id, sid = %stream_id.to_string(), error = ?error, "Failed to send to stream tx");
             });
         }
     }
@@ -450,12 +454,12 @@ where
             Some(packet) => {
                 let result = sink.send(Message::binary(packet.serialize())).await;
                 if let Err(error) = result {
-                    tracing::debug!("cid={} client disconnected: aborting: {:?}", client.id, error);
+                    tracing::debug!(cid = %client.id, error = ?error, "client disconnected: aborting");
                     return client;
                 }
             }
             None => {
-                tracing::debug!("cid={} ending client tunnel", client.id);
+                tracing::debug!(cid = %client.id, "ending client tunnel");
                 return client;
             }
         };
