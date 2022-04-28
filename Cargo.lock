@@ -1203,6 +1203,8 @@ dependencies = [
  "pin-project",
  "rand 0.8.4",
  "thiserror",
+ "tokio",
+ "tokio-stream",
 ]
 
 [[package]]
@@ -1214,6 +1216,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "http",
+ "isahc",
  "opentelemetry",
 ]
 
@@ -1232,6 +1235,7 @@ dependencies = [
  "opentelemetry-semantic-conventions",
  "thiserror",
  "thrift",
+ "tokio",
 ]
 
 [[package]]

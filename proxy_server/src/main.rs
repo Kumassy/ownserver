@@ -68,7 +68,7 @@ async fn main() {
         .with_trace_config(
             trace::config().with_id_generator(XrayIdGenerator::default())
         )
-        .install_simple()
+        .install_batch(opentelemetry::runtime::Tokio)
         .expect("Failed to initialize tracer");
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::new("DEBUG"))
