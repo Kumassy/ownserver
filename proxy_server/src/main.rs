@@ -12,7 +12,7 @@ use tokio::sync::Mutex;
 use once_cell::sync::OnceCell;
 use tokio_util::sync::CancellationToken;
 use structopt::StructOpt;
-use opentelemetry::sdk::trace::{self, XrayIdGenerator};
+use opentelemetry::{sdk::{trace::{self, XrayIdGenerator}, Resource}, KeyValue};
 
 lazy_static! {
     pub static ref CONNECTIONS: Connections = Connections::new();
@@ -62,10 +62,21 @@ impl From<Opt> for Config {
 
 #[tokio::main]
 async fn main() {
+    let opt = Opt::from_args();
+    let config = Config::from(opt);
+    CONFIG.set(config).expect("failed to initialize config");
+
     let tracer = opentelemetry_jaeger::new_pipeline()
         .with_service_name("magic-tunnel-server")
         .with_trace_config(
-            trace::config().with_id_generator(XrayIdGenerator::default())
+            trace::config()
+                .with_id_generator(XrayIdGenerator::default())
+                .with_resource(Resource::new(vec![
+                    KeyValue {
+                        key: "hostname".into(),
+                        value: CONFIG.get().expect("failed to read config").host.clone().into()
+                    }
+                ]))
         )
         .install_batch(opentelemetry::runtime::Tokio)
         .expect("Failed to initialize tracer");
@@ -75,26 +86,10 @@ async fn main() {
         .try_init()
         .expect("Failed to register tracer with registry");
 
-    let opt = Opt::from_args();
-    tracing::debug!("{:?}", opt);
-    let config = Config::from(opt);
+    tracing::debug!("{:?}", CONFIG.get().expect("failed to read config"));
+    let Config {remote_port_start, remote_port_end  , ..}  = CONFIG.get().expect("failed to read config");
 
-    if CONFIG.set(config).is_err() {
-        tracing::error!("failed to initialize config");
-        return;
-    }
-
-    let (remote_port_start, remote_port_end) = match CONFIG.get() {
-        Some(config) => {
-            (config.remote_port_start, config.remote_port_end)
-        },
-        None => {
-            tracing::error!("failed to read config");
-            return;
-        }
-    };
-
-    let alloc = Arc::new(Mutex::new(PortAllocator::new(remote_port_start..remote_port_end)));
+    let alloc = Arc::new(Mutex::new(PortAllocator::new(*remote_port_start..*remote_port_end)));
     let remote_cancellers: Arc<DashMap<ClientId, CancellationToken>> = Arc::new(DashMap::new());
     let handle = run(
         &CONFIG,
