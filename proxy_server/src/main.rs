@@ -7,7 +7,7 @@ pub use magic_tunnel_server::{
     Config,
 };
 use tracing_subscriber::prelude::*;
-use std::sync::Arc;
+use std::{sync::Arc, fs};
 use tokio::sync::Mutex;
 use once_cell::sync::OnceCell;
 use tokio_util::sync::CancellationToken;
@@ -38,6 +38,9 @@ struct Opt {
 
     #[structopt(long)]
     remote_port_end: u16,
+
+    #[structopt(long, default_value = "/var/log/magic-tunnel/proxy_server.log")]
+    log_file: String,
 }
 
 impl From<Opt> for Config {
@@ -48,6 +51,7 @@ impl From<Opt> for Config {
             host,
             remote_port_start,
             remote_port_end,
+            ..
         } = opt;
 
         Config {
@@ -63,8 +67,16 @@ impl From<Opt> for Config {
 #[tokio::main]
 async fn main() {
     let opt = Opt::from_args();
+    let log_file = opt.log_file.clone();
     let config = Config::from(opt);
     CONFIG.set(config).expect("failed to initialize config");
+
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .append(true)
+        .open(&log_file)
+        .unwrap_or_else(|_| panic!("failed to open log file {}", log_file));
 
     let tracer = opentelemetry_jaeger::new_pipeline()
         .with_service_name("magic-tunnel-server")
@@ -83,6 +95,8 @@ async fn main() {
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::new("DEBUG"))
         .with(tracing_opentelemetry::layer().with_tracer(tracer))
+        .with(tracing_subscriber::fmt::layer())
+        .with(tracing_subscriber::fmt::layer().with_ansi(false).with_writer(file))
         .try_init()
         .expect("Failed to register tracer with registry");
 
