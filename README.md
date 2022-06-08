@@ -144,7 +144,7 @@ service:
 $ sudo apt-get update
 $ sudo apt-get -y install wget systemctl
 $ wget https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v0.44.0/otelcol_0.44.0_linux_arm64.deb
-$ dpkg -i otelcol_0.44.0_linux_arm64.deb
+$ sudo dpkg -i otelcol_0.44.0_linux_arm64.deb
 
 $ sudo vim /etc/otelcol/config.yaml
 $ sudo cat /etc/otelcol/config.yaml
