@@ -4,6 +4,7 @@ use futures::{
 };
 pub use magic_tunnel_lib::{ClientHello, ClientId, ControlPacket, ServerHello, StreamId, CLIENT_HELLO_VERSION};
 use magic_tunnel_auth::decode_jwt;
+use metrics::increment_counter;
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use tokio::task::JoinHandle;
@@ -125,6 +126,7 @@ async fn try_client_handshake(
                         return None
                     }
 
+                    increment_counter!("magic_tunnel_server.control.handshake.success");
                     Some(ClientHandshake {
                         id: client_id,
                         port,
@@ -137,6 +139,7 @@ async fn try_client_handshake(
                     if let Err(e) = send_server_hello(websocket, server_hello).await {
                         tracing::warn!("failed to send server hello: {}", e);
                     }
+                    increment_counter!("magic_tunnel_server.control.handshake.error.service_temporary_unavailable");
                     None
                 }
             }
@@ -148,6 +151,7 @@ async fn try_client_handshake(
             if let Err(e) = send_server_hello(websocket, server_hello).await {
                 tracing::warn!("failed to send server hello: {}", e);
             }
+            increment_counter!("magic_tunnel_server.control.handshake.error.invalid_client_hello");
             None
         },
         Err(VerifyClientHandshakeError::InvalidJWT) => {
@@ -157,6 +161,7 @@ async fn try_client_handshake(
             if let Err(e) = send_server_hello(websocket, server_hello).await {
                 tracing::warn!("failed to send server hello: {}", e);
             }
+            increment_counter!("magic_tunnel_server.control.handshake.error.invalid_jwt");
             None
         },
         Err(VerifyClientHandshakeError::IllegalHost) => {
@@ -166,6 +171,7 @@ async fn try_client_handshake(
             if let Err(e) = send_server_hello(websocket, server_hello).await {
                 tracing::warn!("failed to send server hello: {}", e);
             }
+            increment_counter!("magic_tunnel_server.control.handshake.error.illegal_host");
             None
         },
         Err(VerifyClientHandshakeError::VersionMismatch) => {
@@ -175,6 +181,7 @@ async fn try_client_handshake(
             if let Err(e) = send_server_hello(websocket, server_hello).await {
                 tracing::warn!("failed to send server hello: {}", e);
             }
+            increment_counter!("magic_tunnel_server.control.handshake.error.version_mismatch");
             None
         }
         Err(VerifyClientHandshakeError::Other(e)) => {
@@ -183,6 +190,7 @@ async fn try_client_handshake(
             if let Err(e) = send_server_hello(websocket, server_hello).await {
                 tracing::warn!("failed to send server hello: {}", e);
             }
+            increment_counter!("magic_tunnel_server.control.handshake.error.other");
             None
         }
     }
@@ -291,6 +299,7 @@ async fn handle_new_connection(
     client_ip: SocketAddr,
     mut websocket: WebSocket,
 ) {
+    increment_counter!("magic_tunnel_server.control.connections.success");
     let handshake = match try_client_handshake(&mut websocket, config, alloc).await {
         Some(ws) => ws,
         None => return,
