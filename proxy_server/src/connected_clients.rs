@@ -1,6 +1,7 @@
 use dashmap::DashMap;
 use futures::channel::mpsc::UnboundedSender;
 pub use magic_tunnel_lib::{ClientId, ControlPacket};
+use metrics::gauge;
 use std::fmt::Formatter;
 use std::sync::Arc;
 
@@ -49,6 +50,7 @@ impl Connections {
         connection.hosts.remove(&client.host);
         connection.clients.remove(&client.id);
         tracing::debug!(cid = %client.id, "rm client");
+        gauge!("magic_tunnel_server.control.connections", connection.clients.len() as f64);
     }
 
     // pub fn client_for_host(connection: &mut Self, host: &String) -> Option<ClientId> {
@@ -69,6 +71,7 @@ impl Connections {
     pub fn add(connection: &Self, client: ConnectedClient) {
         connection.clients.insert(client.id.clone(), client.clone());
         connection.hosts.insert(client.host.clone(), client);
+        gauge!("magic_tunnel_server.control.connections", connection.clients.len() as f64);
     }
 
     pub fn clear(connection: &Self) {

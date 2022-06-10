@@ -227,3 +227,8 @@ sudo docker run -d --name jaeger \
   --restart always \
   jaegertracing/all-in-one:1.33
 ```
+
+### metrics
+```
+curl localhost:9000
+```

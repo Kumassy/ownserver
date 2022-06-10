@@ -1,5 +1,6 @@
 use futures::channel::mpsc::UnboundedReceiver;
 use futures::prelude::*;
+use metrics::{increment_counter, gauge};
 use std::io;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, ToSocketAddrs};
@@ -65,6 +66,7 @@ pub async fn accept_connection(
     host: String,
 ) {
     tracing::info!(remote = %host, "new remote connection");
+    increment_counter!("magic_tunnel_server.remotes.success");
 
     // find the client listening for this host
     let client = match Connections::find_by_host(conn, &host) {
@@ -86,6 +88,7 @@ pub async fn accept_connection(
 
     // add our stream
     active_streams.insert(stream_id.clone(), active_stream.clone());
+    gauge!("magic_tunnel_server.remotes.streams", active_streams.len() as f64);
     tracing::info!(remote = %host, cid = %client_id, sid = %active_stream.id.to_string(), "register stream to active_streams len={}", active_streams.len());
 
     // read from socket, write to client
@@ -100,6 +103,7 @@ pub async fn accept_connection(
 
             process_tcp_stream(conn, active_stream, stream).await;
             active_streams.remove(&stream_id);
+            gauge!("magic_tunnel_server.remotes.streams", active_streams.len() as f64);
             tracing::debug!(cid = %client_id, sid = %stream_id.to_string(), "remove stream from active_streams, process_tcp_stream len={}", active_streams.len());
         }
         .instrument(tracing::info_span!("process_tcp_stream")),
@@ -113,6 +117,7 @@ pub async fn accept_connection(
                 remote = %host, cid = %client_id, sid = %stream_id.to_string(), "tunnel_to_stream closed with reason: {:?}", reason
             );
             active_streams.remove(&stream_id);
+            gauge!("magic_tunnel_server.remotes.streams", active_streams.len() as f64);
             tracing::debug!(cid = %client_id, sid = %stream_id.to_string(), "remove stream from active_streams, tunnel_to_stream len={}", active_streams.len());
         }
         .instrument(tracing::info_span!("tunnel_to_stream")),
