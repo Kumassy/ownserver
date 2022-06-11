@@ -115,6 +115,7 @@ async fn main() {
     describe_counter!("magic_tunnel_server.control.handshake.error.other", "[counter] The number of handshake error Other so far.");
     describe_counter!("magic_tunnel_server.remotes.success", "[counter] The number of successfully accepted remote connections so far.");
     describe_gauge!("magic_tunnel_server.remotes.streams", "[gauge] The number of ActiveStreams at this time.");
+    describe_gauge!("magic_tunnel_server.remotes.udp.streams", "[gauge] The number of UDP ActiveStreams at this time.");
     tracing::info!("Prometheus endpoint: localhost:9000");
 
     tracing::debug!("{:?}", CONFIG.get().expect("failed to read config"));
