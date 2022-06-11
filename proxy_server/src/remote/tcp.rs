@@ -66,7 +66,6 @@ pub async fn accept_connection(
     host: String,
 ) {
     tracing::info!(remote = %host, "new remote connection");
-    increment_counter!("magic_tunnel_server.remotes.success");
 
     // find the client listening for this host
     let client = match Connections::find_by_host(conn, &host) {
@@ -77,6 +76,16 @@ pub async fn accept_connection(
             return;
         }
     };
+    let peer_addr = match socket.peer_addr() {
+        Ok(addr) => addr,
+        Err(_) => {
+            tracing::error!(remote = %host, "failed to find remote peer addr");
+            let _ = socket.write_all(HTTP_TUNNEL_REFUSED_RESPONSE).await;
+            return;
+        }
+    };
+    increment_counter!("magic_tunnel_server.remotes.success");
+
     let client_id = client.id.clone();
 
     // allocate a new stream for this request
@@ -87,7 +96,7 @@ pub async fn accept_connection(
     let (stream, sink) = tokio::io::split(socket);
 
     // add our stream
-    active_streams.insert(stream_id.clone(), active_stream.clone());
+    active_streams.insert(stream_id.clone(), active_stream.clone(), peer_addr);
     gauge!("magic_tunnel_server.remotes.streams", active_streams.len() as f64);
     tracing::info!(remote = %host, cid = %client_id, sid = %active_stream.id.to_string(), "register stream to active_streams len={}", active_streams.len());
 

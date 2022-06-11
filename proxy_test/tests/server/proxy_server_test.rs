@@ -69,7 +69,7 @@ mod server_test {
     > {
         lazy_static! {
             pub static ref CONNECTIONS: Connections = Connections::new();
-            pub static ref ACTIVE_STREAMS: ActiveStreams = Arc::new(DashMap::new());
+            pub static ref ACTIVE_STREAMS: ActiveStreams = ActiveStreams::default();
         }
 
         let config = CONFIG.get_or_init(||

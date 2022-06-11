@@ -615,7 +615,7 @@ mod process_client_messages_test {
     use super::*;
     use dashmap::DashMap;
     use futures::channel::mpsc::{unbounded, UnboundedReceiver};
-    use std::sync::Arc;
+    use std::{sync::Arc, str::FromStr};
 
     async fn send_messages_to_client_and_process_client_message(
         is_add_stream_to_streams: bool,
@@ -630,11 +630,12 @@ mod process_client_messages_test {
             host: "foobar".into(),
             tx,
         };
+        let addr = "127.0.0.1:12345".parse().unwrap();
 
         let (active_stream, queue_rx) = ActiveStream::new(client.clone());
         let stream_id = active_stream.id.clone();
         if is_add_stream_to_streams {
-            active_streams.insert(stream_id.clone(), active_stream.clone());
+            active_streams.insert(stream_id.clone(), active_stream.clone(), addr);
         }
 
         for message in messages {
