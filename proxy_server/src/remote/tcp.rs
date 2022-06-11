@@ -546,7 +546,7 @@ mod spawn_remote_test {
     async fn launch_remote(remote_port: u16) -> io::Result<CancellationToken> {
         lazy_static! {
             pub static ref CONNECTIONS: Connections = Connections::new();
-            pub static ref ACTIVE_STREAMS: ActiveStreams = Arc::new(DashMap::new());
+            pub static ref ACTIVE_STREAMS: ActiveStreams = ActiveStreams::default();
         }
         // we must clear CONNECTIONS, ACTIVE_STREAMS
         // because they are shared across test

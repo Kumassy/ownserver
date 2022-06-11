@@ -11,7 +11,7 @@ use magic_tunnel_server::{
     connected_clients::Connections,
     port_allocator::PortAllocator,
     proxy_server,
-    remote::HTTP_TUNNEL_REFUSED_RESPONSE,
+    remote::tcp::HTTP_TUNNEL_REFUSED_RESPONSE,
     Config,
 };
 use magic_tunnel_auth::build_routes;
@@ -75,7 +75,7 @@ mod e2e_test {
     async fn launch_proxy_server() -> Result<ActiveStreamsServer, Box<dyn std::error::Error>> {
         lazy_static! {
             pub static ref CONNECTIONS: Connections = Connections::new();
-            pub static ref ACTIVE_STREAMS_SERVER: ActiveStreamsServer = Arc::new(DashMap::new());
+            pub static ref ACTIVE_STREAMS_SERVER: ActiveStreamsServer = ActiveStreamsServer::default();
         }
         // we must clear CONNECTIONS, ACTIVE_STREAMS
         // because they are shared across test

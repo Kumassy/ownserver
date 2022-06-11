@@ -7,7 +7,6 @@ pub mod remote;
 pub mod proxy_server;
 pub mod port_allocator;
 
-
 #[derive(Debug, Clone)]
 pub struct Config {
     pub control_port: u16,

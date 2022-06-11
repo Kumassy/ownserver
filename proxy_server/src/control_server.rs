@@ -309,7 +309,7 @@ async fn handle_new_connection(
     let host = format!("host-foobar-{}", handshake.port);
     let listen_addr = format!("[::]:{}", handshake.port);
     let canceller =
-        match remote::spawn_remote(conn, active_streams, listen_addr, host.clone()).await {
+        match remote::tcp::spawn_remote(conn, active_streams, listen_addr, host.clone()).await {
             Ok(canceller) => canceller,
             Err(_) => {
                 tracing::error!("failed to bind to allocated port");
@@ -622,7 +622,7 @@ mod process_client_messages_test {
         messages: Vec<Box<dyn Fn(StreamId) -> Message>>,
     ) -> Result<UnboundedReceiver<StreamMessage>, Box<dyn std::error::Error>> {
         let (mut stream_tx, stream_rx) = unbounded::<Result<Message, WarpError>>();
-        let active_streams = Arc::new(DashMap::new());
+        let active_streams = ActiveStreams::default();
 
         let (tx, _rx) = unbounded::<ControlPacket>();
         let client = ConnectedClient {

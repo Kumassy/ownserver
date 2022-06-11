@@ -18,7 +18,7 @@ use opentelemetry::{sdk::{trace::{self, XrayIdGenerator}, Resource}, KeyValue};
 
 lazy_static! {
     pub static ref CONNECTIONS: Connections = Connections::new();
-    pub static ref ACTIVE_STREAMS: ActiveStreams = Arc::new(DashMap::new());
+    pub static ref ACTIVE_STREAMS: ActiveStreams = ActiveStreams::default();
 }
 
 static CONFIG: OnceCell<Config> = OnceCell::new();
