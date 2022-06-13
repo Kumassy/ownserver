@@ -2,7 +2,14 @@
 mod client_local_test {
     use super::*;
 
-    use tokio::net::TcpListener;
+    use futures::{StreamExt, SinkExt};
+    use futures::channel::mpsc::unbounded;
+    use log::info;
+    use magic_tunnel_client::StreamMessage;
+    use magic_tunnel_client::local::{process_local_tcp, forward_to_local_tcp};
+    use magic_tunnel_lib::{StreamId, ControlPacket};
+    use tokio::io::{split, AsyncWriteExt, AsyncReadExt};
+    use tokio::net::{TcpListener, TcpStream};
     use tokio::sync::oneshot;
 
     #[tokio::test]
