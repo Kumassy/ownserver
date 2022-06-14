@@ -64,6 +64,7 @@ pub struct ClientHello {
 pub enum ControlPacket {
     Init(StreamId),
     Data(StreamId, Vec<u8>),
+    UdpData(StreamId, Vec<u8>),
     Refused(StreamId),
     End(StreamId),
     Ping,
@@ -79,6 +80,7 @@ impl ControlPacket {
             ControlPacket::Refused(sid) => [vec![0x03], sid.0.to_vec()].concat(),
             ControlPacket::End(sid) => [vec![0x04], sid.0.to_vec()].concat(),
             ControlPacket::Ping => [vec![0x05], EMPTY_STREAM.0.to_vec()].concat(),
+            ControlPacket::UdpData(sid, data) => [vec![0x06], sid.0.to_vec(), data].concat(),
         }
     }
 
@@ -97,6 +99,7 @@ impl ControlPacket {
             0x03 => ControlPacket::Refused(stream_id),
             0x04 => ControlPacket::End(stream_id),
             0x05 => ControlPacket::Ping,
+            0x06 => ControlPacket::UdpData(stream_id, data[9..].to_vec()),
             _ => return Err("invalid control byte in DataPacket".into()),
         };
 
@@ -112,6 +115,7 @@ impl std::fmt::Display for ControlPacket {
             ControlPacket::Refused(sid) => write!(f, "ControlPacket::Refused(sid={})", sid.to_string()),
             ControlPacket::End(sid) => write!(f, "ControlPacket::End(sid={})", sid.to_string()),
             ControlPacket::Ping => write!(f, "ControlPacket::Ping"),
+            ControlPacket::UdpData(sid, data) => write!(f, "ControlPacket::UdpData(sid={}, data_len={})", sid.to_string(), data.len()),
         }
     }
 }
@@ -184,6 +188,19 @@ mod control_packet_test {
         let deserialized_packet = ControlPacket::deserialize(&expected_packet.serialize())?;
 
         assert_eq!(ControlPacket::Ping, deserialized_packet);
+        Ok(())
+    }
+
+    #[test]
+    fn test_control_packet_udp_data() -> Result<(), Box<dyn std::error::Error>> {
+        let stream_id = EMPTY_STREAM;
+        let expected_packet = ControlPacket::UdpData(stream_id, b"some data".to_vec());
+        let deserialized_packet = ControlPacket::deserialize(&expected_packet.serialize())?;
+
+        assert_eq!(
+            ControlPacket::UdpData(EMPTY_STREAM, b"some data".to_vec()),
+            deserialized_packet
+        );
         Ok(())
     }
 }
