@@ -48,6 +48,7 @@ impl ClientId {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum Payload {
     Other = 0,
+    UDP = 65535,
     Http = 80,
     Minecraft = 25565,
     Factorio = 34197,
