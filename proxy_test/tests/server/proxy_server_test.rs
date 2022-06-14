@@ -24,6 +24,7 @@ use tokio_util::sync::CancellationToken;
 #[cfg(test)]
 mod server_test {
     use super::*;
+    use magic_tunnel_lib::Payload;
     use serial_test::serial;
 
     static CONFIG: OnceCell<Config> = OnceCell::new();
@@ -108,7 +109,7 @@ mod server_test {
         let url = Url::parse(&format!("wss://localhost:{}/tunnel", control_port))?;
         let (mut websocket, _) = connect_async(url).await.expect("failed to connect");
 
-        send_client_hello(&mut websocket, token).await?;
+        send_client_hello(&mut websocket, token, Payload::Other).await?;
         let client_info = verify_server_hello(&mut websocket).await?;
 
         Ok((websocket, ACTIVE_STREAMS.clone(), client_info))

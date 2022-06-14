@@ -34,7 +34,7 @@ pub async fn run(
     let (mut websocket, _) = connect_async(url).await.map_err(|_| Error::ServerDown)?;
     info!("WebSocket handshake has been successfully completed");
 
-    send_client_hello(&mut websocket, token).await?;
+    send_client_hello(&mut websocket, token, Payload::Other).await?;
     let client_info = verify_server_hello(&mut websocket).await?;
     info!(
         "cid={} got client_info from server: {:?}",
@@ -129,14 +129,14 @@ pub async fn run(
     Ok((client_info, handle))
 }
 
-pub async fn send_client_hello<T>(websocket: &mut T, token: String) -> Result<(), T::Error>
+pub async fn send_client_hello<T>(websocket: &mut T, token: String, payload: Payload) -> Result<(), T::Error>
 where
     T: Unpin + Sink<Message>,
 {
     let hello = ClientHello {
         version: CLIENT_HELLO_VERSION,
         token,
-        payload: Payload::Other,
+        payload,
     };
     debug!("Sent client hello: {:?}", hello);
     let hello_data = serde_json::to_vec(&hello).unwrap_or_default();
