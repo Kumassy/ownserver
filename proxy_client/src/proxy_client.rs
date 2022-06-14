@@ -14,6 +14,7 @@ use url::Url;
 
 use crate::error::Error;
 use crate::local;
+use crate::localudp;
 use crate::{ActiveStreams, StreamMessage};
 use magic_tunnel_lib::{
     ClientHello, ClientId, ControlPacket, Payload, ServerHello, StreamId, CLIENT_HELLO_VERSION,
@@ -281,6 +282,25 @@ pub async fn process_control_flow_message(
                 let _ = tunnel_tx
                     .send(ControlPacket::Refused(stream_id.clone()))
                     .await?;
+            }
+        }
+        ControlPacket::UdpData(stream_id, data) => {
+            debug!("sid={} new data: {}", stream_id.to_string(), data.len());
+            // find the right stream
+            let active_stream = active_streams.read().unwrap().get(&stream_id).cloned();
+
+            // forward data to it
+            if let Some(mut tx) = active_stream {
+                tx.send(StreamMessage::Data(data.clone())).await?;
+                debug!("sid={} forwarded to local tcp", stream_id.to_string());
+            } else {
+                localudp::setup_new_stream(
+                    active_streams.clone(),
+                    local_port,
+                    tunnel_tx.clone(),
+                    stream_id.clone(),
+                )
+                .await;
             }
         }
     };
