@@ -92,7 +92,7 @@ pub async fn process_local_tcp(
     }
 }
 
-async fn forward_to_local_tcp(
+pub async fn forward_to_local_tcp(
     stream_id: StreamId,
     mut sink: WriteHalf<TcpStream>,
     mut queue: UnboundedReceiver<StreamMessage>,
