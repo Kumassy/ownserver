@@ -92,7 +92,7 @@ mod active_streams_test {
         let addr = "127.0.0.1:12345".parse().unwrap();
         let (tx, _) = unbounded();
         let client = ConnectedClient {
-            id: client_id.clone(),
+            id: client_id,
             host: "host".to_string(),
             tx,
         };
@@ -116,4 +116,40 @@ mod active_streams_test {
         assert_eq!(active_streams.streams.len(), 2);
 
     }
+
+
+    #[test]
+    fn test_insert_v6() {
+        let active_streams = ActiveStreams::default();
+
+        let stream_id = StreamId::generate();
+        let client_id = ClientId::generate();
+        let addr = "[::ffff:127.0.0.1]:64977".parse().unwrap();
+        let (tx, _) = unbounded();
+        let client = ConnectedClient {
+            id: client_id,
+            host: "host".to_string(),
+            tx,
+        };
+        let (active_stream, _) = ActiveStream::new(client);
+
+        assert!(active_streams.insert(stream_id, active_stream, addr).is_none());
+
+
+        let stream_id2 = StreamId::generate();
+        let client_id2 = ClientId::generate();
+        let (tx, _) = unbounded();
+        let client = ConnectedClient {
+            id: client_id2.clone(),
+            host: "host".to_string(),
+            tx,
+        };
+        let (active_stream, _) = ActiveStream::new(client);
+        assert!(active_streams.insert(stream_id2, active_stream, addr).is_none());
+        assert_eq!(active_streams.find_by_addr(&addr).unwrap().client.id, client_id2);
+        assert_eq!(active_streams.addrs.len(), 1);
+        assert_eq!(active_streams.streams.len(), 2);
+
+    }
+ 
 }
