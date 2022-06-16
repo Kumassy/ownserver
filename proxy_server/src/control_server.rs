@@ -2,6 +2,7 @@ use futures::{
     channel::mpsc::{unbounded, SendError},
     Sink, SinkExt, Stream, StreamExt,
 };
+use magic_tunnel_lib::Payload;
 pub use magic_tunnel_lib::{ClientHello, ClientId, ControlPacket, ServerHello, StreamId, CLIENT_HELLO_VERSION};
 use magic_tunnel_auth::decode_jwt;
 use metrics::increment_counter;
@@ -80,6 +81,7 @@ pub struct ClientHandshake {
     pub id: ClientId,
     // pub sub_domain: String,
     // pub is_anonymous: bool,
+    pub payload: Payload,
     pub port: u16,
 }
 
@@ -110,7 +112,7 @@ async fn try_client_handshake(
         }
     };
     match verify_client_handshake(config, client_hello_data).await {
-        Ok(_) => {
+        Ok(payload) => {
             // TODO: initialization of StdRng may takes time
             let mut rng = StdRng::from_entropy();
             match alloc.lock().await.allocate_port(&mut rng) {
@@ -130,6 +132,7 @@ async fn try_client_handshake(
                     Some(ClientHandshake {
                         id: client_id,
                         port,
+                        payload
                     })
                 },
                 Err(_) => {
@@ -218,7 +221,7 @@ pub enum VerifyClientHandshakeError {
 async fn verify_client_handshake(
     config: &'static OnceCell<Config>,
     client_hello_data: Vec<u8>,
-) -> Result<(), VerifyClientHandshakeError> {
+) -> Result<Payload, VerifyClientHandshakeError> {
     let (token_secret, host) = match config.get() {
         Some(config) => (&config.token_secret, &config.host),
         None => {
@@ -256,7 +259,7 @@ async fn verify_client_handshake(
         }
     };
 
-    Ok(())
+    Ok(client_hello.payload)
 }
 
 #[tracing::instrument(skip(websocket))]
@@ -309,13 +312,27 @@ async fn handle_new_connection(
     let host = format!("host-foobar-{}", handshake.port);
     let listen_addr = format!("[::]:{}", handshake.port);
     let canceller =
-        match remote::tcp::spawn_remote(conn, active_streams, listen_addr, host.clone()).await {
-            Ok(canceller) => canceller,
-            Err(_) => {
-                tracing::error!("failed to bind to allocated port");
-                return;
+        match handshake.payload {
+            Payload::UDP => {
+                match remote::udp::spawn_remote(conn, active_streams, listen_addr, host.clone()).await {
+                    Ok(canceller) => canceller,
+                    Err(_) => {
+                        tracing::error!("failed to bind to allocated port");
+                        return;
+                    }
+                }
+            }
+            _ => {
+                match remote::tcp::spawn_remote(conn, active_streams, listen_addr, host.clone()).await {
+                    Ok(canceller) => canceller,
+                    Err(_) => {
+                        tracing::error!("failed to bind to allocated port");
+                        return;
+                    }
+                }
             }
         };
+
     remote_cancellers.insert(client_id.clone(), canceller);
     tracing::debug!(cid = %client_id, "register remote_cancellers len={}", remote_cancellers.len());
 
@@ -427,6 +444,10 @@ where
                 tracing::trace!(cid = %client.id, "pong");
                 // Connections::add(connections, client.clone());
                 continue;
+            }
+            ControlPacket::UdpData(stream_id, data) => {
+                tracing::trace!(cid = %client.id, sid = %stream_id.to_string(), "forwarding udp to stream: {}", data.len());
+                (stream_id, StreamMessage::Data(data))
             }
         };
 

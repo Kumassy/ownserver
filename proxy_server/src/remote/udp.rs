@@ -143,7 +143,7 @@ async fn process_udp_stream(
         }
 
         let data = &buf[..n];
-        let packet = ControlPacket::Data(stream_id.clone(), data.to_vec());
+        let packet = ControlPacket::UdpData(stream_id.clone(), data.to_vec());
 
         match active_stream.client.tx.send(packet.clone()).await {
             Ok(_) => tracing::debug!(cid = %client_id, sid = %stream_id.to_string(), "sent data packet to client"),
