@@ -310,7 +310,8 @@ async fn handle_new_connection(
     let client_id = handshake.id;
     tracing::info!(cid = %client_id, port = %handshake.port, "open tunnel");
     let host = format!("host-foobar-{}", handshake.port);
-    let listen_addr = format!("[::]:{}", handshake.port);
+    // let listen_addr = format!("[::]:{}", handshake.port); // 今までは v6 で listen すると v4 でも listen していた？
+    let listen_addr = format!("0.0.0.0:{}", handshake.port);
     let canceller =
         match handshake.payload {
             Payload::UDP => {
