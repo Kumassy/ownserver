@@ -1,5 +1,6 @@
 use anyhow::Result;
 use log::*;
+use magic_tunnel_lib::Payload;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use tokio_util::sync::CancellationToken;
@@ -33,7 +34,7 @@ async fn main() -> Result<()> {
     let cancellation_token = CancellationToken::new();
 
     let (client_info, handle) =
-        run(&ACTIVE_STREAMS, opt.control_port, opt.local_port, &opt.token_server, cancellation_token).await?;
+        run(&ACTIVE_STREAMS, opt.control_port, opt.local_port, &opt.token_server, Payload::Other, cancellation_token).await?;
     info!("client is running under configuration: {:?}", client_info);
 
 

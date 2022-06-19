@@ -25,6 +25,7 @@ pub async fn run(
     control_port: u16,
     local_port: u16,
     token_server: &str,
+    payload: Payload,
     cancellation_token: CancellationToken,
 ) -> Result<(ClientInfo, JoinHandle<Result<(), Error>>)> {
     let (token, host) = fetch_token(token_server).await?;
@@ -34,7 +35,7 @@ pub async fn run(
     let (mut websocket, _) = connect_async(url).await.map_err(|_| Error::ServerDown)?;
     info!("WebSocket handshake has been successfully completed");
 
-    send_client_hello(&mut websocket, token, Payload::Other).await?;
+    send_client_hello(&mut websocket, token, payload).await?;
     let client_info = verify_server_hello(&mut websocket).await?;
     info!(
         "cid={} got client_info from server: {:?}",
@@ -290,10 +291,7 @@ pub async fn process_control_flow_message(
             let active_stream = active_streams.read().unwrap().get(&stream_id).cloned();
 
             // forward data to it
-            if let Some(mut tx) = active_stream {
-                tx.send(StreamMessage::Data(data.clone())).await?;
-                debug!("sid={} forwarded to local tcp", stream_id.to_string());
-            } else {
+            if active_stream.is_none() {
                 localudp::setup_new_stream(
                     active_streams.clone(),
                     local_port,
@@ -301,6 +299,14 @@ pub async fn process_control_flow_message(
                     stream_id.clone(),
                 )
                 .await;
+            }
+
+            let active_stream = active_streams.read().unwrap().get(&stream_id).cloned();
+            if let Some(mut tx) = active_stream {
+                tx.send(StreamMessage::Data(data.clone())).await?;
+                debug!("sid={} forwarded to local tcp", stream_id.to_string());
+            } else {
+                warn!("active_stream is not yet registered {}", stream_id);
             }
         }
     };

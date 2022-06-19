@@ -5,8 +5,7 @@ use futures::channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use futures::{SinkExt, StreamExt};
 
 use tokio::io::{split, AsyncReadExt, AsyncWriteExt};
-use tokio::io::{ReadHalf, WriteHalf};
-use tokio::net::{TcpStream, UdpSocket};
+use tokio::net::UdpSocket;
 
 use crate::{ActiveStreams, StreamMessage};
 use log::*;
@@ -35,8 +34,6 @@ pub async fn setup_new_stream(
         return;
     }
 
-
-    // let (stream, sink) = split(local_tcp);
     let local_udp = Arc::new(local_udp);
 
     // Read local tcp bytes, send them tunnel
