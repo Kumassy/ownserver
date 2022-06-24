@@ -774,7 +774,7 @@ dependencies = [
 
 [[package]]
 name = "magic_tunnel_client"
-version = "0.1.4"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "futures",
@@ -796,7 +796,7 @@ dependencies = [
 
 [[package]]
 name = "magic_tunnel_lib"
-version = "0.1.1"
+version = "0.3.0"
 dependencies = [
  "base64 0.13.0",
  "rand",
@@ -806,7 +806,7 @@ dependencies = [
 
 [[package]]
 name = "magic_tunnel_server"
-version = "0.1.4"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "base64 0.13.0",
