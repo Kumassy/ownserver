@@ -23,6 +23,9 @@ struct Opt {
 
     #[structopt(long, default_value = "http://localhost:8123/v0/request_token")]
     token_server: String,
+
+    #[structopt(long, default_value = "other")]
+    payload: String,
 }
 
 #[tokio::main]
@@ -31,10 +34,16 @@ async fn main() -> Result<()> {
     let opt = Opt::from_args();
     debug!("{:?}", opt);
 
+    let payload = match opt.payload.as_str() {
+        "udp" => Payload::UDP,
+        _ => Payload::Other,
+    };
+    debug!("{:?}", payload);
+
     let cancellation_token = CancellationToken::new();
 
     let (client_info, handle) =
-        run(&ACTIVE_STREAMS, opt.control_port, opt.local_port, &opt.token_server, Payload::Other, cancellation_token).await?;
+        run(&ACTIVE_STREAMS, opt.control_port, opt.local_port, &opt.token_server, payload, cancellation_token).await?;
     info!("client is running under configuration: {:?}", client_info);
 
 
