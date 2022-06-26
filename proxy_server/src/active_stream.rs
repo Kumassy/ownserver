@@ -16,7 +16,7 @@ impl ActiveStream {
         let (tx, rx) = unbounded();
         (
             ActiveStream {
-                id: StreamId::generate(),
+                id: StreamId::new(),
                 client,
                 tx,
             },
@@ -37,7 +37,7 @@ impl ActiveStreams {
     }
 
     pub fn insert(&self, stream_id: StreamId, active_stream: ActiveStream, addr: SocketAddr) -> Option<ActiveStream> {
-        self.addrs.insert(addr, stream_id.clone());
+        self.addrs.insert(addr, stream_id);
         self.streams.insert(stream_id, active_stream)
     }
 
@@ -87,8 +87,8 @@ mod active_streams_test {
     fn test_insert() {
         let active_streams = ActiveStreams::default();
 
-        let stream_id = StreamId::generate();
-        let client_id = ClientId::generate();
+        let stream_id = StreamId::new();
+        let client_id = ClientId::new();
         let addr = "127.0.0.1:12345".parse().unwrap();
         let (tx, _) = unbounded();
         let client = ConnectedClient {
@@ -101,11 +101,11 @@ mod active_streams_test {
         assert!(active_streams.insert(stream_id, active_stream, addr).is_none());
 
 
-        let stream_id2 = StreamId::generate();
-        let client_id2 = ClientId::generate();
+        let stream_id2 = StreamId::new();
+        let client_id2 = ClientId::new();
         let (tx, _) = unbounded();
         let client = ConnectedClient {
-            id: client_id2.clone(),
+            id: client_id2,
             host: "host".to_string(),
             tx,
         };
@@ -122,8 +122,8 @@ mod active_streams_test {
     fn test_insert_v6() {
         let active_streams = ActiveStreams::default();
 
-        let stream_id = StreamId::generate();
-        let client_id = ClientId::generate();
+        let stream_id = StreamId::new();
+        let client_id = ClientId::new();
         let addr = "[::ffff:127.0.0.1]:64977".parse().unwrap();
         let (tx, _) = unbounded();
         let client = ConnectedClient {
@@ -136,11 +136,11 @@ mod active_streams_test {
         assert!(active_streams.insert(stream_id, active_stream, addr).is_none());
 
 
-        let stream_id2 = StreamId::generate();
-        let client_id2 = ClientId::generate();
+        let stream_id2 = StreamId::new();
+        let client_id2 = ClientId::new();
         let (tx, _) = unbounded();
         let client = ConnectedClient {
-            id: client_id2.clone(),
+            id: client_id2,
             host: "host".to_string(),
             tx,
         };

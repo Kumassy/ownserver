@@ -19,8 +19,7 @@ mod client_localudp_test {
         let (service_addr_tx, service_addr_rx) = oneshot::channel();
         // let (notify_exit_from_fn_tx, notify_exit_from_fn_rx) = oneshot::channel();
         let (tunnel_tx, mut tunnel_rx) = unbounded();
-        let stream_id = StreamId::generate();
-        let stream_id_clone = stream_id.clone();
+        let stream_id = StreamId::new();
         let proxy_client_service = async move {
             let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
             service_addr_tx
@@ -30,7 +29,7 @@ mod client_localudp_test {
             // let (reader, _writer) = split(stream);
             let socket = Arc::new(socket); 
 
-            let _ = process_local_udp(socket, tunnel_tx, stream_id_clone).await;
+            let _ = process_local_udp(socket, tunnel_tx, stream_id).await;
             // notify_exit_from_fn_tx.send(()).unwrap();
         };
         tokio::spawn(proxy_client_service);
@@ -56,7 +55,7 @@ mod client_localudp_test {
         assert_eq!(
             tunnel_rx.next().await,
             Some(ControlPacket::UdpData(
-                stream_id.clone(),
+                stream_id,
                 b"some bytes".to_vec()
             ))
         );
@@ -68,7 +67,7 @@ mod client_localudp_test {
         let (service_addr_tx, service_addr_rx) = oneshot::channel();
         let (mut msg_tx, mut msg_rx) = unbounded();
         let (mut tunnel_tx, tunnel_rx) = unbounded();
-        let stream_id = StreamId::generate();
+        let stream_id = StreamId::new();
         let proxy_client_service = async move {
             let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
             service_addr_tx

@@ -32,7 +32,7 @@ mod server_test {
     macro_rules! assert_control_packet_type_matches {
         ($expr:expr, $pat:pat) => {
             let payload = $expr.next().await.unwrap()?.into_data();
-            let control_packet = ControlPacket::deserialize(&payload)?;
+            let control_packet: ControlPacket = rmp_serde::from_slice(&payload)?;
             assert!(matches!(control_packet, $pat));
         };
     }
@@ -40,7 +40,7 @@ mod server_test {
     macro_rules! assert_control_packet_matches {
         ($expr:expr, $expected:expr) => {
             let payload = $expr.next().await.unwrap()?.into_data();
-            let control_packet = ControlPacket::deserialize(&payload)?;
+            let control_packet: ControlPacket = rmp_serde::from_slice(&payload)?;
             assert_eq!(control_packet, $expected);
         };
     }
@@ -144,15 +144,15 @@ mod server_test {
             1,
             "remote socket should be accepted and registered"
         );
-        let stream_id = active_streams.iter().next().unwrap().id.clone();
+        let stream_id = active_streams.iter().next().unwrap().id;
 
         assert_control_packet_matches!(
             raw_client_ws_stream,
-            ControlPacket::Init(stream_id.clone())
+            ControlPacket::Init(stream_id)
         );
         assert_control_packet_matches!(
             raw_client_ws_stream,
-            ControlPacket::Data(stream_id.clone(), b"some bytes".to_vec())
+            ControlPacket::Data(stream_id, b"some bytes".to_vec())
         );
         Ok(())
     }
@@ -182,10 +182,10 @@ mod server_test {
             1,
             "remote socket should be accepted and registered"
         );
-        let stream_id = active_streams.iter().next().unwrap().id.clone();
+        let stream_id = active_streams.iter().next().unwrap().id;
         raw_client_ws_sink
             .send(Message::binary(
-                ControlPacket::Data(stream_id, b"foobarbaz".to_vec()).serialize(),
+                rmp_serde::to_vec(&ControlPacket::Data(stream_id, b"foobarbaz".to_vec())).unwrap()
             ))
             .await?;
 
@@ -217,7 +217,7 @@ mod server_test {
             1,
             "remote socket should be accepted and registered"
         );
-        let stream_id1 = active_streams.iter().next().unwrap().id.clone();
+        let stream_id1 = active_streams.iter().next().unwrap().id;
 
         let mut remote2 = TcpStream::connect(client_info.remote_addr.clone())
             .await
@@ -234,8 +234,7 @@ mod server_test {
             .filter(|sid| sid.key() != &stream_id1)
             .next()
             .unwrap()
-            .id
-            .clone();
+            .id;
 
         assert_ne!(stream_id1, stream_id2);
 
@@ -251,19 +250,19 @@ mod server_test {
 
         assert_control_packet_matches!(
             raw_client_ws_stream,
-            ControlPacket::Init(stream_id1.clone())
+            ControlPacket::Init(stream_id1)
         );
         assert_control_packet_matches!(
             raw_client_ws_stream,
-            ControlPacket::Init(stream_id2.clone())
+            ControlPacket::Init(stream_id2)
         );
         assert_control_packet_matches!(
             raw_client_ws_stream,
-            ControlPacket::Data(stream_id1.clone(), b"some bytes 1".to_vec())
+            ControlPacket::Data(stream_id1, b"some bytes 1".to_vec())
         );
         assert_control_packet_matches!(
             raw_client_ws_stream,
-            ControlPacket::Data(stream_id2.clone(), b"some bytes 2".to_vec())
+            ControlPacket::Data(stream_id2, b"some bytes 2".to_vec())
         );
         Ok(())
     }
@@ -292,7 +291,7 @@ mod server_test {
             1,
             "remote socket should be accepted and registered"
         );
-        let stream_id1 = active_streams.iter().next().unwrap().id.clone();
+        let stream_id1 = active_streams.iter().next().unwrap().id;
 
         let mut remote2 = TcpStream::connect(client_info.remote_addr.clone())
             .await
@@ -309,19 +308,18 @@ mod server_test {
             .filter(|sid| sid.key() != &stream_id1)
             .next()
             .unwrap()
-            .id
-            .clone();
+            .id;
 
         assert_ne!(stream_id1, stream_id2);
 
         raw_client_ws_sink
             .send(Message::binary(
-                ControlPacket::Data(stream_id1, b"some message 1".to_vec()).serialize(),
+                rmp_serde::to_vec(&ControlPacket::Data(stream_id1, b"some message 1".to_vec())).unwrap()
             ))
             .await?;
         raw_client_ws_sink
             .send(Message::binary(
-                ControlPacket::Data(stream_id2, b"some message 2".to_vec()).serialize(),
+                rmp_serde::to_vec(&ControlPacket::Data(stream_id2, b"some message 2".to_vec())).unwrap()
             ))
             .await?;
 

@@ -117,9 +117,9 @@ async fn try_client_handshake(
             let mut rng = StdRng::from_entropy();
             match alloc.lock().await.allocate_port(&mut rng) {
                 Ok(port) => {
-                    let client_id = ClientId::generate();
+                    let client_id = ClientId::new();
                     let server_hello = ServerHello::Success {
-                        client_id: client_id.clone(),
+                        client_id,
                         remote_addr: format!("{}:{}", host, port),
                     };
 
@@ -334,12 +334,12 @@ async fn handle_new_connection(
             }
         };
 
-    remote_cancellers.insert(client_id.clone(), canceller);
+    remote_cancellers.insert(client_id, canceller);
     tracing::debug!(cid = %client_id, "register remote_cancellers len={}", remote_cancellers.len());
 
     let (tx, rx) = unbounded::<ControlPacket>();
     let client = ConnectedClient {
-        id: client_id.clone(),
+        id: client_id,
         host,
         tx,
     };
@@ -350,7 +350,7 @@ async fn handle_new_connection(
 
     let client_clone = client.clone();
     let remote_cancellers_clone = remote_cancellers.clone();
-    let client_id_clone = client_id.clone();
+    let client_id_clone = client_id;
     tokio::spawn(
         async move {
             let client = client_clone;
@@ -386,7 +386,7 @@ pub async fn send_client_stream_init(mut stream: ActiveStream) -> Result<(), Sen
     stream
         .client
         .tx
-        .send(ControlPacket::Init(stream.id.clone()))
+        .send(ControlPacket::Init(stream.id))
         .await
 }
 
@@ -419,7 +419,7 @@ where
             }
         };
 
-        let packet = match ControlPacket::deserialize(&message) {
+        let packet: ControlPacket = match rmp_serde::from_slice(&message) {
             Ok(packet) => packet,
             Err(e) => {
                 tracing::error!(error = ?e, "invalid data packet");
@@ -430,15 +430,15 @@ where
         tracing::trace!(cid = %client.id, ?packet, "got control packet from client");
         let (stream_id, message) = match packet {
             ControlPacket::Data(stream_id, data) => {
-                tracing::trace!(cid = %client.id, sid = %stream_id.to_string(), "forwarding to stream: {}", data.len());
+                tracing::trace!(cid = %client.id, sid = %stream_id, "forwarding to stream: {}", data.len());
                 (stream_id, StreamMessage::Data(data))
             }
             ControlPacket::Refused(stream_id) => {
-                tracing::debug!(cid = %client.id, sid = %stream_id.to_string(), "tunnel says: refused");
+                tracing::debug!(cid = %client.id, sid = %stream_id, "tunnel says: refused");
                 (stream_id, StreamMessage::TunnelRefused)
             }
             ControlPacket::Init(stream_id) | ControlPacket::End(stream_id) => {
-                tracing::error!(cid = %client.id, sid = %stream_id.to_string(), "invalid protocol control::init message");
+                tracing::error!(cid = %client.id, sid = %stream_id, "invalid protocol control::init message");
                 continue;
             }
             ControlPacket::Ping => {
@@ -447,7 +447,7 @@ where
                 continue;
             }
             ControlPacket::UdpData(stream_id, data) => {
-                tracing::trace!(cid = %client.id, sid = %stream_id.to_string(), "forwarding udp to stream: {}", data.len());
+                tracing::trace!(cid = %client.id, sid = %stream_id, "forwarding udp to stream: {}", data.len());
                 (stream_id, StreamMessage::Data(data))
             }
         };
@@ -455,9 +455,9 @@ where
         let stream = active_streams.get(&stream_id).map(|s| s.value().clone());
 
         if let Some(mut stream) = stream {
-            tracing::trace!(cid = %client.id, sid = %stream_id.to_string(), "forward message to active stream");
+            tracing::trace!(cid = %client.id, sid = %stream_id, "forward message to active stream");
             let _ = stream.tx.send(message).await.map_err(|error| {
-                tracing::debug!(cid = %client.id, sid = %stream_id.to_string(), error = ?error, "Failed to send to stream tx");
+                tracing::debug!(cid = %client.id, sid = %stream_id, error = ?error, "Failed to send to stream tx");
             });
         }
     }
@@ -483,7 +483,15 @@ where
     loop {
         match queue.next().await {
             Some(packet) => {
-                let result = sink.send(Message::binary(packet.serialize())).await;
+                let data = match rmp_serde::to_vec(&packet) {
+                    Ok(data) => data,
+                    Err(error) => {
+                        tracing::warn!(cid = %client.id, error = ?error, "failed to encode message");
+                        return client;
+                    }
+                };
+
+                let result = sink.send(Message::binary(data)).await;
                 if let Err(error) = result {
                     tracing::debug!(cid = %client.id, error = ?error, "client disconnected: aborting");
                     return client;
@@ -648,20 +656,20 @@ mod process_client_messages_test {
 
         let (tx, _rx) = unbounded::<ControlPacket>();
         let client = ConnectedClient {
-            id: ClientId::generate(),
+            id: ClientId::new(),
             host: "foobar".into(),
             tx,
         };
         let addr = "127.0.0.1:12345".parse().unwrap();
 
         let (active_stream, queue_rx) = ActiveStream::new(client.clone());
-        let stream_id = active_stream.id.clone();
+        let stream_id = active_stream.id;
         if is_add_stream_to_streams {
-            active_streams.insert(stream_id.clone(), active_stream.clone(), addr);
+            active_streams.insert(stream_id, active_stream.clone(), addr);
         }
 
         for message in messages {
-            let msg = message(stream_id.clone());
+            let msg = message(stream_id);
             stream_tx.send(Ok(msg)).await?;
         }
         stream_tx.close_channel();
@@ -679,7 +687,8 @@ mod process_client_messages_test {
     {
         let message = |stream_id| {
             let packet = ControlPacket::Data(stream_id, b"foobarbaz".to_vec());
-            Message::binary(packet.serialize())
+            let data = rmp_serde::to_vec(&packet).unwrap();
+            Message::binary(data)
         };
         let mut queue_rx =
             send_messages_to_client_and_process_client_message(false, vec![Box::new(message)])
@@ -693,7 +702,8 @@ mod process_client_messages_test {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let message = |stream_id| {
             let packet = ControlPacket::Data(stream_id, b"foobarbaz".to_vec());
-            Message::binary(packet.serialize())
+            let data = rmp_serde::to_vec(&packet).unwrap();
+            Message::binary(data)
         };
         let mut queue_rx =
             send_messages_to_client_and_process_client_message(true, vec![Box::new(message)])
@@ -713,7 +723,8 @@ mod process_client_messages_test {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let message = |stream_id| {
             let packet = ControlPacket::Refused(stream_id);
-            Message::binary(packet.serialize())
+            let data = rmp_serde::to_vec(&packet).unwrap();
+            Message::binary(data)
         };
         let mut queue_rx =
             send_messages_to_client_and_process_client_message(true, vec![Box::new(message)])
@@ -746,19 +757,19 @@ mod tunnel_client_test {
         packets: Vec<Box<dyn Fn(StreamId) -> ControlPacket>>,
     ) -> Result<(StreamId, UnboundedReceiver<Message>), Box<dyn std::error::Error>> {
         let (tx, _rx) = unbounded::<ControlPacket>();
-        let client_id = ClientId::generate();
+        let client_id = ClientId::new();
         let client = ConnectedClient {
-            id: client_id.clone(),
+            id: client_id,
             host: "foobar".into(),
             tx,
         };
 
         let (ws_tx, ws_rx) = unbounded::<Message>();
         let (mut control_tx, control_rx) = unbounded::<ControlPacket>();
-        let stream_id = StreamId::generate();
+        let stream_id = StreamId::new();
 
         for packet in packets {
-            let pkt = packet(stream_id.clone());
+            let pkt = packet(stream_id);
             control_tx.send(pkt).await?;
         }
         control_tx.close_channel();
@@ -775,8 +786,9 @@ mod tunnel_client_test {
             send_control_packet_and_forward_to_websocket(vec![Box::new(packet)]).await?;
 
         let payload = ws_rx.next().await.unwrap().into_bytes();
-        let packet = ControlPacket::deserialize(&payload)?;
-        assert_eq!(packet, ControlPacket::Init(stream_id.clone()));
+
+        let packet: ControlPacket = rmp_serde::from_slice(&payload)?;
+        assert_eq!(packet, ControlPacket::Init(stream_id));
         assert_eq!(ws_rx.next().await, None);
 
         Ok(())

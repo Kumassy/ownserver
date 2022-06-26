@@ -34,7 +34,7 @@ mod server_udp_test {
     macro_rules! assert_control_packet_type_matches {
         ($expr:expr, $pat:pat) => {
             let payload = $expr.next().await.unwrap()?.into_data();
-            let control_packet = ControlPacket::deserialize(&payload)?;
+            let control_packet: ControlPacket = rmp_serde::from_slice(&payload)?;
             assert!(matches!(control_packet, $pat));
         };
     }
@@ -42,7 +42,7 @@ mod server_udp_test {
     macro_rules! assert_control_packet_matches {
         ($expr:expr, $expected:expr) => {
             let payload = $expr.next().await.unwrap()?.into_data();
-            let control_packet = ControlPacket::deserialize(&payload)?;
+            let control_packet: ControlPacket = rmp_serde::from_slice(&payload)?;
             assert_eq!(control_packet, $expected);
         };
     }
@@ -146,11 +146,11 @@ mod server_udp_test {
             1,
             "remote socket should be accepted and registered"
         );
-        let stream_id = active_streams.iter().next().unwrap().id.clone();
+        let stream_id = active_streams.iter().next().unwrap().id;
 
         assert_control_packet_matches!(
             raw_client_ws_stream,
-            ControlPacket::UdpData(stream_id.clone(), b"some bytes".to_vec())
+            ControlPacket::UdpData(stream_id, b"some bytes".to_vec())
         );
         Ok(())
     }
@@ -186,10 +186,10 @@ mod server_udp_test {
             1,
             "remote socket should be accepted and registered"
         );
-        let stream_id = active_streams.iter().next().unwrap().id.clone();
+        let stream_id = active_streams.iter().next().unwrap().id;
         raw_client_ws_sink
             .send(Message::binary(
-                ControlPacket::UdpData(stream_id, b"foobarbaz".to_vec()).serialize(),
+                rmp_serde::to_vec(&ControlPacket::UdpData(stream_id, b"foobarbaz".to_vec())).unwrap()
             ))
             .await?;
 
@@ -243,16 +243,16 @@ mod server_udp_test {
             "remote socket should be accepted and registered"
         );
 
-        let stream_id1 = active_streams.find_by_addr(&remote1.local_addr().expect("failed to get local_addr")).expect("unable to find active_stream by addr").id.clone();
-        let stream_id2 = active_streams.find_by_addr(&remote2.local_addr().expect("failed to get local_addr")).expect("unable to find active_stream by addr").id.clone();
+        let stream_id1 = active_streams.find_by_addr(&remote1.local_addr().expect("failed to get local_addr")).expect("unable to find active_stream by addr").id;
+        let stream_id2 = active_streams.find_by_addr(&remote2.local_addr().expect("failed to get local_addr")).expect("unable to find active_stream by addr").id;
 
         assert_control_packet_matches!(
             raw_client_ws_stream,
-            ControlPacket::UdpData(stream_id1.clone(), b"some bytes 1".to_vec())
+            ControlPacket::UdpData(stream_id1, b"some bytes 1".to_vec())
         );
         assert_control_packet_matches!(
             raw_client_ws_stream,
-            ControlPacket::UdpData(stream_id2.clone(), b"some bytes 2".to_vec())
+            ControlPacket::UdpData(stream_id2, b"some bytes 2".to_vec())
         );
         Ok(())
     }
@@ -303,17 +303,17 @@ mod server_udp_test {
             "remote socket should be accepted and registered"
         );
 
-        let stream_id1 = active_streams.find_by_addr(&remote1.local_addr().expect("failed to get local_addr")).expect("unable to find active_stream by addr").id.clone();
-        let stream_id2 = active_streams.find_by_addr(&remote2.local_addr().expect("failed to get local_addr")).expect("unable to find active_stream by addr").id.clone();
+        let stream_id1 = active_streams.find_by_addr(&remote1.local_addr().expect("failed to get local_addr")).expect("unable to find active_stream by addr").id;
+        let stream_id2 = active_streams.find_by_addr(&remote2.local_addr().expect("failed to get local_addr")).expect("unable to find active_stream by addr").id;
 
         raw_client_ws_sink
             .send(Message::binary(
-                ControlPacket::UdpData(stream_id1, b"some message 1".to_vec()).serialize(),
+                rmp_serde::to_vec(&ControlPacket::UdpData(stream_id1, b"some message 1".to_vec())).unwrap()
             ))
             .await?;
         raw_client_ws_sink
             .send(Message::binary(
-                ControlPacket::UdpData(stream_id2, b"some message 2".to_vec()).serialize(),
+                rmp_serde::to_vec(&ControlPacket::UdpData(stream_id2, b"some message 2".to_vec())).unwrap()
             ))
             .await?;
 

@@ -62,7 +62,7 @@ mod client_process_control_flow_message_test {
         };
         tokio::spawn(server);
 
-        let stream_id = StreamId::generate();
+        let stream_id = StreamId::new();
         let local_port = con_rx.await.expect("failed to get local port");
         let (tunnel_tx, tunnel_rx) = unbounded::<ControlPacket>();
 
@@ -101,7 +101,7 @@ mod client_process_control_flow_message_test {
         let _ = process_control_flow_message(
             active_streams.clone(),
             tunnel_tx,
-            ControlPacket::Init(stream_id.clone()).serialize(),
+            rmp_serde::to_vec(&ControlPacket::Init(stream_id)).unwrap(),
             local_port,
         )
         .await
@@ -116,7 +116,7 @@ mod client_process_control_flow_message_test {
         let _ = process_control_flow_message(
             active_streams.clone(),
             tunnel_tx,
-            ControlPacket::Ping.serialize(),
+            rmp_serde::to_vec(&ControlPacket::Ping).unwrap(),
             local_port,
         )
         .await
@@ -135,7 +135,7 @@ mod client_process_control_flow_message_test {
         let _ = process_control_flow_message(
             active_streams.clone(),
             tunnel_tx,
-            ControlPacket::Refused(stream_id).serialize(),
+            rmp_serde::to_vec(&ControlPacket::Refused(stream_id)).unwrap(),
             local_port,
         )
         .await
@@ -150,7 +150,7 @@ mod client_process_control_flow_message_test {
         let _ = process_control_flow_message(
             active_streams.clone(),
             tunnel_tx.clone(),
-            ControlPacket::Init(stream_id.clone()).serialize(),
+            rmp_serde::to_vec(&ControlPacket::Init(stream_id)).unwrap(),
             local_port,
         )
         .await
@@ -161,7 +161,7 @@ mod client_process_control_flow_message_test {
         let _ = process_control_flow_message(
             active_streams.clone(),
             tunnel_tx,
-            ControlPacket::End(stream_id.clone()).serialize(),
+            rmp_serde::to_vec(&ControlPacket::End(stream_id)).unwrap(),
             local_port,
         )
         .await
@@ -182,7 +182,7 @@ mod client_process_control_flow_message_test {
         let _ = process_control_flow_message(
             active_streams.clone(),
             tunnel_tx.clone(),
-            ControlPacket::Init(stream_id.clone()).serialize(),
+            rmp_serde::to_vec(&ControlPacket::Init(stream_id)).unwrap(),
             local_port,
         )
         .await
@@ -192,7 +192,7 @@ mod client_process_control_flow_message_test {
         let _ = process_control_flow_message(
             active_streams.clone(),
             tunnel_tx,
-            ControlPacket::Data(stream_id.clone(), b"some message 1".to_vec()).serialize(),
+            rmp_serde::to_vec(&ControlPacket::Data(stream_id, b"some message 1".to_vec())).unwrap(),
             local_port,
         )
         .await
@@ -210,7 +210,7 @@ mod client_process_control_flow_message_test {
         let _ = process_control_flow_message(
             active_streams.clone(),
             tunnel_tx,
-            ControlPacket::Data(stream_id.clone(), b"some message 2".to_vec()).serialize(),
+            rmp_serde::to_vec(&ControlPacket::Data(stream_id, b"some message 2".to_vec())).unwrap(),
             25565,
         )
         .await
@@ -219,7 +219,7 @@ mod client_process_control_flow_message_test {
         // connection refused should be sent to proxy server
         assert_eq!(
             tunnel_rx.next().await,
-            Some(ControlPacket::Refused(stream_id.clone()))
+            Some(ControlPacket::Refused(stream_id))
         );
     }
 }
@@ -261,9 +261,9 @@ mod client_verify_server_hello_test {
     async fn it_accept_server_hello() -> Result<(), Box<dyn std::error::Error>> {
         let (mut tx, mut rx) = mpsc::unbounded();
 
-        let cid = ClientId::generate();
+        let cid = ClientId::new();
         let hello = serde_json::to_vec(&ServerHello::Success {
-            client_id: cid.clone(),
+            client_id: cid,
             remote_addr: "foo.bar.local:256".to_string(),
         })
         .unwrap_or_default();

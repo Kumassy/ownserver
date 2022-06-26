@@ -60,7 +60,7 @@ impl Connections {
     pub fn get(connection: &Self, client_id: &ClientId) -> Option<ConnectedClient> {
         connection
             .clients
-            .get(&client_id)
+            .get(client_id)
             .map(|c| c.value().clone())
     }
 
@@ -69,7 +69,7 @@ impl Connections {
     }
 
     pub fn add(connection: &Self, client: ConnectedClient) {
-        connection.clients.insert(client.id.clone(), client.clone());
+        connection.clients.insert(client.id, client.clone());
         connection.hosts.insert(client.host.clone(), client);
         gauge!("magic_tunnel_server.control.connections", connection.clients.len() as f64);
     }
@@ -96,9 +96,9 @@ mod tests {
     fn setup() -> (Connections, ConnectedClient, ClientId) {
         let conn = Connections::new();
         let (tx, _rx) = unbounded::<ControlPacket>();
-        let client_id = ClientId::generate();
+        let client_id = ClientId::new();
         let client = ConnectedClient {
-            id: client_id.clone(),
+            id: client_id,
             host: "foobar".into(),
             tx,
         };
