@@ -22,10 +22,12 @@ use chrono::Duration as CDuration;
 use tokio_util::sync::CancellationToken;
 
 #[cfg(test)]
-mod server_test {
+mod server_udp_test {
     use super::*;
     use magic_tunnel_lib::Payload;
     use serial_test::serial;
+    use tokio::net::UdpSocket;
+    use tracing::info;
 
     static CONFIG: OnceCell<Config> = OnceCell::new();
 
@@ -49,7 +51,7 @@ mod server_test {
         ($read:expr, $expected:expr) => {
             let mut buf = [0; 4 * 1024];
             let n = $read
-                .read(&mut buf)
+                .recv(&mut buf)
                 .await
                 .expect("failed to read data from socket");
             let data = buf[..n].to_vec();
@@ -109,7 +111,7 @@ mod server_test {
         let url = Url::parse(&format!("wss://localhost:{}/tunnel", control_port))?;
         let (mut websocket, _) = connect_async(url).await.expect("failed to connect");
 
-        send_client_hello(&mut websocket, token, Payload::Other).await?;
+        send_client_hello(&mut websocket, token, Payload::UDP).await?;
         let client_info = verify_server_hello(&mut websocket).await?;
 
         Ok((websocket, ACTIVE_STREAMS.clone(), client_info))
@@ -128,16 +130,16 @@ mod server_test {
             "active_streams should be empty until remote connection established"
         );
 
-        // access remote port
-        let mut remote = TcpStream::connect(client_info.remote_addr)
-            .await
-            .expect("Failed to connect to remote port");
+        let remote = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        remote.connect(client_info.remote_addr).await.unwrap();
         // wait until remote access has registered to ACTIVE_STREAMS
         tokio::time::sleep(Duration::from_secs(3)).await;
+
         remote
-            .write_all(b"some bytes")
+            .send(b"some bytes")
             .await
             .expect("failed to send client hello");
+        tokio::time::sleep(Duration::from_secs(3)).await;
 
         assert_eq!(
             active_streams.iter().count(),
@@ -148,11 +150,7 @@ mod server_test {
 
         assert_control_packet_matches!(
             raw_client_ws_stream,
-            ControlPacket::Init(stream_id.clone())
-        );
-        assert_control_packet_matches!(
-            raw_client_ws_stream,
-            ControlPacket::Data(stream_id.clone(), b"some bytes".to_vec())
+            ControlPacket::UdpData(stream_id.clone(), b"some bytes".to_vec())
         );
         Ok(())
     }
@@ -171,10 +169,16 @@ mod server_test {
         );
 
         // access remote port
-        let mut remote = TcpStream::connect(client_info.remote_addr)
-            .await
-            .expect("Failed to connect to remote port");
+        let remote = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+            remote.connect(client_info.remote_addr).await.unwrap();
         // wait until remote access has registered to ACTIVE_STREAMS
+        tokio::time::sleep(Duration::from_secs(3)).await;
+
+        // send something so that remote connection registered to active_streams
+        remote
+            .send(b"some bytes")
+            .await
+            .expect("failed to send client hello");
         tokio::time::sleep(Duration::from_secs(3)).await;
 
         assert_eq!(
@@ -185,7 +189,7 @@ mod server_test {
         let stream_id = active_streams.iter().next().unwrap().id.clone();
         raw_client_ws_sink
             .send(Message::binary(
-                ControlPacket::Data(stream_id, b"foobarbaz".to_vec()).serialize(),
+                ControlPacket::UdpData(stream_id, b"foobarbaz".to_vec()).serialize(),
             ))
             .await?;
 
@@ -207,63 +211,48 @@ mod server_test {
         );
 
         // access remote port
-        let mut remote1 = TcpStream::connect(client_info.remote_addr.clone())
-            .await
-            .expect("Failed to connect to remote port");
+        let remote1 = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+            remote1.connect(client_info.remote_addr.clone()).await.unwrap();
         // wait until remote access has registered to ACTIVE_STREAMS
+        tokio::time::sleep(Duration::from_secs(3)).await;
+
+        let remote2 = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        remote2.connect(client_info.remote_addr.clone()).await.unwrap();
+        // wait until remote access has registered to ACTIVE_STREAMS
+        tokio::time::sleep(Duration::from_secs(3)).await;
+
+        remote1
+            .send(b"some bytes 1")
+            .await
+            .expect("failed to send client hello");
         tokio::time::sleep(Duration::from_secs(3)).await;
         assert_eq!(
             active_streams.iter().count(),
             1,
-            "remote socket should be accepted and registered"
+            "remote socket should be registered once remote send any data"
         );
-        let stream_id1 = active_streams.iter().next().unwrap().id.clone();
 
-        let mut remote2 = TcpStream::connect(client_info.remote_addr.clone())
+        remote2
+            .send(b"some bytes 2")
             .await
-            .expect("Failed to connect to remote port");
-        // wait until remote access has registered to ACTIVE_STREAMS
+            .expect("failed to send client hello");
         tokio::time::sleep(Duration::from_secs(3)).await;
         assert_eq!(
             active_streams.iter().count(),
             2,
             "remote socket should be accepted and registered"
         );
-        let stream_id2 = active_streams
-            .iter()
-            .filter(|sid| sid.key() != &stream_id1)
-            .next()
-            .unwrap()
-            .id
-            .clone();
 
-        assert_ne!(stream_id1, stream_id2);
-
-        remote1
-            .write_all(b"some bytes 1")
-            .await
-            .expect("failed to send client hello");
-        tokio::time::sleep(Duration::from_secs(3)).await;
-        remote2
-            .write_all(b"some bytes 2")
-            .await
-            .expect("failed to send client hello");
+        let stream_id1 = active_streams.find_by_addr(&remote1.local_addr().expect("failed to get local_addr")).expect("unable to find active_stream by addr").id.clone();
+        let stream_id2 = active_streams.find_by_addr(&remote2.local_addr().expect("failed to get local_addr")).expect("unable to find active_stream by addr").id.clone();
 
         assert_control_packet_matches!(
             raw_client_ws_stream,
-            ControlPacket::Init(stream_id1.clone())
+            ControlPacket::UdpData(stream_id1.clone(), b"some bytes 1".to_vec())
         );
         assert_control_packet_matches!(
             raw_client_ws_stream,
-            ControlPacket::Init(stream_id2.clone())
-        );
-        assert_control_packet_matches!(
-            raw_client_ws_stream,
-            ControlPacket::Data(stream_id1.clone(), b"some bytes 1".to_vec())
-        );
-        assert_control_packet_matches!(
-            raw_client_ws_stream,
-            ControlPacket::Data(stream_id2.clone(), b"some bytes 2".to_vec())
+            ControlPacket::UdpData(stream_id2.clone(), b"some bytes 2".to_vec())
         );
         Ok(())
     }
@@ -282,46 +271,49 @@ mod server_test {
         );
 
         // access remote port
-        let mut remote1 = TcpStream::connect(client_info.remote_addr.clone())
-            .await
-            .expect("Failed to connect to remote port");
+        let remote1 = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+            remote1.connect(client_info.remote_addr.clone()).await.unwrap();
         // wait until remote access has registered to ACTIVE_STREAMS
+        tokio::time::sleep(Duration::from_secs(3)).await;
+
+        let remote2 = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        remote2.connect(client_info.remote_addr.clone()).await.unwrap();
+        // wait until remote access has registered to ACTIVE_STREAMS
+        tokio::time::sleep(Duration::from_secs(3)).await;
+
+        remote1
+            .send(b"some bytes 1")
+            .await
+            .expect("failed to send client hello");
         tokio::time::sleep(Duration::from_secs(3)).await;
         assert_eq!(
             active_streams.iter().count(),
             1,
-            "remote socket should be accepted and registered"
+            "remote socket should be registered once remote send any data"
         );
-        let stream_id1 = active_streams.iter().next().unwrap().id.clone();
 
-        let mut remote2 = TcpStream::connect(client_info.remote_addr.clone())
+        remote2
+            .send(b"some bytes 2")
             .await
-            .expect("Failed to connect to remote port");
-        // wait until remote access has registered to ACTIVE_STREAMS
+            .expect("failed to send client hello");
         tokio::time::sleep(Duration::from_secs(3)).await;
         assert_eq!(
             active_streams.iter().count(),
             2,
             "remote socket should be accepted and registered"
         );
-        let stream_id2 = active_streams
-            .iter()
-            .filter(|sid| sid.key() != &stream_id1)
-            .next()
-            .unwrap()
-            .id
-            .clone();
 
-        assert_ne!(stream_id1, stream_id2);
+        let stream_id1 = active_streams.find_by_addr(&remote1.local_addr().expect("failed to get local_addr")).expect("unable to find active_stream by addr").id.clone();
+        let stream_id2 = active_streams.find_by_addr(&remote2.local_addr().expect("failed to get local_addr")).expect("unable to find active_stream by addr").id.clone();
 
         raw_client_ws_sink
             .send(Message::binary(
-                ControlPacket::Data(stream_id1, b"some message 1".to_vec()).serialize(),
+                ControlPacket::UdpData(stream_id1, b"some message 1".to_vec()).serialize(),
             ))
             .await?;
         raw_client_ws_sink
             .send(Message::binary(
-                ControlPacket::Data(stream_id2, b"some message 2".to_vec()).serialize(),
+                ControlPacket::UdpData(stream_id2, b"some message 2".to_vec()).serialize(),
             ))
             .await?;
 

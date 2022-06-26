@@ -229,13 +229,13 @@ mod client_send_client_hello_test {
     use super::*;
     use futures::{channel::mpsc, StreamExt};
     use magic_tunnel_client::proxy_client::send_client_hello;
-    use magic_tunnel_lib::ClientHello;
+    use magic_tunnel_lib::{ClientHello, Payload};
 
     #[tokio::test]
     async fn it_sends_client_hello() -> Result<(), Box<dyn std::error::Error>> {
         let (mut tx, mut rx) = mpsc::unbounded();
 
-        send_client_hello(&mut tx, "footoken".to_string())
+        send_client_hello(&mut tx, "footoken".to_string(), Payload::Other)
             .await
             .expect("failed to write to websocket");
 

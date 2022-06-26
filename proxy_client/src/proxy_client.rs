@@ -14,6 +14,7 @@ use url::Url;
 
 use crate::error::Error;
 use crate::local;
+use crate::localudp;
 use crate::{ActiveStreams, StreamMessage};
 use magic_tunnel_lib::{
     ClientHello, ClientId, ControlPacket, Payload, ServerHello, StreamId, CLIENT_HELLO_VERSION,
@@ -24,6 +25,7 @@ pub async fn run(
     control_port: u16,
     local_port: u16,
     token_server: &str,
+    payload: Payload,
     cancellation_token: CancellationToken,
 ) -> Result<(ClientInfo, JoinHandle<Result<(), Error>>)> {
     let (token, host) = fetch_token(token_server).await?;
@@ -33,7 +35,7 @@ pub async fn run(
     let (mut websocket, _) = connect_async(url).await.map_err(|_| Error::ServerDown)?;
     info!("WebSocket handshake has been successfully completed");
 
-    send_client_hello(&mut websocket, token).await?;
+    send_client_hello(&mut websocket, token, payload).await?;
     let client_info = verify_server_hello(&mut websocket).await?;
     info!(
         "cid={} got client_info from server: {:?}",
@@ -128,14 +130,14 @@ pub async fn run(
     Ok((client_info, handle))
 }
 
-pub async fn send_client_hello<T>(websocket: &mut T, token: String) -> Result<(), T::Error>
+pub async fn send_client_hello<T>(websocket: &mut T, token: String, payload: Payload) -> Result<(), T::Error>
 where
     T: Unpin + Sink<Message>,
 {
     let hello = ClientHello {
         version: CLIENT_HELLO_VERSION,
         token,
-        payload: Payload::Other,
+        payload,
     };
     debug!("Sent client hello: {:?}", hello);
     let hello_data = serde_json::to_vec(&hello).unwrap_or_default();
@@ -281,6 +283,30 @@ pub async fn process_control_flow_message(
                 let _ = tunnel_tx
                     .send(ControlPacket::Refused(stream_id.clone()))
                     .await?;
+            }
+        }
+        ControlPacket::UdpData(stream_id, data) => {
+            debug!("sid={} new data: {}", stream_id.to_string(), data.len());
+            // find the right stream
+            let active_stream = active_streams.read().unwrap().get(&stream_id).cloned();
+
+            // forward data to it
+            if active_stream.is_none() {
+                localudp::setup_new_stream(
+                    active_streams.clone(),
+                    local_port,
+                    tunnel_tx.clone(),
+                    stream_id.clone(),
+                )
+                .await;
+            }
+
+            let active_stream = active_streams.read().unwrap().get(&stream_id).cloned();
+            if let Some(mut tx) = active_stream {
+                tx.send(StreamMessage::Data(data.clone())).await?;
+                debug!("sid={} forwarded to local tcp", stream_id.to_string());
+            } else {
+                warn!("active_stream is not yet registered {}", stream_id);
             }
         }
     };

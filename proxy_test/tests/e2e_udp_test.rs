@@ -26,34 +26,19 @@ use tokio_util::sync::CancellationToken;
 use once_cell::sync::OnceCell;
 
 #[cfg(test)]
-mod e2e_test {
+mod e2e_udp_test {
     use super::*;
     use magic_tunnel_lib::Payload;
     use serial_test::serial;
+    use tokio::net::UdpSocket;
 
     static CONFIG: OnceCell<Config> = OnceCell::new();
-
-    // macro_rules! assert_control_packet_type_matches {
-    //     ($expr:expr, $pat:pat) => {
-    //         let payload = $expr.next().await.unwrap()?.into_data();
-    //         let control_packet = ControlPacket::deserialize(&payload)?;
-    //         assert!(matches!(control_packet, $pat));
-    //     }
-    // }
-
-    // macro_rules! assert_control_packet_matches {
-    //     ($expr:expr, $expected:expr) => {
-    //         let payload = $expr.next().await.unwrap()?.into_data();
-    //         let control_packet = ControlPacket::deserialize(&payload)?;
-    //         assert_eq!(control_packet, $expected);
-    //     }
-    // }
 
     macro_rules! assert_socket_bytes_matches {
         ($read:expr, $expected:expr) => {
             let mut buf = [0; 4 * 1024];
             let n = $read
-                .read(&mut buf)
+                .recv(&mut buf)
                 .await
                 .expect("failed to read data from socket");
             let data = buf[..n].to_vec();
@@ -124,7 +109,7 @@ mod e2e_test {
         let (tx, rx) = oneshot::channel();
         tokio::spawn(async move {
             let (client_info, handle) =
-                proxy_client::run(&ACTIVE_STREAMS_CLIENT, control_port, local_port, "http://127.0.0.1:8888/v0/request_token", Payload::Other, cancellation_token)
+                proxy_client::run(&ACTIVE_STREAMS_CLIENT, control_port, local_port, "http://127.0.0.1:8888/v0/request_token", Payload::UDP, cancellation_token)
                     .await
                     .expect("failed to launch proxy_client");
             tx.send(client_info).unwrap();
@@ -137,33 +122,29 @@ mod e2e_test {
 
     async fn launch_local_server(local_port: u16) {
         let local_server = async move {
-            let listener = TcpListener::bind(format!("127.0.0.1:{}", local_port))
-                .await
-                .unwrap();
+            let socket = UdpSocket::bind(format!("127.0.0.1:{}", local_port)).await.unwrap();
 
-            loop {
-                let (mut socket, _) = listener.accept().await.expect("No connections to accept");
-
-                tokio::spawn(async move {
-                    loop {
-                        let mut buf = [0; 4 * 1024];
-                        let n = socket
-                            .read(&mut buf)
-                            .await
-                            .expect("failed to read data from socket");
-                        if n == 0 {
-                            return;
-                        }
-
-                        let mut msg = b"hello, ".to_vec();
-                        msg.append(&mut buf[..n].to_vec());
-                        socket
-                            .write_all(&msg)
-                            .await
-                            .expect("failed to write packet data to local tcp socket");
+            tokio::spawn(async move {
+                loop {
+                    let mut buf = [0; 4 * 1024];
+                    let (n, addr) = socket
+                        .recv_from(&mut buf)
+                        .await
+                        .expect("failed to read data from socket");
+                    if n == 0 {
+                        return;
                     }
-                });
-            }
+
+
+                    let mut msg = b"hello, ".to_vec();
+                    msg.append(&mut buf[..n].to_vec());
+                    tracing::info!("send data to remote socket: {:?}", msg);
+                    socket
+                        .send_to(&msg, addr)
+                        .await
+                        .expect("failed to write packet data to local udp socket");
+                }
+            });
         };
         tokio::spawn(local_server);
     }
@@ -199,12 +180,14 @@ mod e2e_test {
         );
 
         // access remote port
-        let mut remote = TcpStream::connect(remote_addr)
-            .await
-            .expect("Failed to connect to remote port");
+        let remote = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+            remote.connect(remote_addr).await.unwrap();
         // wait until remote access has registered to ACTIVE_STREAMS
         tokio::time::sleep(Duration::from_secs(3)).await;
 
+
+        remote.send(&b"foobar".to_vec()).await?;
+        tokio::time::sleep(Duration::from_secs(3)).await;
         assert_eq!(
             active_streams_server.iter().count(),
             1,
@@ -216,7 +199,6 @@ mod e2e_test {
             "remote socket should be forwared through control packet"
         );
 
-        remote.write_all(&b"foobar".to_vec()).await?;
         assert_socket_bytes_matches!(remote, b"hello, foobar");
 
         Ok(())
@@ -253,14 +235,17 @@ mod e2e_test {
         );
 
         // access remote port
-        let mut remote = TcpStream::connect(remote_addr.clone())
-            .await
-            .expect("Failed to connect to remote port");
-        let mut remote2 = TcpStream::connect(remote_addr.clone())
-            .await
-            .expect("Failed to connect to remote port");
+        let remote1 = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        remote1.connect(remote_addr.clone()).await.unwrap();
+        let remote2 = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        remote2.connect(remote_addr).await.unwrap();
         // wait until remote access has registered to ACTIVE_STREAMS
         tokio::time::sleep(Duration::from_secs(3)).await;
+
+        remote1.send(&b"foobar".to_vec()).await?;
+        remote2.send(&b"fugapiyo".to_vec()).await?;
+        tokio::time::sleep(Duration::from_secs(3)).await;
+
 
         assert_eq!(
             active_streams_server.iter().count(),
@@ -273,149 +258,9 @@ mod e2e_test {
             "remote socket should be forwared through control packet"
         );
 
-        remote.write_all(&b"foobar".to_vec()).await?;
-        assert_socket_bytes_matches!(remote, b"hello, foobar");
 
-        remote2.write_all(&b"fugapiyo".to_vec()).await?;
+        assert_socket_bytes_matches!(remote1, b"hello, foobar");
         assert_socket_bytes_matches!(remote2, b"hello, fugapiyo");
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    #[serial]
-    async fn refuse_remote_traffic_when_local_server_not_running(
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let control_port: u16 = 5000;
-        let local_port: u16 = 3000;
-        let cancellation_token = CancellationToken::new();
-
-        launch_token_server().await;
-        let active_streams_server = launch_proxy_server().await?;
-        // wait until server is ready
-        tokio::time::sleep(Duration::from_secs(3)).await;
-
-        let (active_streams_client, client_info) =
-            launch_proxy_client(control_port, local_port, cancellation_token).await?;
-        let remote_addr = client_info.await?.remote_addr;
-        // wait until client is ready
-        tokio::time::sleep(Duration::from_secs(3)).await;
-
-        assert_eq!(
-            active_streams_server.iter().count(),
-            0,
-            "active_streams should be empty until remote connection established"
-        );
-        assert_eq!(
-            active_streams_client.read().unwrap().iter().count(),
-            0,
-            "active_streams should be empty until remote connection established"
-        );
-
-        // access remote port
-        let mut remote = TcpStream::connect(remote_addr)
-            .await
-            .expect("Failed to connect to remote port");
-        // wait until remote access has registered to ACTIVE_STREAMS
-        tokio::time::sleep(Duration::from_secs(3)).await;
-
-        assert_eq!(active_streams_server.iter().count(), 0, "active_streams should be empty. remote stream is once registered, but immediately removed at the exit of tunnel_to_stream");
-        assert_socket_bytes_matches!(remote, HTTP_TUNNEL_REFUSED_RESPONSE);
-
-        // first write operation success because still in loop of process_tcp_stream
-        remote.write_all(&b"foobar".to_vec()).await?;
-        remote.flush().await?;
-        tokio::time::sleep(Duration::from_secs(1)).await;
-        // at the second write operation, proxy_server send FIN
-        remote.write_all(&b"foobar".to_vec()).await?;
-        remote.flush().await?;
-        tokio::time::sleep(Duration::from_secs(1)).await;
-        assert!(
-            remote.write_all(&b"foobar".to_vec()).await.is_err(),
-            "third operation must fail because proxy_server release tcp connection."
-        );
-        Ok(())
-    }
-
-    #[tokio::test]
-    #[serial]
-    async fn refuse_remote_traffic_when_remote_process_not_running(
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let remote_port: u16 = 8080;
-
-        launch_token_server().await;
-        let active_streams_server = launch_proxy_server().await?;
-        // wait until server is ready
-        tokio::time::sleep(Duration::from_secs(3)).await;
-
-        assert_eq!(
-            active_streams_server.iter().count(),
-            0,
-            "active_streams should be empty until remote connection established"
-        );
-
-        // access remote port
-        let remote = TcpStream::connect(format!("127.0.0.1:{}", remote_port)).await;
-        assert!(remote.is_err());
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    #[serial]
-    async fn refuse_remote_traffic_when_client_canceled() -> Result<(), Box<dyn std::error::Error>> {
-        let control_port: u16 = 5000;
-        let local_port: u16 = 3000;
-        let cancellation_token = CancellationToken::new();
-
-        launch_token_server().await;
-        let active_streams_server = launch_proxy_server().await?;
-        // wait until server is ready
-        tokio::time::sleep(Duration::from_secs(3)).await;
-
-        launch_local_server(local_port).await;
-        let (active_streams_client, client_info) =
-            launch_proxy_client(control_port, local_port, cancellation_token.clone()).await?;
-        let remote_addr = client_info.await?.remote_addr;
-        // wait until client is ready
-        tokio::time::sleep(Duration::from_secs(3)).await;
-        
-        // cancel client
-        cancellation_token.cancel();
-
-        assert_eq!(
-            active_streams_server.iter().count(),
-            0,
-            "active_streams should be empty until remote connection established"
-        );
-        assert_eq!(
-            active_streams_client.read().unwrap().iter().count(),
-            0,
-            "active_streams should be empty until remote connection established"
-        );
-
-        // access remote port
-        // we can access remote server because remote_port_for_client remains open
-        // even if client has cancelled
-        let mut remote = TcpStream::connect(remote_addr)
-            .await
-            .expect("Failed to connect to remote port");
-        // wait until remote access has registered to ACTIVE_STREAMS
-        tokio::time::sleep(Duration::from_secs(3)).await;
-
-        assert_eq!(
-            active_streams_server.iter().count(),
-            0,
-            "server stream should be empty after client has exited"
-        );
-        assert_eq!(
-            active_streams_client.read().unwrap().iter().count(),
-            0,
-            "client stream should be empty after client has exited"
-        );
-
-        remote.write_all(&b"foobar".to_vec()).await?;
-        assert_socket_bytes_matches!(remote, b"HTTP/1.1 500\r\nContent-Length: 27\r\n\r\nError: Error finding tunnel");
 
         Ok(())
     }
@@ -451,10 +296,12 @@ mod e2e_test {
         );
 
         // access remote port
-        let mut remote = TcpStream::connect(remote_addr)
-            .await
-            .expect("Failed to connect to remote port");
+        let remote = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        remote.connect(remote_addr.clone()).await.unwrap(); 
         // wait until remote access has registered to ACTIVE_STREAMS
+        tokio::time::sleep(Duration::from_secs(3)).await;
+
+        remote.send(&b"foobar".to_vec()).await?;
         tokio::time::sleep(Duration::from_secs(3)).await;
 
         assert_eq!(
@@ -468,19 +315,18 @@ mod e2e_test {
             "remote socket should be forwared through control packet"
         );
 
-        remote.write_all(&b"foobar".to_vec()).await?;
         assert_socket_bytes_matches!(remote, b"hello, foobar");
 
         // cancel client
         cancellation_token.cancel();
         tokio::time::sleep(Duration::from_secs(6)).await;
 
-        remote.write_all(&b"foobar".to_vec()).await?;
-        assert_socket_bytes_matches!(remote, b"HTTP/1.1 404\r\nContent-Length: 23\r\n\r\nError: Tunnel Not Found");
+        remote.send(&b"foobar".to_vec()).await?;
+        // assert_socket_bytes_matches!(remote, b"HTTP/1.1 404\r\nContent-Length: 23\r\n\r\nError: Tunnel Not Found");
 
         assert_eq!(
             active_streams_server.iter().count(),
-            0,
+            1,
             "server stream should be empty after client has exited"
         );
         assert_eq!(

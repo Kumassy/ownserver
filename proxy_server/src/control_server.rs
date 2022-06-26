@@ -2,6 +2,7 @@ use futures::{
     channel::mpsc::{unbounded, SendError},
     Sink, SinkExt, Stream, StreamExt,
 };
+use magic_tunnel_lib::Payload;
 pub use magic_tunnel_lib::{ClientHello, ClientId, ControlPacket, ServerHello, StreamId, CLIENT_HELLO_VERSION};
 use magic_tunnel_auth::decode_jwt;
 use metrics::increment_counter;
@@ -80,6 +81,7 @@ pub struct ClientHandshake {
     pub id: ClientId,
     // pub sub_domain: String,
     // pub is_anonymous: bool,
+    pub payload: Payload,
     pub port: u16,
 }
 
@@ -110,7 +112,7 @@ async fn try_client_handshake(
         }
     };
     match verify_client_handshake(config, client_hello_data).await {
-        Ok(_) => {
+        Ok(payload) => {
             // TODO: initialization of StdRng may takes time
             let mut rng = StdRng::from_entropy();
             match alloc.lock().await.allocate_port(&mut rng) {
@@ -130,6 +132,7 @@ async fn try_client_handshake(
                     Some(ClientHandshake {
                         id: client_id,
                         port,
+                        payload
                     })
                 },
                 Err(_) => {
@@ -218,7 +221,7 @@ pub enum VerifyClientHandshakeError {
 async fn verify_client_handshake(
     config: &'static OnceCell<Config>,
     client_hello_data: Vec<u8>,
-) -> Result<(), VerifyClientHandshakeError> {
+) -> Result<Payload, VerifyClientHandshakeError> {
     let (token_secret, host) = match config.get() {
         Some(config) => (&config.token_secret, &config.host),
         None => {
@@ -256,7 +259,7 @@ async fn verify_client_handshake(
         }
     };
 
-    Ok(())
+    Ok(client_hello.payload)
 }
 
 #[tracing::instrument(skip(websocket))]
@@ -307,15 +310,30 @@ async fn handle_new_connection(
     let client_id = handshake.id;
     tracing::info!(cid = %client_id, port = %handshake.port, "open tunnel");
     let host = format!("host-foobar-{}", handshake.port);
-    let listen_addr = format!("[::]:{}", handshake.port);
+    // let listen_addr = format!("[::]:{}", handshake.port); // 今までは v6 で listen すると v4 でも listen していた？
+    let listen_addr = format!("0.0.0.0:{}", handshake.port);
     let canceller =
-        match remote::spawn_remote(conn, active_streams, listen_addr, host.clone()).await {
-            Ok(canceller) => canceller,
-            Err(_) => {
-                tracing::error!("failed to bind to allocated port");
-                return;
+        match handshake.payload {
+            Payload::UDP => {
+                match remote::udp::spawn_remote(conn, active_streams, listen_addr, host.clone()).await {
+                    Ok(canceller) => canceller,
+                    Err(_) => {
+                        tracing::error!("failed to bind to allocated port");
+                        return;
+                    }
+                }
+            }
+            _ => {
+                match remote::tcp::spawn_remote(conn, active_streams, listen_addr, host.clone()).await {
+                    Ok(canceller) => canceller,
+                    Err(_) => {
+                        tracing::error!("failed to bind to allocated port");
+                        return;
+                    }
+                }
             }
         };
+
     remote_cancellers.insert(client_id.clone(), canceller);
     tracing::debug!(cid = %client_id, "register remote_cancellers len={}", remote_cancellers.len());
 
@@ -427,6 +445,10 @@ where
                 tracing::trace!(cid = %client.id, "pong");
                 // Connections::add(connections, client.clone());
                 continue;
+            }
+            ControlPacket::UdpData(stream_id, data) => {
+                tracing::trace!(cid = %client.id, sid = %stream_id.to_string(), "forwarding udp to stream: {}", data.len());
+                (stream_id, StreamMessage::Data(data))
             }
         };
 
@@ -615,14 +637,14 @@ mod process_client_messages_test {
     use super::*;
     use dashmap::DashMap;
     use futures::channel::mpsc::{unbounded, UnboundedReceiver};
-    use std::sync::Arc;
+    use std::{sync::Arc, str::FromStr};
 
     async fn send_messages_to_client_and_process_client_message(
         is_add_stream_to_streams: bool,
         messages: Vec<Box<dyn Fn(StreamId) -> Message>>,
     ) -> Result<UnboundedReceiver<StreamMessage>, Box<dyn std::error::Error>> {
         let (mut stream_tx, stream_rx) = unbounded::<Result<Message, WarpError>>();
-        let active_streams = Arc::new(DashMap::new());
+        let active_streams = ActiveStreams::default();
 
         let (tx, _rx) = unbounded::<ControlPacket>();
         let client = ConnectedClient {
@@ -630,11 +652,12 @@ mod process_client_messages_test {
             host: "foobar".into(),
             tx,
         };
+        let addr = "127.0.0.1:12345".parse().unwrap();
 
         let (active_stream, queue_rx) = ActiveStream::new(client.clone());
         let stream_id = active_stream.id.clone();
         if is_add_stream_to_streams {
-            active_streams.insert(stream_id.clone(), active_stream.clone());
+            active_streams.insert(stream_id.clone(), active_stream.clone(), addr);
         }
 
         for message in messages {
