@@ -29,6 +29,15 @@ pub struct Connections {
     hosts: Arc<DashMap<String, ConnectedClient>>,
 }
 
+impl Default for Connections {
+    fn default() -> Self {
+        Self {
+            clients: Arc::new(DashMap::new()),
+            hosts: Arc::new(DashMap::new()), 
+        }
+    }
+}
+
 impl Connections {
     pub fn new() -> Self {
         Self {
@@ -43,48 +52,48 @@ impl Connections {
     //         .insert(client.host.clone(), client.clone());
     // }
 
-    pub fn remove(connection: &Self, client: &ConnectedClient) {
+    pub fn remove(&self, client: &ConnectedClient) {
         client.tx.close_channel();
 
         // https://github.com/agrinman/tunnelto/blob/0.1.9/src/server/connected_clients.rs
-        connection.hosts.remove(&client.host);
-        connection.clients.remove(&client.id);
+        self.hosts.remove(&client.host);
+        self.clients.remove(&client.id);
         tracing::debug!(cid = %client.id, "rm client");
-        gauge!("magic_tunnel_server.control.connections", connection.clients.len() as f64);
+        gauge!("magic_tunnel_server.control.connections", self.clients.len() as f64);
     }
 
     // pub fn client_for_host(connection: &mut Self, host: &String) -> Option<ClientId> {
     //     connection.hosts.get(host).map(|c| c.id.clone())
     // }
 
-    pub fn get(connection: &Self, client_id: &ClientId) -> Option<ConnectedClient> {
-        connection
+    pub fn get(&self, client_id: &ClientId) -> Option<ConnectedClient> {
+        self
             .clients
             .get(client_id)
             .map(|c| c.value().clone())
     }
 
-    pub fn find_by_host(connection: &Self, host: &String) -> Option<ConnectedClient> {
-        connection.hosts.get(host).map(|c| c.value().clone())
+    pub fn find_by_host(&self, host: &String) -> Option<ConnectedClient> {
+        self.hosts.get(host).map(|c| c.value().clone())
     }
 
-    pub fn add(connection: &Self, client: ConnectedClient) {
-        connection.clients.insert(client.id, client.clone());
-        connection.hosts.insert(client.host.clone(), client);
-        gauge!("magic_tunnel_server.control.connections", connection.clients.len() as f64);
+    pub fn add(&self, client: ConnectedClient) {
+        self.clients.insert(client.id, client.clone());
+        self.hosts.insert(client.host.clone(), client);
+        gauge!("magic_tunnel_server.control.connections", self.clients.len() as f64);
     }
 
-    pub fn clear(connection: &Self) {
-        connection.clients.clear();
-        connection.hosts.clear();
+    pub fn clear(&self) {
+        self.clients.clear();
+        self.hosts.clear();
     }
 
-    pub fn len_clients(connection: &Self) -> usize {
-        connection.clients.len()
+    pub fn len_clients(&self) -> usize {
+        self.clients.len()
     }
 
-    pub fn len_hosts(connection: &Self) -> usize {
-        connection.hosts.len()
+    pub fn len_hosts(&self) -> usize {
+        self.hosts.len()
     }
 }
 
@@ -110,33 +119,33 @@ mod tests {
     fn connections_clients_should_be_empty() {
         let (conn, _, client_id) = setup();
 
-        assert!(Connections::get(&conn, &client_id).is_none());
+        assert!(conn.get(&client_id).is_none());
     }
 
     #[test]
     fn connections_hosts_should_be_empty() {
         let (conn, _, _) = setup();
 
-        assert!(Connections::find_by_host(&conn, &"foobar".to_owned()).is_none());
+        assert!(conn.find_by_host(&"foobar".to_owned()).is_none());
     }
 
     #[test]
     fn connections_client_should_be_registered() {
         let (conn, client, client_id) = setup();
 
-        Connections::add(&conn, client);
+        conn.add(client);
 
-        assert_eq!(Connections::get(&conn, &client_id).unwrap().id, client_id);
+        assert_eq!(conn.get(&client_id).unwrap().id, client_id);
     }
 
     #[test]
     fn connections_hosts_should_be_registered() {
         let (conn, client, client_id) = setup();
 
-        Connections::add(&conn, client);
+        conn.add(client);
 
         assert_eq!(
-            Connections::find_by_host(&conn, &"foobar".to_owned())
+            conn.find_by_host(&"foobar".to_owned())
                 .unwrap()
                 .id,
             client_id
@@ -147,29 +156,29 @@ mod tests {
     fn connections_client_should_be_empty_after_remove() {
         let (conn, client, client_id) = setup();
 
-        Connections::add(&conn, client.clone());
-        Connections::remove(&conn, &client);
+        conn.add(client.clone());
+        conn.remove(&client);
 
-        assert!(Connections::get(&conn, &client_id).is_none());
+        assert!(conn.get(&client_id).is_none());
     }
 
     #[test]
     fn connections_hosts_should_be_empty_after_remove() {
         let (conn, client, _) = setup();
 
-        Connections::add(&conn, client.clone());
-        Connections::remove(&conn, &client);
+        conn.add(client.clone());
+        conn.remove(&client);
 
-        assert!(Connections::find_by_host(&conn, &"foobar".to_owned()).is_none());
+        assert!(conn.find_by_host(&"foobar".to_owned()).is_none());
     }
 
     #[test]
     fn connections_hosts_ignore_multiple_add() {
         let (conn, client, _) = setup();
 
-        Connections::add(&conn, client.clone());
-        Connections::add(&conn, client.clone());
-        Connections::add(&conn, client.clone());
+        conn.add(client.clone());
+        conn.add(client.clone());
+        conn.add(client.clone());
 
         assert_eq!(conn.clients.len(), 1);
         assert_eq!(conn.hosts.len(), 1);
@@ -179,10 +188,10 @@ mod tests {
     fn connections_hosts_ignore_multiple_remove() {
         let (conn, client, _) = setup();
 
-        Connections::add(&conn, client.clone());
-        Connections::remove(&conn, &client);
-        Connections::remove(&conn, &client);
-        Connections::remove(&conn, &client);
+        conn.add(client.clone());
+        conn.remove(&client);
+        conn.remove(&client);
+        conn.remove(&client);
 
         assert_eq!(conn.clients.len(), 0);
         assert_eq!(conn.hosts.len(), 0);
@@ -192,8 +201,8 @@ mod tests {
     fn connections_should_clear() {
         let (conn, client, _) = setup();
 
-        Connections::add(&conn, client.clone());
-        Connections::clear(&conn);
+        conn.add(client);
+        conn.clear();
 
         assert_eq!(conn.clients.len(), 0);
         assert_eq!(conn.hosts.len(), 0);
