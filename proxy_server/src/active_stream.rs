@@ -3,7 +3,7 @@ use dashmap::{DashMap, iter::Iter, mapref::one::Ref};
 use futures::{channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender, SendError}, stream, SinkExt, StreamExt};
 use magic_tunnel_lib::{StreamId, ControlPacket, ClientId};
 use metrics::gauge;
-use tokio::io::{AsyncWrite, AsyncWriteExt};
+use tokio::{io::{AsyncWrite, AsyncWriteExt}, net::UdpSocket};
 use std::{sync::Arc, net::SocketAddr};
 
 pub const HTTP_ERROR_LOCATING_HOST_RESPONSE: &'static [u8] =
@@ -88,6 +88,64 @@ impl ActiveStream {
             active_streams.remove(&stream_id);
             gauge!("magic_tunnel_server.remotes.streams", active_streams.len() as f64);
             tracing::debug!(cid = %client_id, sid = %stream_id, "remove stream from active_streams, tunnel_to_stream len={}", active_streams.len());
+        });
+
+        ActiveStream {
+            id: stream_id,
+            client,
+            tx,
+        }
+    }
+
+    pub fn build_udp(client: ConnectedClient, socket: Arc<UdpSocket>, peer_addr: SocketAddr, active_streams: ActiveStreams) -> Self {
+        let (tx, mut rx) = unbounded();
+        let client_id = client.id;
+        let stream_id = StreamId::new();
+        let host = client.host.clone();
+
+        tokio::spawn(async move {
+            loop {
+                // TODO: cancellation token
+                let result = rx.next().await;
+        
+                let result = if let Some(message) = result {
+                    match message {
+                        StreamMessage::Data(data) => Some(data),
+                        StreamMessage::TunnelRefused => {
+                            tracing::debug!(remote = %host, sid = %stream_id, "tunnel refused");
+                            let _ = socket.send_to(HTTP_TUNNEL_REFUSED_RESPONSE, peer_addr).await;
+                            None
+                        }
+                        StreamMessage::NoClientTunnel => {
+                            tracing::info!(remote = %host, sid = %stream_id, "client tunnel not found");
+                            let _ = socket.send_to(HTTP_NOT_FOUND_RESPONSE, peer_addr).await;
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
+        
+                let data = match result {
+                    Some(data) => data,
+                    None => {
+                        tracing::debug!(remote = %host, sid = %stream_id, "done tunneling to sink");
+                        break
+                    }
+                };
+        
+                let result = socket.send_to(&data, peer_addr).await;
+        
+                if let Some(error) = result.err() {
+                    tracing::warn!(remote = %host, sid = %stream_id, "stream closed, disconnecting: {:?}", error);
+                    break
+                }
+            }
+
+            tracing::debug!(
+                cid = %client_id, sid = %stream_id, "tunnel_to_stream closed"
+            );
+            active_streams.remove(&stream_id);
         });
 
         ActiveStream {
