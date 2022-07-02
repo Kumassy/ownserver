@@ -123,7 +123,6 @@ async fn process_udp_stream(
         if n == 0 {
             tracing::debug!(cid = %client_id, sid = %stream_id, "remote client streams end");
             let _ = active_stream
-                .client
                 .send_to_client(ControlPacket::End(stream_id))
                 .await
                 .map_err(|e| {
@@ -142,14 +141,14 @@ async fn process_udp_stream(
         let data = &buf[..n];
         let packet = ControlPacket::UdpData(stream_id, data.to_vec());
 
-        match active_stream.client.send_to_client(packet.clone()).await {
+        match active_stream.send_to_client(packet.clone()).await {
             Ok(_) => tracing::debug!(cid = %client_id, sid = %stream_id, "sent data packet to client"),
             Err(_) => {
                 // TODO: not tested
                 // This line extecuted when
                 // - Corresponding client not found or closed
                 tracing::error!(cid = %client_id, sid = %stream_id, "failed to forward tcp packets to disconnected client. dropping client.");
-                Connections::remove(conn, &active_stream.client);
+                conn.remove_by_id(client_id);
                 tracing::debug!(cid = %client_id, "remove client from connections len_clients={} len_hosts={}", Connections::len_clients(conn), Connections::len_hosts(conn));
             }
         }

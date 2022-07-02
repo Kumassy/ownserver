@@ -359,7 +359,7 @@ async fn handle_new_connection(
 
 /// Send the client a "stream init" message
 pub async fn send_client_stream_init(mut stream: ActiveStream) -> Result<(), SendError> {
-    stream.client.send_to_client(ControlPacket::Init(stream.id)).await
+    stream.send_to_client(ControlPacket::Init(stream.id)).await
 }
 
 /// Process client control messages

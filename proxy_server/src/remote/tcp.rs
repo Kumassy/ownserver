@@ -146,7 +146,7 @@ async fn process_tcp_stream<T>(
 ) where
     T: AsyncRead + Unpin,
 {
-    let client_id = tunnel_stream.client.id;
+    let client_id = tunnel_stream.client_id();
     let stream_id = tunnel_stream.id;
     // send initial control stream init to client
     if let Err(e) = control_server::send_client_stream_init(tunnel_stream.clone()).await {
@@ -160,7 +160,7 @@ async fn process_tcp_stream<T>(
 
     loop {
         // client is no longer connected
-        if Connections::get(conn, &tunnel_stream.client.id).is_none() {
+        if Connections::get(conn, &tunnel_stream.client_id()).is_none() {
             tracing::debug!(cid = %client_id, sid = %stream_id, "client disconnected, closing stream");
 
             // close remote-writer channel
@@ -181,7 +181,6 @@ async fn process_tcp_stream<T>(
         if n == 0 {
             tracing::debug!(cid = %client_id, sid = %stream_id, "remote client streams end");
             let _ = tunnel_stream
-                .client
                 .send_to_client(ControlPacket::End(tunnel_stream.id))
                 .await
                 .map_err(|e| {
@@ -200,14 +199,14 @@ async fn process_tcp_stream<T>(
         let data = &buf[..n];
         let packet = ControlPacket::Data(tunnel_stream.id, data.to_vec());
 
-        match tunnel_stream.client.send_to_client(packet.clone()).await {
+        match tunnel_stream.send_to_client(packet.clone()).await {
             Ok(_) => tracing::debug!(cid = %client_id, sid = %stream_id, "sent data packet to client"),
             Err(_) => {
                 // TODO: not tested
                 // This line extecuted when
                 // - Corresponding client not found or closed
                 tracing::error!(cid = %client_id, sid = %stream_id, "failed to forward tcp packets to disconnected client. dropping client.");
-                Connections::remove(conn, &tunnel_stream.client);
+                conn.remove_by_id(tunnel_stream.client_id());
                 tracing::debug!(cid = %client_id, "remove client from connections len_clients={} len_hosts={}", Connections::len_clients(conn), Connections::len_hosts(conn));
             }
         }

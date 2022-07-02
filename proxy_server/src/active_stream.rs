@@ -1,13 +1,13 @@
 use crate::connected_clients::ConnectedClient;
 use dashmap::{DashMap, iter::Iter, mapref::one::Ref};
 use futures::{channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender, SendError}, stream, SinkExt};
-use magic_tunnel_lib::StreamId;
+use magic_tunnel_lib::{StreamId, ControlPacket, ClientId};
 use std::{sync::Arc, net::SocketAddr};
 
 #[derive(Debug, Clone)]
 pub struct ActiveStream {
     pub id: StreamId,
-    pub client: ConnectedClient,
+    client: ConnectedClient,
     tx: UnboundedSender<StreamMessage>,
 }
 
@@ -27,6 +27,15 @@ impl ActiveStream {
     pub async fn send_to_remote(&mut self, message: StreamMessage) -> Result<(), SendError> {
         self.tx.send(message).await
     }
+
+    pub async fn send_to_client(&mut self, packet: ControlPacket) -> Result<(), SendError> {
+        self.client.send_to_client(packet).await
+    }
+    
+    pub fn client_id(&self) -> ClientId {
+        self.client.id
+    }
+    
     pub fn close_channel(&self) {
         self.tx.close_channel()
     }

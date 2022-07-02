@@ -4,6 +4,7 @@ use futures::{Sink, StreamExt, SinkExt};
 use futures::channel::mpsc::{UnboundedSender, unbounded, UnboundedReceiver, SendError};
 pub use magic_tunnel_lib::{ClientId, ControlPacket};
 use metrics::gauge;
+use warp::hyper::Client;
 use warp::ws::{Message, WebSocket};
 use std::fmt::Formatter;
 use std::sync::Arc;
@@ -121,6 +122,17 @@ impl Connections {
         self.clients.remove(&client.id);
         tracing::debug!(cid = %client.id, "rm client");
         gauge!("magic_tunnel_server.control.connections", self.clients.len() as f64);
+    }
+
+    pub fn remove_by_id(&self, client_id: ClientId) {
+        if let Some(client ) = self.clients.get(&client_id) {
+            client.tx.close_channel();
+
+            self.hosts.remove(&client.host);
+            self.clients.remove(&client.id);
+            tracing::debug!(cid = %client.id, "rm client");
+            gauge!("magic_tunnel_server.control.connections", self.clients.len() as f64);
+        }
     }
 
     // pub fn client_for_host(connection: &mut Self, host: &String) -> Option<ClientId> {
