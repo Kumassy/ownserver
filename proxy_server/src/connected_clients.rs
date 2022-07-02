@@ -1,7 +1,9 @@
 use dashmap::DashMap;
-use futures::channel::mpsc::UnboundedSender;
+use futures::{Sink, StreamExt, SinkExt};
+use futures::channel::mpsc::{UnboundedSender, unbounded, UnboundedReceiver};
 pub use magic_tunnel_lib::{ClientId, ControlPacket};
 use metrics::gauge;
+use warp::ws::Message;
 use std::fmt::Formatter;
 use std::sync::Arc;
 
@@ -20,6 +22,54 @@ impl std::fmt::Debug for ConnectedClient {
             .field("sub", &self.host)
             // .field("anon", &self.is_anonymous)
             .finish()
+    }
+}
+
+impl ConnectedClient {
+    pub fn new<T>(id: ClientId, host: String, mut sink: T) -> Self where T: Sink<Message> + Unpin + std::marker::Send + 'static, T::Error: std::fmt::Debug{
+        let (tx, mut rx) = unbounded::<ControlPacket>();
+
+        tokio::spawn(async move {
+            loop {
+                match rx.next().await {
+                    Some(packet) => {
+                        let data = match rmp_serde::to_vec(&packet) {
+                            Ok(data) => data,
+                            Err(error) => {
+                                tracing::warn!(cid = %id, error = ?error, "failed to encode message");
+                                // return client;
+                                break
+                            }
+                        };
+        
+                        let result = sink.send(Message::binary(data)).await;
+                        if let Err(error) = result {
+                            tracing::debug!(cid = %id, error = ?error, "client disconnected: aborting");
+                            // return client;
+                            break
+                        }
+                    }
+                    None => {
+                        tracing::debug!(cid = %id, "ending client tunnel");
+                        // return client;
+                        break
+                    }
+                };
+            }
+
+            // TODO: some cleanup code
+            // cancel client code
+        });
+
+        ConnectedClient { id, host, tx }
+    }
+
+    pub fn forward_packet_to_client() -> Result<(), Box<dyn std::error::Error>> {
+        Ok(())
+    }
+
+    pub fn register_sink() {
+        
     }
 }
 
