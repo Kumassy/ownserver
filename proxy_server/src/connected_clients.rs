@@ -27,9 +27,7 @@ impl std::fmt::Debug for ConnectedClient {
 }
 
 impl ConnectedClient {
-    // TODO: fix generics
-    // pub fn new<'a, T>(id: ClientId, host: String, mut sink: T) -> Self where T: Sink<Message> + Unpin + std::marker::Send + 'a, T::Error: std::fmt::Debug {
-    pub fn build(id: ClientId, host: String, mut sink: SplitSink<WebSocket, Message>) -> Self {
+    pub fn build<T>(id: ClientId, host: String, mut websocket_tx: T) -> Self where T: Sink<Message> + Unpin + std::marker::Send + 'static, T::Error: std::fmt::Debug {
         let (tx, mut rx) = unbounded::<ControlPacket>();
 
         tokio::spawn(async move {
@@ -45,7 +43,7 @@ impl ConnectedClient {
                             }
                         };
         
-                        let result = sink.send(Message::binary(data)).await;
+                        let result = websocket_tx.send(Message::binary(data)).await;
                         if let Err(error) = result {
                             tracing::debug!(cid = %id, error = ?error, "client disconnected: aborting");
                             // return client;
@@ -61,7 +59,9 @@ impl ConnectedClient {
             }
 
             // TODO: some cleanup code
-            // cancel client code
+            // Connections::remove(conn, &client);
+            // remote_cancellers.remove(&client_id)
+            tracing::debug!(cid = %id, "cleaning up ws send listener");
         });
 
         ConnectedClient { id, host, tx }
@@ -81,10 +81,6 @@ impl ConnectedClient {
 
     pub fn close_channel(&self) {
         self.tx.close_channel()
-    }
-
-    pub fn register_sink() {
-        
     }
 }
 
@@ -166,6 +162,7 @@ impl Connections {
 mod tests {
     use super::*;
     use futures::channel::mpsc::unbounded;
+    use magic_tunnel_lib::StreamId;
 
     fn setup() -> (Connections, ConnectedClient, ClientId) {
         let conn = Connections::new();
@@ -271,5 +268,24 @@ mod tests {
 
         assert_eq!(conn.clients.len(), 0);
         assert_eq!(conn.hosts.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn forward_control_packet_to_websocket() -> Result<(), Box<dyn std::error::Error>> {
+        let client_id = ClientId::new();
+        let stream_id = StreamId::new();
+        let (ws_tx, mut ws_rx) = unbounded::<Message>();
+        let mut client = ConnectedClient::build(client_id, "foobar".into(), ws_tx);
+
+        client.send_to_client(ControlPacket::Init(stream_id)).await.unwrap();
+        client.close_channel();
+
+        let payload = ws_rx.next().await.unwrap().into_bytes();
+
+        let packet: ControlPacket = rmp_serde::from_slice(&payload)?;
+        assert_eq!(packet, ControlPacket::Init(stream_id));
+        assert_eq!(ws_rx.next().await, None);
+
+        Ok(())
     }
 }

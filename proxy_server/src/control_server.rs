@@ -334,35 +334,15 @@ async fn handle_new_connection(
             }
         };
 
+    let (sink, stream) = websocket.split();
     remote_cancellers.insert(client_id, canceller);
     tracing::debug!(cid = %client_id, "register remote_cancellers len={}", remote_cancellers.len());
 
-    let (tx, rx) = unbounded::<ControlPacket>();
-    let client = ConnectedClient::new(client_id, host, tx);
+    let client = ConnectedClient::build(client_id, host, sink);
     Connections::add(conn, client.clone());
     tracing::debug!(cid = %client_id, "register client to connections len_clients={} len_hosts={}", Connections::len_clients(conn), Connections::len_hosts(conn));
     let active_streams = active_streams.clone();
-    let (sink, stream) = websocket.split();
 
-    let client_clone = client.clone();
-    let remote_cancellers_clone = remote_cancellers.clone();
-    let client_id_clone = client_id;
-    tokio::spawn(
-        async move {
-            let client = client_clone;
-            let remote_cancellers = remote_cancellers_clone;
-            let client_id = client_id_clone;
-
-            let client = tunnel_client(client, sink, rx).await;
-            Connections::remove(conn, &client);
-            tracing::debug!(cid = %client_id, "remove client from connections len_clients={} len_hosts={}", Connections::len_clients(conn), Connections::len_hosts(conn));
-            if let Some((_cid, ct)) = remote_cancellers.remove(&client_id) {
-                tracing::debug!(cid = %client_id, "cancel remote process");
-                ct.cancel();
-            }
-        }
-        .instrument(tracing::info_span!("tunnel_client")),
-    );
     tokio::spawn(
         async move {
             let client = process_client_messages(active_streams, client, stream).await;
@@ -452,48 +432,6 @@ where
                 tracing::debug!(cid = %client.id, sid = %stream_id, error = ?error, "Failed to send to stream tx");
             });
         }
-    }
-}
-
-// async fn tunnel_client(
-//     client: ConnectedClient,
-//     mut sink: SplitSink<WebSocket, Message>,
-//     mut queue: UnboundedReceiver<ControlPacket>,
-// ) -> ConnectedClient
-#[must_use]
-#[tracing::instrument(skip(sink, queue, client))]
-pub async fn tunnel_client<T, U>(
-    client: ConnectedClient,
-    mut sink: T,
-    mut queue: U,
-) -> ConnectedClient
-where
-    T: Sink<Message> + Unpin,
-    U: Stream<Item = ControlPacket> + Unpin,
-    T::Error: std::fmt::Debug,
-{
-    loop {
-        match queue.next().await {
-            Some(packet) => {
-                let data = match rmp_serde::to_vec(&packet) {
-                    Ok(data) => data,
-                    Err(error) => {
-                        tracing::warn!(cid = %client.id, error = ?error, "failed to encode message");
-                        return client;
-                    }
-                };
-
-                let result = sink.send(Message::binary(data)).await;
-                if let Err(error) = result {
-                    tracing::debug!(cid = %client.id, error = ?error, "client disconnected: aborting");
-                    return client;
-                }
-            }
-            None => {
-                tracing::debug!(cid = %client.id, "ending client tunnel");
-                return client;
-            }
-        };
     }
 }
 
@@ -732,49 +670,6 @@ mod process_client_messages_test {
                 .await?;
 
         assert_eq!(queue_rx.next().await, None);
-        Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tunnel_client_test {
-    use super::*;
-    use futures::channel::mpsc::{unbounded, UnboundedReceiver};
-
-    async fn send_control_packet_and_forward_to_websocket(
-        packets: Vec<Box<dyn Fn(StreamId) -> ControlPacket>>,
-    ) -> Result<(StreamId, UnboundedReceiver<Message>), Box<dyn std::error::Error>> {
-        let (tx, _rx) = unbounded::<ControlPacket>();
-        let client_id = ClientId::new();
-        let client = ConnectedClient::new(client_id, "foobar".into(), tx);
-
-        let (ws_tx, ws_rx) = unbounded::<Message>();
-        let (mut control_tx, control_rx) = unbounded::<ControlPacket>();
-        let stream_id = StreamId::new();
-
-        for packet in packets {
-            let pkt = packet(stream_id);
-            control_tx.send(pkt).await?;
-        }
-        control_tx.close_channel();
-
-        let _ = tunnel_client(client, ws_tx, control_rx).await;
-
-        Ok((stream_id, ws_rx))
-    }
-
-    #[tokio::test]
-    async fn forward_control_packet_to_websocket() -> Result<(), Box<dyn std::error::Error>> {
-        let packet = |stream_id| ControlPacket::Init(stream_id);
-        let (stream_id, mut ws_rx) =
-            send_control_packet_and_forward_to_websocket(vec![Box::new(packet)]).await?;
-
-        let payload = ws_rx.next().await.unwrap().into_bytes();
-
-        let packet: ControlPacket = rmp_serde::from_slice(&payload)?;
-        assert_eq!(packet, ControlPacket::Init(stream_id));
-        assert_eq!(ws_rx.next().await, None);
-
         Ok(())
     }
 }
