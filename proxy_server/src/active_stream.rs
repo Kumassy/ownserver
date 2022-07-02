@@ -1,8 +1,18 @@
-use crate::connected_clients::ConnectedClient;
+use crate::{connected_clients::ConnectedClient};
 use dashmap::{DashMap, iter::Iter, mapref::one::Ref};
-use futures::{channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender, SendError}, stream, SinkExt};
+use futures::{channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender, SendError}, stream, SinkExt, StreamExt};
 use magic_tunnel_lib::{StreamId, ControlPacket, ClientId};
+use metrics::gauge;
+use tokio::io::{AsyncWrite, AsyncWriteExt};
 use std::{sync::Arc, net::SocketAddr};
+
+pub const HTTP_ERROR_LOCATING_HOST_RESPONSE: &'static [u8] =
+    b"HTTP/1.1 500\r\nContent-Length: 27\r\n\r\nError: Error finding tunnel";
+pub const HTTP_NOT_FOUND_RESPONSE: &'static [u8] =
+    b"HTTP/1.1 404\r\nContent-Length: 23\r\n\r\nError: Tunnel Not Found";
+pub const HTTP_TUNNEL_REFUSED_RESPONSE: &'static [u8] =
+    b"HTTP/1.1 500\r\nContent-Length: 32\r\n\r\nTunnel says: connection refused.";
+
 
 #[derive(Debug, Clone)]
 pub struct ActiveStream {
@@ -22,6 +32,69 @@ impl ActiveStream {
             },
             rx,
         )
+    }
+
+    pub fn build_tcp<T>(client: ConnectedClient, mut sink: T, active_streams: ActiveStreams) -> Self where T: AsyncWrite + AsyncWriteExt + Unpin + Send + 'static {
+        let (tx, mut rx) = unbounded();
+        let client_id = client.id;
+        let stream_id = StreamId::new();
+
+        let host = client.host.clone();
+        tokio::spawn(async move {
+            loop {
+                let result = rx.next().await;
+        
+                let result = if let Some(message) = result {
+                    match message {
+                        StreamMessage::Data(data) => Some(data),
+                        StreamMessage::TunnelRefused => {
+                            tracing::debug!(remote = %host, sid = %stream_id, "tunnel refused");
+                            let _ = sink.write_all(HTTP_TUNNEL_REFUSED_RESPONSE).await;
+                            None
+                        }
+                        StreamMessage::NoClientTunnel => {
+                            tracing::info!(remote = %host, sid = %stream_id, "client tunnel not found");
+                            let _ = sink.write_all(HTTP_NOT_FOUND_RESPONSE).await;
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
+        
+                let data = match result {
+                    Some(data) => data,
+                    None => {
+                        tracing::debug!(remote = %host, sid = %stream_id, "done tunneling to sink");
+                        let _ = sink.shutdown().await.map_err(|_e| {
+                            tracing::error!(remote = %host, sid = %stream_id, "error shutting down tcp stream");
+                        });
+        
+                        break
+                    }
+                };
+        
+                let result = sink.write_all(&data).await;
+        
+                if let Some(error) = result.err() {
+                    tracing::warn!(remote = %host, sid = %stream_id, "stream closed, disconnecting: {:?}", error);
+                    break
+                }
+            }
+
+            tracing::debug!(
+                remote = %host, cid = %client_id, sid = %stream_id, "tunnel_to_stream closed"
+            );
+            active_streams.remove(&stream_id);
+            gauge!("magic_tunnel_server.remotes.streams", active_streams.len() as f64);
+            tracing::debug!(cid = %client_id, sid = %stream_id, "remove stream from active_streams, tunnel_to_stream len={}", active_streams.len());
+        });
+
+        ActiveStream {
+            id: stream_id,
+            client,
+            tx,
+        }
     }
 
     pub async fn send_to_remote(&mut self, message: StreamMessage) -> Result<(), SendError> {
@@ -155,4 +228,86 @@ mod active_streams_test {
 
     }
  
+}
+
+
+
+#[cfg(test)]
+mod active_streams_tcp_test {
+    use super::*;
+    use std::{io, time::Duration};
+    use tokio_test::io::Builder;
+
+    async fn wait() {
+        tokio::time::sleep(Duration::from_secs(3)).await;
+    }
+
+    #[tokio::test]
+    async fn mock_test() -> Result<(), Box<dyn std::error::Error>> {
+        let mut tcp_mock = Builder::new().write(b"foobarbaz").write(b"piyo").build();
+
+        // writed data must be exactly same as builder args
+        // any grouping is accepted because of stream
+        tcp_mock.write(b"foobar").await?;
+        tcp_mock.write(b"bazpiyo").await?;
+        Ok(())
+    }
+    #[tokio::test]
+    async fn must_exit_from_loop_when_tcp_raises_error() -> Result<(), Box<dyn std::error::Error>> {
+        let error = io::Error::new(io::ErrorKind::Other, "cruel");
+        let tcp_mock = Builder::new().write_error(error).build();
+        let client = ConnectedClient::default();
+        let mut active_stream = ActiveStream::build_tcp(client, tcp_mock, ActiveStreams::default());
+
+        active_stream.send_to_remote(StreamMessage::Data(b"foobar".to_vec())).await?;
+        wait().await;
+
+        // assert_eq!(reason, TunnelToStreamExitReason::TcpClosed);
+        assert!(active_stream.is_closed());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn tcp_stream_must_shutdown_when_tunnel_refused() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let tcp_mock = Builder::new().build();
+        let client = ConnectedClient::default();
+        let mut active_stream = ActiveStream::build_tcp(client, tcp_mock, ActiveStreams::default());
+
+        active_stream.send_to_remote(StreamMessage::TunnelRefused).await?;
+        wait().await;
+
+        // assert_eq!(reason, TunnelToStreamExitReason::QueueClosed);
+        assert!(active_stream.is_closed());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn tcp_stream_must_shutdown_when_no_client_tunnel(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let tcp_mock = Builder::new().build();
+        let client = ConnectedClient::default();
+        let mut active_stream = ActiveStream::build_tcp(client, tcp_mock, ActiveStreams::default());
+
+        active_stream.send_to_remote(StreamMessage::NoClientTunnel).await?;
+        wait().await;
+
+        // assert_eq!(reason, TunnelToStreamExitReason::QueueClosed);
+        assert!(active_stream.is_closed());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn forward_data() -> Result<(), Box<dyn std::error::Error>> {
+        let tcp_mock = Builder::new().write(b"foobarbaz").build();
+        let client = ConnectedClient::default();
+        let mut active_stream = ActiveStream::build_tcp(client, tcp_mock, ActiveStreams::default());
+
+        active_stream.send_to_remote(StreamMessage::Data(b"foobarbaz".to_vec())).await?;
+        active_stream.close_channel();
+        wait().await;
+
+        // assert_eq!(reason, TunnelToStreamExitReason::QueueClosed);
+        Ok(())
+    }
 }

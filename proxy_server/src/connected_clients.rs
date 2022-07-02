@@ -27,6 +27,13 @@ impl std::fmt::Debug for ConnectedClient {
     }
 }
 
+impl Default for ConnectedClient {
+    fn default() -> Self {
+        let (tx, _) = unbounded();
+        Self { id: ClientId::default(), host: "__default_host__".into(), tx }
+    }
+}
+
 impl ConnectedClient {
     pub fn build<T>(id: ClientId, host: String, mut websocket_tx: T) -> Self where T: Sink<Message> + Unpin + std::marker::Send + 'static, T::Error: std::fmt::Debug {
         let (tx, mut rx) = unbounded::<ControlPacket>();
