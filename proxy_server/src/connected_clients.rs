@@ -1,9 +1,10 @@
 use dashmap::DashMap;
+use futures::stream::SplitSink;
 use futures::{Sink, StreamExt, SinkExt};
-use futures::channel::mpsc::{UnboundedSender, unbounded, UnboundedReceiver};
+use futures::channel::mpsc::{UnboundedSender, unbounded, UnboundedReceiver, SendError};
 pub use magic_tunnel_lib::{ClientId, ControlPacket};
 use metrics::gauge;
-use warp::ws::Message;
+use warp::ws::{Message, WebSocket};
 use std::fmt::Formatter;
 use std::sync::Arc;
 
@@ -12,7 +13,7 @@ pub struct ConnectedClient {
     pub id: ClientId,
     pub host: String,
     // pub is_anonymous: bool,
-    pub tx: UnboundedSender<ControlPacket>,
+    tx: UnboundedSender<ControlPacket>,
 }
 
 impl std::fmt::Debug for ConnectedClient {
@@ -26,7 +27,9 @@ impl std::fmt::Debug for ConnectedClient {
 }
 
 impl ConnectedClient {
-    pub fn new<T>(id: ClientId, host: String, mut sink: T) -> Self where T: Sink<Message> + Unpin + std::marker::Send + 'static, T::Error: std::fmt::Debug{
+    // TODO: fix generics
+    // pub fn new<'a, T>(id: ClientId, host: String, mut sink: T) -> Self where T: Sink<Message> + Unpin + std::marker::Send + 'a, T::Error: std::fmt::Debug {
+    pub fn build(id: ClientId, host: String, mut sink: SplitSink<WebSocket, Message>) -> Self {
         let (tx, mut rx) = unbounded::<ControlPacket>();
 
         tokio::spawn(async move {
@@ -64,8 +67,20 @@ impl ConnectedClient {
         ConnectedClient { id, host, tx }
     }
 
-    pub fn forward_packet_to_client() -> Result<(), Box<dyn std::error::Error>> {
-        Ok(())
+    pub fn new(id: ClientId, host: String, tx: UnboundedSender<ControlPacket>) -> Self {
+        Self {
+            id, 
+            host, 
+            tx
+        }
+    }
+
+    pub async fn send_to_client(&mut self, packet: ControlPacket) -> Result<(), SendError> {
+        self.tx.send(packet).await
+    }
+
+    pub fn close_channel(&self) {
+        self.tx.close_channel()
     }
 
     pub fn register_sink() {

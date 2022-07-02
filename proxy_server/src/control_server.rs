@@ -338,11 +338,7 @@ async fn handle_new_connection(
     tracing::debug!(cid = %client_id, "register remote_cancellers len={}", remote_cancellers.len());
 
     let (tx, rx) = unbounded::<ControlPacket>();
-    let client = ConnectedClient {
-        id: client_id,
-        host,
-        tx,
-    };
+    let client = ConnectedClient::new(client_id, host, tx);
     Connections::add(conn, client.clone());
     tracing::debug!(cid = %client_id, "register client to connections len_clients={} len_hosts={}", Connections::len_clients(conn), Connections::len_hosts(conn));
     let active_streams = active_streams.clone();
@@ -383,11 +379,7 @@ async fn handle_new_connection(
 
 /// Send the client a "stream init" message
 pub async fn send_client_stream_init(mut stream: ActiveStream) -> Result<(), SendError> {
-    stream
-        .client
-        .tx
-        .send(ControlPacket::Init(stream.id))
-        .await
+    stream.client.send_to_client(ControlPacket::Init(stream.id)).await
 }
 
 /// Process client control messages
@@ -655,11 +647,7 @@ mod process_client_messages_test {
         let active_streams = ActiveStreams::default();
 
         let (tx, _rx) = unbounded::<ControlPacket>();
-        let client = ConnectedClient {
-            id: ClientId::new(),
-            host: "foobar".into(),
-            tx,
-        };
+        let client = ConnectedClient::new(ClientId::new(), "foobar".into(), tx);
         let addr = "127.0.0.1:12345".parse().unwrap();
 
         let (active_stream, queue_rx) = ActiveStream::new(client.clone());
@@ -758,11 +746,7 @@ mod tunnel_client_test {
     ) -> Result<(StreamId, UnboundedReceiver<Message>), Box<dyn std::error::Error>> {
         let (tx, _rx) = unbounded::<ControlPacket>();
         let client_id = ClientId::new();
-        let client = ConnectedClient {
-            id: client_id,
-            host: "foobar".into(),
-            tx,
-        };
+        let client = ConnectedClient::new(client_id, "foobar".into(), tx);
 
         let (ws_tx, ws_rx) = unbounded::<Message>();
         let (mut control_tx, control_rx) = unbounded::<ControlPacket>();

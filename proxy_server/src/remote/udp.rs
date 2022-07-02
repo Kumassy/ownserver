@@ -124,8 +124,7 @@ async fn process_udp_stream(
             tracing::debug!(cid = %client_id, sid = %stream_id, "remote client streams end");
             let _ = active_stream
                 .client
-                .tx
-                .send(ControlPacket::End(stream_id))
+                .send_to_client(ControlPacket::End(stream_id))
                 .await
                 .map_err(|e| {
                     tracing::error!(cid = %client_id, sid = %stream_id, "failed to send end signal: {:?}", e);
@@ -143,7 +142,7 @@ async fn process_udp_stream(
         let data = &buf[..n];
         let packet = ControlPacket::UdpData(stream_id, data.to_vec());
 
-        match active_stream.client.tx.send(packet.clone()).await {
+        match active_stream.client.send_to_client(packet.clone()).await {
             Ok(_) => tracing::debug!(cid = %client_id, sid = %stream_id, "sent data packet to client"),
             Err(_) => {
                 // TODO: not tested

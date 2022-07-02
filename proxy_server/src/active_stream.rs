@@ -91,11 +91,7 @@ mod active_streams_test {
         let client_id = ClientId::new();
         let addr = "127.0.0.1:12345".parse().unwrap();
         let (tx, _) = unbounded();
-        let client = ConnectedClient {
-            id: client_id,
-            host: "host".to_string(),
-            tx,
-        };
+        let client = ConnectedClient::new(client_id, "host".to_string(), tx);
         let (active_stream, _) = ActiveStream::new(client);
 
         assert!(active_streams.insert(stream_id, active_stream, addr).is_none());
@@ -104,11 +100,7 @@ mod active_streams_test {
         let stream_id2 = StreamId::new();
         let client_id2 = ClientId::new();
         let (tx, _) = unbounded();
-        let client = ConnectedClient {
-            id: client_id2,
-            host: "host".to_string(),
-            tx,
-        };
+        let client = ConnectedClient::new(client_id2, "host".to_string(), tx);
         let (active_stream, _) = ActiveStream::new(client);
         assert!(active_streams.insert(stream_id2, active_stream, addr).is_none());
         assert_eq!(active_streams.find_by_addr(&addr).unwrap().client.id, client_id2);
@@ -126,11 +118,7 @@ mod active_streams_test {
         let client_id = ClientId::new();
         let addr = "[::ffff:127.0.0.1]:64977".parse().unwrap();
         let (tx, _) = unbounded();
-        let client = ConnectedClient {
-            id: client_id,
-            host: "host".to_string(),
-            tx,
-        };
+        let client = ConnectedClient::new(client_id, "host".to_string(), tx);
         let (active_stream, _) = ActiveStream::new(client);
 
         assert!(active_streams.insert(stream_id, active_stream, addr).is_none());
@@ -139,11 +127,7 @@ mod active_streams_test {
         let stream_id2 = StreamId::new();
         let client_id2 = ClientId::new();
         let (tx, _) = unbounded();
-        let client = ConnectedClient {
-            id: client_id2,
-            host: "host".to_string(),
-            tx,
-        };
+        let client = ConnectedClient::new(client_id2, "host".to_string(), tx);
         let (active_stream, _) = ActiveStream::new(client);
         assert!(active_streams.insert(stream_id2, active_stream, addr).is_none());
         assert_eq!(active_streams.find_by_addr(&addr).unwrap().client.id, client_id2);

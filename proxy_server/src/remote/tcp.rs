@@ -182,8 +182,7 @@ async fn process_tcp_stream<T>(
             tracing::debug!(cid = %client_id, sid = %stream_id, "remote client streams end");
             let _ = tunnel_stream
                 .client
-                .tx
-                .send(ControlPacket::End(tunnel_stream.id))
+                .send_to_client(ControlPacket::End(tunnel_stream.id))
                 .await
                 .map_err(|e| {
                     tracing::error!(cid = %client_id, sid = %stream_id, "failed to send end signal: {:?}", e);
@@ -201,7 +200,7 @@ async fn process_tcp_stream<T>(
         let data = &buf[..n];
         let packet = ControlPacket::Data(tunnel_stream.id, data.to_vec());
 
-        match tunnel_stream.client.tx.send(packet.clone()).await {
+        match tunnel_stream.client.send_to_client(packet.clone()).await {
             Ok(_) => tracing::debug!(cid = %client_id, sid = %stream_id, "sent data packet to client"),
             Err(_) => {
                 // TODO: not tested
@@ -316,11 +315,7 @@ mod process_tcp_stream_test {
     ) {
         let conn = Connections::new();
         let (tx, rx) = unbounded::<ControlPacket>();
-        let client = ConnectedClient {
-            id: ClientId::new(),
-            host: "foobar".into(),
-            tx,
-        };
+        let client = ConnectedClient::new(ClientId::new(), "foobar".into(), tx);
 
         let (active_stream, stream_rx) = ActiveStream::new(client.clone());
 
@@ -423,7 +418,7 @@ mod process_tcp_stream_test {
     async fn failed_to_send_stream_init_when_client_closed(
     ) -> Result<(), Box<dyn std::error::Error>> {
         let (conn, client, active_stream, _stream_rx, mut client_rx) = create_active_stream();
-        client.tx.close_channel();
+        client.close_channel();
         Connections::add(&conn, client);
 
         let tcp_mock = Builder::new().build();
@@ -559,11 +554,7 @@ mod spawn_remote_test {
         ACTIVE_STREAMS.clear();
 
         let (tx, _rx) = unbounded::<ControlPacket>();
-        let client = ConnectedClient {
-            id: ClientId::new(),
-            host: "host-aaa".to_string(),
-            tx,
-        };
+        let client = ConnectedClient::new(ClientId::new(), "host-aaa".to_string(), tx);
         Connections::add(&CONNECTIONS, client.clone());
 
         spawn_remote(
