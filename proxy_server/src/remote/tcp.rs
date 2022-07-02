@@ -164,8 +164,8 @@ async fn process_tcp_stream<T>(
             tracing::debug!(cid = %client_id, sid = %stream_id, "client disconnected, closing stream");
 
             // close remote-writer channel
-            let _ = tunnel_stream.tx.send(StreamMessage::NoClientTunnel).await;
-            tunnel_stream.tx.close_channel();
+            let _ = tunnel_stream.send_to_remote(StreamMessage::NoClientTunnel).await;
+            tunnel_stream.close_channel();
             return;
         }
 
@@ -192,7 +192,7 @@ async fn process_tcp_stream<T>(
 
         tracing::debug!(cid = %client_id, sid = %stream_id, "read {} bytes message from remote client", n);
 
-        if tunnel_stream.tx.is_closed() {
+        if tunnel_stream.is_closed() {
             tracing::debug!(cid = %client_id, sid = %stream_id, "process_tcp_stream closed because active_stream.tx has closed");
             return;
         }

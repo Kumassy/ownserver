@@ -134,7 +134,7 @@ async fn process_udp_stream(
 
         tracing::debug!(cid = %client_id, sid = %stream_id, "read {} bytes message from remote client", n);
 
-        if active_stream.tx.is_closed() {
+        if active_stream.is_closed() {
             tracing::debug!(cid = %client_id, sid = %stream_id, "process_tcp_stream closed because active_stream.tx has closed");
             return;
         }

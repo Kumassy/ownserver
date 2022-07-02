@@ -428,7 +428,7 @@ where
 
         if let Some(mut stream) = stream {
             tracing::trace!(cid = %client.id, sid = %stream_id, "forward message to active stream");
-            let _ = stream.tx.send(message).await.map_err(|error| {
+            let _ = stream.send_to_remote(message).await.map_err(|error| {
                 tracing::debug!(cid = %client.id, sid = %stream_id, error = ?error, "Failed to send to stream tx");
             });
         }
