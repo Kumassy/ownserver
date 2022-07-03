@@ -19,6 +19,7 @@ pub struct ActiveStream {
     pub id: StreamId,
     client: ConnectedClient,
     tx: UnboundedSender<StreamMessage>,
+    is_disabled: bool,
 }
 
 impl ActiveStream {
@@ -29,6 +30,7 @@ impl ActiveStream {
                 id: StreamId::new(),
                 client,
                 tx,
+                is_disabled: false,
             },
             rx,
         )
@@ -94,6 +96,7 @@ impl ActiveStream {
             id: stream_id,
             client,
             tx,
+            is_disabled: false,
         }
     }
 
@@ -152,6 +155,7 @@ impl ActiveStream {
             id: stream_id,
             client,
             tx,
+            is_disabled: false,
         }
     }
 
@@ -165,6 +169,14 @@ impl ActiveStream {
     
     pub fn client_id(&self) -> ClientId {
         self.client.id
+    }
+
+    pub fn disable(&mut self) {
+        self.is_disabled = true
+    }
+
+    pub fn is_disabled(&self) -> bool {
+        self.is_disabled
     }
     
     pub fn close_channel(&self) {

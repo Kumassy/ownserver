@@ -1,3 +1,4 @@
+use futures::channel::mpsc::SendError;
 use thiserror::Error;
 
 pub mod active_stream;
@@ -21,4 +22,12 @@ pub struct Config {
 pub enum ProxyServerError {
     #[error("Failed to load config because it is not initialized.")]
     ConfigNotInitialized,
+}
+
+#[derive(Error, Debug, PartialEq)]
+pub enum ForwardingError {
+    #[error("Destination is disabled.")]
+    DestinationDisabled,
+    #[error("Failed to put data into sender buffer.")]
+    SendError(#[from] SendError),
 }

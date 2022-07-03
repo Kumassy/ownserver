@@ -15,6 +15,7 @@ pub struct ConnectedClient {
     pub host: String,
     // pub is_anonymous: bool,
     tx: UnboundedSender<ControlPacket>,
+    is_disabled: bool,
 }
 
 impl std::fmt::Debug for ConnectedClient {
@@ -30,7 +31,7 @@ impl std::fmt::Debug for ConnectedClient {
 impl Default for ConnectedClient {
     fn default() -> Self {
         let (tx, _) = unbounded();
-        Self { id: ClientId::default(), host: "__default_host__".into(), tx }
+        Self { id: ClientId::default(), host: "__default_host__".into(), tx, is_disabled: false}
     }
 }
 
@@ -72,19 +73,28 @@ impl ConnectedClient {
             tracing::debug!(cid = %id, "cleaning up ws send listener");
         });
 
-        ConnectedClient { id, host, tx }
+        ConnectedClient { id, host, tx, is_disabled: false }
     }
 
     pub fn new(id: ClientId, host: String, tx: UnboundedSender<ControlPacket>) -> Self {
         Self {
             id, 
             host, 
-            tx
+            tx,
+            is_disabled: false,
         }
     }
 
     pub async fn send_to_client(&mut self, packet: ControlPacket) -> Result<(), SendError> {
         self.tx.send(packet).await
+    }
+
+    pub fn disable(&mut self) {
+        self.is_disabled = true
+    }
+
+    pub fn is_disabled(&self) -> bool {
+        self.is_disabled
     }
 
     pub fn close_channel(&self) {
@@ -191,6 +201,7 @@ mod tests {
             id: client_id,
             host: "foobar".into(),
             tx,
+            is_disabled: false
         };
 
         (conn, client, client_id)
