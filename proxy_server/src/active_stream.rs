@@ -1,10 +1,11 @@
 use crate::{connected_clients::ConnectedClient};
-use dashmap::{DashMap, iter::Iter, mapref::one::Ref};
-use futures::{channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender, SendError}, stream, SinkExt, StreamExt};
+use dashmap::{DashMap, iter::Iter, mapref::one::{Ref, RefMut}};
+use futures::{channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender, SendError}, stream, SinkExt, StreamExt, future::Remote};
 use magic_tunnel_lib::{StreamId, ControlPacket, ClientId};
 use metrics::gauge;
-use tokio::{io::{AsyncWrite, AsyncWriteExt}, net::UdpSocket};
+use tokio::{io::{AsyncWrite, AsyncWriteExt, AsyncRead, AsyncReadExt}, net::UdpSocket};
 use std::{sync::Arc, net::SocketAddr};
+use thiserror::Error;
 
 pub const HTTP_ERROR_LOCATING_HOST_RESPONSE: &'static [u8] =
     b"HTTP/1.1 500\r\nContent-Length: 27\r\n\r\nError: Error finding tunnel";
@@ -87,6 +88,9 @@ impl ActiveStream {
             tracing::debug!(
                 remote = %host, cid = %client_id, sid = %stream_id, "tunnel_to_stream closed"
             );
+            if let Some(mut stream) = active_streams.get_mut(&stream_id) {
+                stream.disable();
+            }
             active_streams.remove(&stream_id);
             gauge!("magic_tunnel_server.remotes.streams", active_streams.len() as f64);
             tracing::debug!(cid = %client_id, sid = %stream_id, "remove stream from active_streams, tunnel_to_stream len={}", active_streams.len());
@@ -172,7 +176,8 @@ impl ActiveStream {
     }
 
     pub fn disable(&mut self) {
-        self.is_disabled = true
+        self.is_disabled = true;
+        self.close_channel()
     }
 
     pub fn is_disabled(&self) -> bool {
@@ -185,7 +190,87 @@ impl ActiveStream {
     pub fn is_closed(&self) -> bool {
         self.tx.is_closed()
     }
+
+    pub async fn send_to_client_init(&mut self) -> Result<(), SendError> {
+        self.send_to_client(ControlPacket::Init(self.id)).await
+    }
+
+    pub async fn receive_from_remote_tcp<T>(
+        &mut self,
+        mut tcp_stream: T,
+    ) -> Result<(), ReceiveFromRemoteTCPError> where
+        T: AsyncRead + Unpin,
+    {
+        // now read from stream and forward to clients
+        let mut buf = [0; 1024];
+
+        // client is no longer connected
+        // if Connections::get(conn, &tunnel_stream.client_id()).is_none() {
+        if self.client.is_disabled() {
+            tracing::debug!(cid = %self.client.id, sid = %self.id, "client is disabled, closing stream");
+
+            // let _ = self.send_to_remote(StreamMessage::NoClientTunnel).await;
+            return Err(ReceiveFromRemoteTCPError::ClientDisabled)
+        }
+        if self.is_disabled() {
+            tracing::debug!(cid = %self.client.id, sid = %self.id, "active stream is disabled, closing stream");
+            return Err(ReceiveFromRemoteTCPError::ActiveStreamDisabled)
+        }
+
+        // read from stream
+        let n = match tcp_stream.read(&mut buf).await {
+            Ok(n) => n,
+            Err(e) => {
+                tracing::error!(cid = %self.client.id, sid = %self.id, "failed to read from tcp socket: {:?}", e);
+
+                return Err(ReceiveFromRemoteTCPError::RemoteError);
+            }
+        };
+
+        if n == 0 {
+            tracing::debug!(cid = %self.client.id, sid = %self.id, "remote client streams end");
+            let _ = self
+                .send_to_client(ControlPacket::End(self.id))
+                .await
+                .map_err(|e| {
+                    tracing::error!(cid = %self.client.id, sid = %self.id, "failed to send end signal: {:?}", e);
+                });
+            return Err(ReceiveFromRemoteTCPError::RemoteEnd);
+        }
+
+        tracing::debug!(cid = %self.client.id, sid = %self.id, "read {} bytes message from remote", n);
+        let data = &buf[..n];
+        let packet = ControlPacket::Data(self.id, data.to_vec());
+
+        match self.send_to_client(packet).await {
+            Ok(_) => {
+                tracing::debug!(cid = %self.client.id, sid = %self.id, "sent data packet to client");
+                Ok(())
+            },
+            Err(e) => {
+                // This line extecuted when
+                // - Corresponding client not found or closed
+                tracing::warn!(cid = %self.client.id, sid = %self.id, "failed to forward tcp packets to disconnected client. dropping client. {:?}", e);
+                Err(ReceiveFromRemoteTCPError::ClientError)
+            }
+        }
+    }
 }
+
+#[derive(Error, Debug, PartialEq)]
+pub enum ReceiveFromRemoteTCPError {
+    #[error("Client is no longer available.")]
+    ClientDisabled,
+    #[error("Failed to send data to client.")]
+    ClientError,
+    #[error("ActiveStream is no longer available.")]
+    ActiveStreamDisabled,
+    #[error("Failed to send data to remote.")]
+    RemoteError,
+    #[error("Remote stream has closed.")]
+    RemoteEnd,
+}
+
 
 #[derive(Debug, Clone, Default)]
 pub struct ActiveStreams {
@@ -196,6 +281,10 @@ pub struct ActiveStreams {
 impl ActiveStreams {
     pub fn get(&self, stream_id: &StreamId) -> Option<Ref<StreamId, ActiveStream>> {
         self.streams.get(stream_id)
+    }
+
+    pub fn get_mut(&self, stream_id: &StreamId) -> Option<RefMut<StreamId, ActiveStream>> {
+        self.streams.get_mut(stream_id)
     }
 
     pub fn insert(&self, stream_id: StreamId, active_stream: ActiveStream, addr: SocketAddr) -> Option<ActiveStream> {
@@ -380,4 +469,69 @@ mod active_streams_tcp_test {
         // assert_eq!(reason, TunnelToStreamExitReason::QueueClosed);
         Ok(())
     }
+}
+
+
+
+#[cfg(test)]
+mod active_streams_receive_tcp_test {
+    use super::*;
+    use futures::channel::mpsc::{unbounded, UnboundedReceiver};
+    use tokio_test::io::Builder;
+
+    #[tokio::test]
+    async fn send_stream_end() -> Result<(), Box<dyn std::error::Error>> {
+        let mut tcp_mock = Builder::new().build();
+        let (tx, mut client_rx) = unbounded();
+        let client = ConnectedClient::new(ClientId::new(), "foohost".into(), tx);
+        let (mut active_stream, _) = ActiveStream::new(client);
+        let stream_id = active_stream.id;
+
+        assert_eq!(active_stream.receive_from_remote_tcp(&mut tcp_mock).await, Err(ReceiveFromRemoteTCPError::RemoteEnd));
+
+        assert_eq!(
+            client_rx.next().await.unwrap(),
+            ControlPacket::End(stream_id)
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn forward_data() -> Result<(), Box<dyn std::error::Error>> {
+        let mut tcp_mock = Builder::new().read(b"foobar").build();
+        let (tx, mut client_rx) = unbounded();
+        let client = ConnectedClient::new(ClientId::new(), "foohost".into(), tx);
+        let (mut active_stream, _) = ActiveStream::new(client);
+        let stream_id = active_stream.id;
+
+
+        assert_eq!(active_stream.receive_from_remote_tcp(&mut tcp_mock).await, Ok(()));
+        assert_eq!(
+            client_rx.next().await.unwrap(),
+            ControlPacket::Data(stream_id, b"foobar".to_vec())
+        );
+
+        assert_eq!(active_stream.receive_from_remote_tcp(&mut tcp_mock).await, Err(ReceiveFromRemoteTCPError::RemoteEnd));
+
+        assert_eq!(
+            client_rx.next().await.unwrap(),
+            ControlPacket::End(stream_id)
+        );
+        Ok(())
+    }
+
+    // TODO: cancellation
+    // #[tokio::test]
+    // async fn stop_wait_read_when_tunnel_stream_is_closed() -> Result<(), Box<dyn std::error::Error>>
+    // {
+    //     let (conn, client, active_stream, _stream_rx, mut client_rx) = create_active_stream();
+    //     Connections::add(&conn, client);
+
+    //     client_rx.close();
+    //     let infinite_reader = InfiniteRead::new();
+    //     let _ = process_tcp_stream(&conn, active_stream, infinite_reader).await;
+
+    //     Ok(())
+    // }
 }

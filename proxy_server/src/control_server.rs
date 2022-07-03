@@ -345,7 +345,8 @@ async fn handle_new_connection(
 
     tokio::spawn(
         async move {
-            let client = process_client_messages(active_streams, client, stream).await;
+            let mut client = process_client_messages(active_streams, client, stream).await;
+            client.disable();
             Connections::remove(conn, &client);
             tracing::debug!(cid = %client_id, "remove client from connections len_clients={} len_hosts={}", Connections::len_clients(conn), Connections::len_hosts(conn));
             if let Some((_cid, ct)) = remote_cancellers.remove(&client_id) {

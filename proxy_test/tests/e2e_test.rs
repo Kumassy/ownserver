@@ -476,7 +476,7 @@ mod e2e_test {
         tokio::time::sleep(Duration::from_secs(6)).await;
 
         remote.write_all(&b"foobar".to_vec()).await?;
-        assert_socket_bytes_matches!(remote, b"HTTP/1.1 404\r\nContent-Length: 23\r\n\r\nError: Tunnel Not Found");
+        assert_socket_bytes_matches!(remote, b"");
 
         assert_eq!(
             active_streams_server.iter().count(),
