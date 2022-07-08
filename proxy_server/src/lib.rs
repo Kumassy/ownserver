@@ -54,6 +54,7 @@ pub struct Client {
     // ws_rx: SplitStream<WebSocket>,
     store: Arc<Store>,
     ct: CancellationToken,
+    disabled: bool,
 }
 
 impl Client {
@@ -131,7 +132,7 @@ impl Client {
             store_.disable_client(client_id);
         });
 
-        Self { client_id, host, ws_tx: sink, store, ct: token }
+        Self { client_id, host, ws_tx: sink, store, ct: token, disabled: false }
     }
 
     // pub async fn send_to_stream(&self, stream_id: StreamId, message: StreamMessage) -> Result<(), Box<dyn std::error::Error>> {
@@ -158,7 +159,13 @@ impl Client {
 
     pub fn disable(&mut self) {
         self.ct.cancel();
+        self.disabled = true;
     }
+
+    pub fn disabled(&self) -> bool {
+        self.disabled
+    }
+
 }
 
 #[derive(Debug)]
@@ -202,6 +209,17 @@ impl RemoteStream {
         match self {
             RemoteStream::RemoteTcp(tcp) => {
                 tcp.disable();
+            }
+            _ => {
+                unimplemented!();
+            }
+        }
+    }
+
+    pub fn disabled(&self) -> bool {
+        match self {
+            RemoteStream::RemoteTcp(tcp) => {
+                tcp.disabled()
             }
             _ => {
                 unimplemented!();
@@ -256,6 +274,7 @@ impl RemoteTcp {
                     }
                     _ = ct_.cancelled() => {
                         // exit from this remote stream
+                        tracing::info!(cid = %client_id, id=%stream_id, "read loop was cancelled");
                         return;
                     }
                 };
@@ -443,5 +462,10 @@ impl Store {
     pub fn add_remote(&self, remote: RemoteStream) {
         let stream_id = remote.stream_id();
         self.streams.insert(stream_id, remote);
+    }
+
+    pub fn cleanup(&self) {
+        self.streams.retain(|_, v| !v.disabled());
+        self.clients.retain(|_, v| !v.disabled());
     }
 }
