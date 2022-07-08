@@ -24,7 +24,7 @@ use once_cell::sync::OnceCell;
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
-use crate::active_stream::{ActiveStream, ActiveStreams, StreamMessage};
+use crate::{active_stream::{ActiveStream, ActiveStreams, StreamMessage}, Store, Client};
 use crate::connected_clients::{ConnectedClient, Connections};
 use crate::port_allocator::PortAllocator;
 use crate::remote;
@@ -58,6 +58,43 @@ pub fn spawn<A: Into<SocketAddr>>(
                         w,
                     )
                     .await
+                }
+                .instrument(tracing::info_span!("handle_websocket"))
+            })
+        },
+    );
+
+    let routes = client_conn.or(health_check);
+
+    // TODO tls https://docs.rs/warp/0.3.1/warp/struct.Server.html#method.tls
+    tokio::spawn(warp::serve(routes).run(addr.into()))
+}
+
+
+pub fn spawn2<A: Into<SocketAddr>>(
+    config: &'static OnceCell<Config>,
+    store: Arc<Store>,
+    alloc: Arc<Mutex<PortAllocator<Range<u16>>>>,
+    addr: A,
+) -> JoinHandle<()> {
+    let health_check = warp::get().and(warp::path("health_check")).map(|| {
+        tracing::debug!("Health Check #2 triggered");
+        "ok"
+    });
+
+    let client_conn = warp::path("tunnel").and(client_addr()).and(warp::ws()).map(
+        move |client_addr: SocketAddr, ws: Ws| {
+            let alloc_ = alloc.clone();
+            let store_ = store.clone();
+            ws.on_upgrade(move |w| {
+                async move {
+                    handle_new_connection2(
+                        config,
+                        store_,
+                        alloc_,
+                        client_addr,
+                        w
+                    ).await
                 }
                 .instrument(tracing::info_span!("handle_websocket"))
             })
@@ -356,6 +393,39 @@ async fn handle_new_connection(
         }
         .instrument(tracing::info_span!("process_client")),
     );
+}
+
+#[tracing::instrument(skip(config, store, alloc, websocket))]
+async fn handle_new_connection2(
+    config: &'static OnceCell<Config>,
+    store: Arc<Store>,
+    alloc: Arc<Mutex<PortAllocator<Range<u16>>>>,
+    client_ip: SocketAddr,
+    mut websocket: WebSocket,
+) {
+    increment_counter!("magic_tunnel_server.control.connections.success");
+    let handshake = match try_client_handshake(&mut websocket, config, alloc).await {
+        Some(ws) => ws,
+        None => return,
+    };
+    let client_id = handshake.id;
+    tracing::info!(cid = %client_id, port = %handshake.port, "open tunnel");
+    let host = format!("host-foobar-{}", handshake.port);
+    let listen_addr = format!("0.0.0.0:{}", handshake.port);
+
+    match handshake.payload {
+        Payload::UDP => {
+            unimplemented!();
+        }
+        _ => {
+            // TODO token
+            let token = remote::tcp::spawn_remote2(store.clone(), listen_addr, client_id).await;
+        }
+    }
+
+    let client = Client::new(store.clone(), client_id, host, websocket);
+    store.add_client(client);
+    tracing::info!(cid=%client_id, "register client to store");
 }
 
 /// Send the client a "stream init" message

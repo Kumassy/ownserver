@@ -24,18 +24,11 @@ use tokio_util::sync::CancellationToken;
 #[cfg(test)]
 mod server_test {
     use super::*;
-    use magic_tunnel_lib::Payload;
+    use magic_tunnel_lib::{Payload, StreamId};
+    use magic_tunnel_server::{proxy_server::run2, Store};
     use serial_test::serial;
 
     static CONFIG: OnceCell<Config> = OnceCell::new();
-
-    macro_rules! assert_control_packet_type_matches {
-        ($expr:expr, $pat:pat) => {
-            let payload = $expr.next().await.unwrap()?.into_data();
-            let control_packet: ControlPacket = rmp_serde::from_slice(&payload)?;
-            assert!(matches!(control_packet, $pat));
-        };
-    }
 
     macro_rules! assert_control_packet_matches {
         ($expr:expr, $expected:expr) => {
@@ -63,15 +56,11 @@ mod server_test {
     ) -> Result<
         (
             WebSocketStream<MaybeTlsStream<TcpStream>>,
-            ActiveStreams,
+            Arc<Store>,
             ClientInfo,
         ),
         Box<dyn std::error::Error>,
     > {
-        lazy_static! {
-            pub static ref CONNECTIONS: Connections = Connections::new();
-            pub static ref ACTIVE_STREAMS: ActiveStreams = ActiveStreams::default();
-        }
 
         let config = CONFIG.get_or_init(||
             Config {
@@ -83,20 +72,15 @@ mod server_test {
             }
         );
 
-        // we must clear CONNECTIONS, ACTIVE_STREAMS
-        // because they are shared across test
-        Connections::clear(&CONNECTIONS);
-        ACTIVE_STREAMS.clear();
         let alloc = Arc::new(Mutex::new(PortAllocator::new(config.remote_port_start..config.remote_port_end)));
-        let remote_cancellers: Arc<DashMap<ClientId, CancellationToken>> = Arc::new(DashMap::new());
+        let store = Arc::new(Store::default());
 
+        let store_ = store.clone();
         tokio::spawn(async move {
-            run(
+            run2(
                 &CONFIG,
-                &CONNECTIONS,
-                &ACTIVE_STREAMS,
+                store_,
                 alloc,
-                remote_cancellers,
             )
             .await.unwrap();
         });
@@ -112,39 +96,30 @@ mod server_test {
         send_client_hello(&mut websocket, token, Payload::Other).await?;
         let client_info = verify_server_hello(&mut websocket).await?;
 
-        Ok((websocket, ACTIVE_STREAMS.clone(), client_info))
+        Ok((websocket, store, client_info))
+    }
+
+    async fn wait() {
+        tokio::time::sleep(Duration::from_secs(3)).await;
     }
 
     #[tokio::test]
     #[serial]
     async fn forward_remote_traffic_to_client() -> Result<(), Box<dyn std::error::Error>> {
         let control_port: u16 = 5000;
-        let (websoket, active_streams, client_info) = launch_proxy_server(control_port).await?;
+        let (websoket, store, client_info) = launch_proxy_server(control_port).await?;
         let (mut _raw_client_ws_sink, mut raw_client_ws_stream) = websoket.split();
 
-        assert_eq!(
-            active_streams.iter().count(),
-            0,
-            "active_streams should be empty until remote connection established"
-        );
-
-        // access remote port
         let mut remote = TcpStream::connect(client_info.remote_addr)
             .await
             .expect("Failed to connect to remote port");
-        // wait until remote access has registered to ACTIVE_STREAMS
-        tokio::time::sleep(Duration::from_secs(3)).await;
         remote
             .write_all(b"some bytes")
             .await
             .expect("failed to send client hello");
 
-        assert_eq!(
-            active_streams.iter().count(),
-            1,
-            "remote socket should be accepted and registered"
-        );
-        let stream_id = active_streams.iter().next().unwrap().id;
+        wait().await;
+        let stream_id = store.streams.iter().next().unwrap().stream_id();
 
         assert_control_packet_matches!(
             raw_client_ws_stream,
@@ -161,28 +136,16 @@ mod server_test {
     #[serial]
     async fn forward_client_traffic_to_remote() -> Result<(), Box<dyn std::error::Error>> {
         let control_port: u16 = 5000;
-        let (websoket, active_streams, client_info) = launch_proxy_server(control_port).await?;
+        let (websoket, store, client_info) = launch_proxy_server(control_port).await?;
         let (mut raw_client_ws_sink, mut _raw_client_ws_stream) = websoket.split();
 
-        assert_eq!(
-            active_streams.iter().count(),
-            0,
-            "active_streams should be empty until remote connection established"
-        );
-
-        // access remote port
         let mut remote = TcpStream::connect(client_info.remote_addr)
             .await
             .expect("Failed to connect to remote port");
-        // wait until remote access has registered to ACTIVE_STREAMS
-        tokio::time::sleep(Duration::from_secs(3)).await;
 
-        assert_eq!(
-            active_streams.iter().count(),
-            1,
-            "remote socket should be accepted and registered"
-        );
-        let stream_id = active_streams.iter().next().unwrap().id;
+        wait().await;
+        let stream_id = store.streams.iter().next().unwrap().stream_id();
+
         raw_client_ws_sink
             .send(Message::binary(
                 rmp_serde::to_vec(&ControlPacket::Data(stream_id, b"foobarbaz".to_vec())).unwrap()
@@ -197,44 +160,24 @@ mod server_test {
     #[serial]
     async fn forward_multiple_remote_traffic_to_client() -> Result<(), Box<dyn std::error::Error>> {
         let control_port: u16 = 5000;
-        let (websoket, active_streams, client_info) = launch_proxy_server(control_port).await?;
+        let (websoket, store, client_info) = launch_proxy_server(control_port).await?;
         let (mut _raw_client_ws_sink, mut raw_client_ws_stream) = websoket.split();
 
-        assert_eq!(
-            active_streams.iter().count(),
-            0,
-            "active_streams should be empty until remote connection established"
-        );
-
-        // access remote port
         let mut remote1 = TcpStream::connect(client_info.remote_addr.clone())
             .await
             .expect("Failed to connect to remote port");
-        // wait until remote access has registered to ACTIVE_STREAMS
-        tokio::time::sleep(Duration::from_secs(3)).await;
-        assert_eq!(
-            active_streams.iter().count(),
-            1,
-            "remote socket should be accepted and registered"
-        );
-        let stream_id1 = active_streams.iter().next().unwrap().id;
+        wait().await;
+        let stream_id1 = store.streams.iter().next().unwrap().stream_id();
 
         let mut remote2 = TcpStream::connect(client_info.remote_addr.clone())
             .await
             .expect("Failed to connect to remote port");
-        // wait until remote access has registered to ACTIVE_STREAMS
-        tokio::time::sleep(Duration::from_secs(3)).await;
-        assert_eq!(
-            active_streams.iter().count(),
-            2,
-            "remote socket should be accepted and registered"
-        );
-        let stream_id2 = active_streams
+        wait().await;
+        let stream_id2 = store.streams
             .iter()
-            .filter(|sid| sid.key() != &stream_id1)
-            .next()
+            .find(|sid| sid.key() != &stream_id1)
             .unwrap()
-            .id;
+            .stream_id();
 
         assert_ne!(stream_id1, stream_id2);
 
@@ -242,11 +185,11 @@ mod server_test {
             .write_all(b"some bytes 1")
             .await
             .expect("failed to send client hello");
-        tokio::time::sleep(Duration::from_secs(3)).await;
         remote2
             .write_all(b"some bytes 2")
             .await
             .expect("failed to send client hello");
+        wait().await;
 
         assert_control_packet_matches!(
             raw_client_ws_stream,
@@ -271,44 +214,24 @@ mod server_test {
     #[serial]
     async fn forward_client_traffic_to_multiple_remote() -> Result<(), Box<dyn std::error::Error>> {
         let control_port: u16 = 5000;
-        let (websoket, active_streams, client_info) = launch_proxy_server(control_port).await?;
+        let (websoket, store, client_info) = launch_proxy_server(control_port).await?;
         let (mut raw_client_ws_sink, mut _raw_client_ws_stream) = websoket.split();
 
-        assert_eq!(
-            active_streams.iter().count(),
-            0,
-            "active_streams should be empty until remote connection established"
-        );
-
-        // access remote port
         let mut remote1 = TcpStream::connect(client_info.remote_addr.clone())
             .await
             .expect("Failed to connect to remote port");
-        // wait until remote access has registered to ACTIVE_STREAMS
-        tokio::time::sleep(Duration::from_secs(3)).await;
-        assert_eq!(
-            active_streams.iter().count(),
-            1,
-            "remote socket should be accepted and registered"
-        );
-        let stream_id1 = active_streams.iter().next().unwrap().id;
+        wait().await;
+        let stream_id1 = store.streams.iter().next().unwrap().stream_id();
 
         let mut remote2 = TcpStream::connect(client_info.remote_addr.clone())
             .await
             .expect("Failed to connect to remote port");
-        // wait until remote access has registered to ACTIVE_STREAMS
-        tokio::time::sleep(Duration::from_secs(3)).await;
-        assert_eq!(
-            active_streams.iter().count(),
-            2,
-            "remote socket should be accepted and registered"
-        );
-        let stream_id2 = active_streams
+        wait().await;
+        let stream_id2 = store.streams
             .iter()
-            .filter(|sid| sid.key() != &stream_id1)
-            .next()
+            .find(|sid| sid.key() != &stream_id1)
             .unwrap()
-            .id;
+            .stream_id();
 
         assert_ne!(stream_id1, stream_id2);
 

@@ -2,6 +2,7 @@ use futures::channel::mpsc::UnboundedReceiver;
 use futures::prelude::*;
 use metrics::{increment_counter, gauge};
 use std::io;
+use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, ToSocketAddrs};
 use tokio::sync::oneshot;
@@ -10,7 +11,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::active_stream::{ActiveStream, ActiveStreams, StreamMessage};
 use crate::connected_clients::Connections;
-use crate::control_server;
+use crate::{control_server, RemoteTcp, Store, RemoteStream};
 pub use magic_tunnel_lib::{ClientId, ControlPacket, StreamId};
 
 #[tracing::instrument(skip(conn, active_streams, listen_addr))]
@@ -135,6 +136,74 @@ pub async fn accept_connection(
     );
 
 }
+
+pub async fn spawn_remote2(
+    store: Arc<Store>,
+    listen_addr: impl ToSocketAddrs + std::fmt::Debug + Clone,
+    client_id: ClientId,
+) -> io::Result<CancellationToken> {
+    // create our accept any server
+    let listener = TcpListener::bind(listen_addr.clone()).await?;
+    tracing::info!(cid = %client_id, "remote process listening on {:?}", listen_addr);
+
+    let cancellation_token = CancellationToken::new();
+    let ct = cancellation_token.clone();
+
+    tokio::spawn(async move {
+        loop {
+            let socket = tokio::select! {
+                socket = listener.accept() => {
+                    match socket {
+                        Ok((socket, _)) => socket,
+                        _ => {
+                            tracing::error!(cid = %client_id, "failed to accept socket");
+                            continue;
+                        }
+                    }
+                },
+                _ = ct.cancelled() => {
+                    tracing::info!(cid = %client_id, "tcp listener is cancelled.");
+                    return;
+                },
+            };
+
+            let store_ = store.clone();
+
+            tokio::spawn(
+                async move {
+                    accept_connection2(store_, socket, client_id).await;
+                }
+                .instrument(tracing::info_span!("remote_connect")),
+            );
+        }
+    }.instrument(tracing::info_span!("spawn_accept_connection")));
+    Ok(cancellation_token)
+}
+
+pub async fn accept_connection2(
+    store: Arc<Store>,
+    mut socket: TcpStream,
+    client_id: ClientId,
+) {
+    tracing::info!(cid = %client_id, "new remote connection");
+
+    let peer_addr = match socket.peer_addr() {
+        Ok(addr) => addr,
+        Err(_) => {
+            tracing::error!(cid = %client_id, "failed to find remote peer addr");
+            // let _ = socket.write_all(HTTP_TUNNEL_REFUSED_RESPONSE).await;
+            return;
+        }
+    };
+    increment_counter!("magic_tunnel_server.remotes.success");
+
+
+    let remote = RemoteTcp::new(store.clone(), socket, client_id);
+    if let Ok(_) = remote.send_init_to_client().await {
+        store.add_remote(RemoteStream::RemoteTcp(remote));
+    }
+}
+
 
 pub const HTTP_ERROR_LOCATING_HOST_RESPONSE: &'static [u8] =
     b"HTTP/1.1 500\r\nContent-Length: 27\r\n\r\nError: Error finding tunnel";

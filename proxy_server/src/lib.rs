@@ -2,8 +2,9 @@ use std::{net::SocketAddr, sync::Arc};
 
 use active_stream::{StreamMessage, ActiveStream};
 use dashmap::DashMap;
-use futures::{channel::mpsc::SendError, StreamExt, stream::{SplitSink, SplitStream}, SinkExt};
+use futures::{channel::mpsc::SendError, StreamExt, stream::{SplitSink, SplitStream}, SinkExt, future::Remote};
 use magic_tunnel_lib::{ClientId, StreamId, ControlPacket};
+use metrics::gauge;
 use thiserror::Error;
 
 pub mod active_stream;
@@ -56,9 +57,8 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn new(store: Arc<Store>, ws: WebSocket) -> Self {
+    pub fn new(store: Arc<Store>, client_id: ClientId, host: String, ws: WebSocket) -> Self {
         let (sink, mut stream) = ws.split();
-        let client_id = ClientId::new();
         let token = CancellationToken::new();
 
         let ct = token.clone();
@@ -131,7 +131,7 @@ impl Client {
             store_.disable_client(client_id);
         });
 
-        Self { client_id, host: "hoo".into(), ws_tx: sink, store, ct: token }
+        Self { client_id, host, ws_tx: sink, store, ct: token }
     }
 
     // pub async fn send_to_stream(&self, stream_id: StreamId, message: StreamMessage) -> Result<(), Box<dyn std::error::Error>> {
@@ -150,6 +150,7 @@ impl Client {
 
         if let Err(e) =  self.ws_tx.send(Message::binary(data)).await {
             tracing::debug!(cid = %self.client_id, error = ?e, "client disconnected: aborting");
+            self.disable();
             return Err(ClientStreamError::ClientError(format!("failed to communicate with client {:?}", e)))
         }
         Ok(())
@@ -185,16 +186,33 @@ impl RemoteStream {
         }
     }
 
-    // pub fn send_to_client(&self, packet: ControlPacket) -> Result<(), Box<dyn std::error::Error>> {
-
-    //     Ok(())
-    // }
+    pub async fn send_to_client(&self, packet: ControlPacket) -> Result<(), ClientStreamError> {
+        match self {
+            RemoteStream::RemoteTcp(tcp) => {
+                tcp.send_to_client(packet).await
+            }
+            _ => {
+                unimplemented!();
+            }
+        }
+    }
 
 
     pub fn disable(&mut self) {
         match self {
             RemoteStream::RemoteTcp(tcp) => {
                 tcp.disable();
+            }
+            _ => {
+                unimplemented!();
+            }
+        }
+    }
+
+    pub fn stream_id(&self) -> StreamId {
+        match self {
+            RemoteStream::RemoteTcp(tcp) => {
+                tcp.stream_id
             }
             _ => {
                 unimplemented!();
@@ -311,11 +329,18 @@ impl RemoteTcp {
         Ok(())
     }
 
-    // async fn send_to_client(&self, packet: ControlPacket) -> Result<(), Box<dyn std::error::Error>> {
-    //     let client_id = self.client_id;
-    //     self.store.clients.get_mut(&client_id).unwrap().send_to_client(packet).await?;
-    //     Ok(())
-    // }
+    pub async fn send_to_client(&self, packet: ControlPacket) -> Result<(), ClientStreamError> {
+        let client_id = self.client_id;
+        self.store.send_to_client(client_id, packet).await?;
+        Ok(())
+    }
+
+    pub async fn send_init_to_client(&self) -> Result<(), ClientStreamError> {
+        let client_id = self.client_id;
+        let packet = ControlPacket::Init(self.stream_id);
+        self.store.send_to_client(client_id, packet).await?;
+        Ok(())
+    }
 
     pub fn disabled(&self) -> bool {
         self.disabled
@@ -362,7 +387,7 @@ pub struct RemoteUdp {
 }
 
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Store {
     // pub streams: DashMap<StreamId, Arc<dyn RemoteStream>>,
     pub streams: DashMap<StreamId, RemoteStream>,
@@ -405,5 +430,18 @@ impl Store {
         if let Some(mut client) = self.clients.get_mut(&client_id) {
             client.disable();
         }
+    }
+
+    pub fn add_client(&self, client: Client) {
+        let client_id = client.client_id;
+        let host = client.host.clone();
+        self.clients.insert(client_id, client);
+        self.hosts_map.insert(host, client_id);
+        gauge!("magic_tunnel_server.control.connections", self.clients.len() as f64);
+    }
+
+    pub fn add_remote(&self, remote: RemoteStream) {
+        let stream_id = remote.stream_id();
+        self.streams.insert(stream_id, remote);
     }
 }
