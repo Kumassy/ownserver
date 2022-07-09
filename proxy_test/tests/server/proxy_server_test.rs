@@ -1,32 +1,25 @@
-// integrated server test
-use dashmap::DashMap;
-use futures::{SinkExt, StreamExt};
-use lazy_static::lazy_static;
-use magic_tunnel_client::proxy_client::{send_client_hello, verify_server_hello, ClientInfo};
-use magic_tunnel_lib::{ClientId, ControlPacket};
-use magic_tunnel_server::{
-    active_stream::ActiveStreams, connected_clients::Connections, port_allocator::PortAllocator,
-    proxy_server::run,
-};
-use std::sync::Arc;
-use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
-use tokio::sync::Mutex;
-use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
-use url::Url;
-use once_cell::sync::OnceCell;
-use magic_tunnel_server::Config;
-use magic_tunnel_auth::make_jwt;
-use chrono::Duration as CDuration;
-use tokio_util::sync::CancellationToken;
-
 #[cfg(test)]
 mod server_test {
-    use super::*;
-    use magic_tunnel_lib::{Payload, StreamId};
+    use magic_tunnel_lib::Payload;
     use magic_tunnel_server::{proxy_server::run2, Store};
     use serial_test::serial;
+    use futures::{SinkExt, StreamExt};
+    use magic_tunnel_client::proxy_client::{send_client_hello, verify_server_hello, ClientInfo};
+    use magic_tunnel_lib::ControlPacket;
+    use magic_tunnel_server::{
+        port_allocator::PortAllocator,
+    };
+    use std::sync::Arc;
+    use std::time::Duration;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpStream;
+    use tokio::sync::Mutex;
+    use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
+    use url::Url;
+    use once_cell::sync::OnceCell;
+    use magic_tunnel_server::Config;
+    use magic_tunnel_auth::make_jwt;
+    use chrono::Duration as CDuration;
 
     static CONFIG: OnceCell<Config> = OnceCell::new();
 
@@ -49,6 +42,12 @@ mod server_test {
 
             assert_eq!(data, $expected);
         };
+    }
+
+    macro_rules! wait {
+        () => {
+            tokio::time::sleep(Duration::from_secs(3)).await;
+        }
     }
 
     async fn launch_proxy_server(
@@ -99,15 +98,13 @@ mod server_test {
         Ok((websocket, store, client_info))
     }
 
-    async fn wait() {
-        tokio::time::sleep(Duration::from_secs(3)).await;
-    }
+
+    const CONTROL_PORT: u16 = 5000;
 
     #[tokio::test]
     #[serial]
     async fn forward_remote_traffic_to_client() -> Result<(), Box<dyn std::error::Error>> {
-        let control_port: u16 = 5000;
-        let (websoket, store, client_info) = launch_proxy_server(control_port).await?;
+        let (websoket, store, client_info) = launch_proxy_server(CONTROL_PORT).await?;
         let (mut _raw_client_ws_sink, mut raw_client_ws_stream) = websoket.split();
 
         let mut remote = TcpStream::connect(client_info.remote_addr)
@@ -118,7 +115,7 @@ mod server_test {
             .await
             .expect("failed to send client hello");
 
-        wait().await;
+        wait!();
         let stream_id = store.streams.iter().next().unwrap().stream_id();
 
         assert_control_packet_matches!(
@@ -135,15 +132,14 @@ mod server_test {
     #[tokio::test]
     #[serial]
     async fn forward_client_traffic_to_remote() -> Result<(), Box<dyn std::error::Error>> {
-        let control_port: u16 = 5000;
-        let (websoket, store, client_info) = launch_proxy_server(control_port).await?;
+        let (websoket, store, client_info) = launch_proxy_server(CONTROL_PORT).await?;
         let (mut raw_client_ws_sink, mut _raw_client_ws_stream) = websoket.split();
 
         let mut remote = TcpStream::connect(client_info.remote_addr)
             .await
             .expect("Failed to connect to remote port");
 
-        wait().await;
+        wait!();
         let stream_id = store.streams.iter().next().unwrap().stream_id();
 
         raw_client_ws_sink
@@ -159,20 +155,19 @@ mod server_test {
     #[tokio::test]
     #[serial]
     async fn forward_multiple_remote_traffic_to_client() -> Result<(), Box<dyn std::error::Error>> {
-        let control_port: u16 = 5000;
-        let (websoket, store, client_info) = launch_proxy_server(control_port).await?;
+        let (websoket, store, client_info) = launch_proxy_server(CONTROL_PORT).await?;
         let (mut _raw_client_ws_sink, mut raw_client_ws_stream) = websoket.split();
 
         let mut remote1 = TcpStream::connect(client_info.remote_addr.clone())
             .await
             .expect("Failed to connect to remote port");
-        wait().await;
+        wait!();
         let stream_id1 = store.streams.iter().next().unwrap().stream_id();
 
         let mut remote2 = TcpStream::connect(client_info.remote_addr.clone())
             .await
             .expect("Failed to connect to remote port");
-        wait().await;
+        wait!();
         let stream_id2 = store.streams
             .iter()
             .find(|sid| sid.key() != &stream_id1)
@@ -189,7 +184,7 @@ mod server_test {
             .write_all(b"some bytes 2")
             .await
             .expect("failed to send client hello");
-        wait().await;
+        wait!();
 
         assert_control_packet_matches!(
             raw_client_ws_stream,
@@ -213,20 +208,19 @@ mod server_test {
     #[tokio::test]
     #[serial]
     async fn forward_client_traffic_to_multiple_remote() -> Result<(), Box<dyn std::error::Error>> {
-        let control_port: u16 = 5000;
-        let (websoket, store, client_info) = launch_proxy_server(control_port).await?;
+        let (websoket, store, client_info) = launch_proxy_server(CONTROL_PORT).await?;
         let (mut raw_client_ws_sink, mut _raw_client_ws_stream) = websoket.split();
 
         let mut remote1 = TcpStream::connect(client_info.remote_addr.clone())
             .await
             .expect("Failed to connect to remote port");
-        wait().await;
+        wait!();
         let stream_id1 = store.streams.iter().next().unwrap().stream_id();
 
         let mut remote2 = TcpStream::connect(client_info.remote_addr.clone())
             .await
             .expect("Failed to connect to remote port");
-        wait().await;
+        wait!();
         let stream_id2 = store.streams
             .iter()
             .find(|sid| sid.key() != &stream_id1)

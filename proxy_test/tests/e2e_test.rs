@@ -1,36 +1,29 @@
-// integrated server test
-use dashmap::DashMap;
-use lazy_static::lazy_static;
-use magic_tunnel_client::{
-    proxy_client::{self, ClientInfo},
-    ActiveStreams as ActiveStreamsClient,
-};
-use magic_tunnel_lib::ClientId;
-use magic_tunnel_server::{
-    active_stream::ActiveStreams as ActiveStreamsServer,
-    connected_clients::Connections,
-    port_allocator::PortAllocator,
-    proxy_server,
-    remote::tcp::HTTP_TUNNEL_REFUSED_RESPONSE,
-    Config,
-};
-use magic_tunnel_auth::build_routes;
-use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
-use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::oneshot::{self, Receiver};
-use tokio::sync::Mutex;
-use tokio_util::sync::CancellationToken;
-use once_cell::sync::OnceCell;
-
 #[cfg(test)]
 mod e2e_test {
-    use super::*;
     use magic_tunnel_lib::Payload;
-    use magic_tunnel_server::{Store, control_server};
+    use magic_tunnel_server::Store;
     use serial_test::serial;
+    use lazy_static::lazy_static;
+    use magic_tunnel_client::{
+        proxy_client::{self, ClientInfo},
+        ActiveStreams as ActiveStreamsClient,
+    };
+    use magic_tunnel_server::{
+        port_allocator::PortAllocator,
+        proxy_server,
+        Config,
+    };
+    use magic_tunnel_auth::build_routes;
+    use std::collections::HashMap;
+    use std::sync::{Arc, RwLock};
+    use std::time::Duration;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::{TcpListener, TcpStream};
+    use tokio::sync::oneshot::{self, Receiver};
+    use tokio::sync::Mutex;
+    use tokio_util::sync::CancellationToken;
+    use once_cell::sync::OnceCell;
+
 
     static CONFIG: OnceCell<Config> = OnceCell::new();
 
