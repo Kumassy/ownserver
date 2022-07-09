@@ -413,19 +413,23 @@ async fn handle_new_connection2(
     let host = format!("host-foobar-{}", handshake.port);
     let listen_addr = format!("0.0.0.0:{}", handshake.port);
 
+
+    let client = Client::new(store.clone(), client_id, host, websocket);
+    let ct = client.cancellation_token();
+    store.add_client(client);
+    tracing::info!(cid=%client_id, "register client to store");
+
     match handshake.payload {
         Payload::UDP => {
             unimplemented!();
         }
         _ => {
             // TODO token
-            let token = remote::tcp::spawn_remote2(store.clone(), listen_addr, client_id).await;
+            if let Err(e) = remote::tcp::spawn_remote2(store.clone(), listen_addr, client_id, ct).await {
+                tracing::error!(cid = %client_id, port = %handshake.port, "failed to spawn remote listener {:?}", e);
+            }
         }
     }
-
-    let client = Client::new(store.clone(), client_id, host, websocket);
-    store.add_client(client);
-    tracing::info!(cid=%client_id, "register client to store");
 }
 
 /// Send the client a "stream init" message

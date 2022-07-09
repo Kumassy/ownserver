@@ -166,6 +166,10 @@ impl Client {
         self.disabled
     }
 
+    pub fn cancellation_token(&self) -> CancellationToken {
+        self.ct.clone()
+    }
+
 }
 
 #[derive(Debug)]

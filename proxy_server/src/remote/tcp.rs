@@ -141,12 +141,12 @@ pub async fn spawn_remote2(
     store: Arc<Store>,
     listen_addr: impl ToSocketAddrs + std::fmt::Debug + Clone,
     client_id: ClientId,
-) -> io::Result<CancellationToken> {
+    cancellation_token: CancellationToken,
+) -> io::Result<()> {
     // create our accept any server
     let listener = TcpListener::bind(listen_addr.clone()).await?;
     tracing::info!(cid = %client_id, "remote process listening on {:?}", listen_addr);
 
-    let cancellation_token = CancellationToken::new();
     let ct = cancellation_token.clone();
 
     tokio::spawn(async move {
@@ -177,12 +177,12 @@ pub async fn spawn_remote2(
             );
         }
     }.instrument(tracing::info_span!("spawn_accept_connection")));
-    Ok(cancellation_token)
+    Ok(())
 }
 
 pub async fn accept_connection2(
     store: Arc<Store>,
-    mut socket: TcpStream,
+    socket: TcpStream,
     client_id: ClientId,
 ) {
     tracing::info!(cid = %client_id, "new remote connection");
@@ -195,11 +195,12 @@ pub async fn accept_connection2(
             return;
         }
     };
+    tracing::info!(cid = %client_id, "remote ip is {}", peer_addr);
     increment_counter!("magic_tunnel_server.remotes.success");
 
 
     let remote = RemoteTcp::new(store.clone(), socket, client_id);
-    if let Ok(_) = remote.send_init_to_client().await {
+    if remote.send_init_to_client().await.is_ok() {
         store.add_remote(RemoteStream::RemoteTcp(remote));
     }
 }
