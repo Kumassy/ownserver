@@ -201,7 +201,8 @@ pub async fn accept_connection2(
 
     let remote = RemoteTcp::new(store.clone(), socket, client_id);
     if remote.send_init_to_client().await.is_ok() {
-        store.add_remote(RemoteStream::RemoteTcp(remote));
+        tracing::info!(cid = %client_id, sid = %remote.stream_id, "add new remote stream");
+        store.add_remote(RemoteStream::RemoteTcp(remote), peer_addr);
     }
 }
 

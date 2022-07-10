@@ -1,29 +1,32 @@
-#[cfg(test)]
-mod e2e_test {
-    use magic_tunnel_lib::Payload;
-    use magic_tunnel_server::Store;
-    use serial_test::serial;
-    use lazy_static::lazy_static;
-    use magic_tunnel_client::{
-        proxy_client::{self, ClientInfo},
-        ActiveStreams as ActiveStreamsClient,
-    };
-    use magic_tunnel_server::{
-        port_allocator::PortAllocator,
-        proxy_server,
-        Config,
-    };
-    use magic_tunnel_auth::build_routes;
-    use std::collections::HashMap;
-    use std::sync::{Arc, RwLock};
-    use std::time::Duration;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use tokio::net::{TcpListener, TcpStream};
-    use tokio::sync::oneshot::{self, Receiver};
-    use tokio::sync::Mutex;
-    use tokio_util::sync::CancellationToken;
-    use once_cell::sync::OnceCell;
+use magic_tunnel_lib::Payload;
+use magic_tunnel_server::Store;
+use serial_test::serial;
+use lazy_static::lazy_static;
+use magic_tunnel_client::{
+    proxy_client::{self, ClientInfo},
+    ActiveStreams as ActiveStreamsClient,
+};
+use magic_tunnel_server::{
+    port_allocator::PortAllocator,
+    proxy_server,
+    Config,
+};
+use magic_tunnel_auth::build_routes;
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
+use std::time::Duration;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::oneshot::{self, Receiver};
+use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
+use once_cell::sync::OnceCell;
+use tokio::net::UdpSocket;
 
+
+#[cfg(test)]
+mod e2e_tcp_test {
+    use super::*;
 
     static CONFIG: OnceCell<Config> = OnceCell::new();
 
@@ -322,6 +325,184 @@ mod e2e_test {
 
         remote.write_all(b"foobar".as_ref()).await?;
         // assert_socket_bytes_matches!(remote, b"");
+
+        Ok(())
+    }
+}
+
+
+
+#[cfg(test)]
+mod e2e_udp_test {
+    use super::*;
+
+
+    static CONFIG: OnceCell<Config> = OnceCell::new();
+
+    macro_rules! assert_socket_bytes_matches {
+        ($read:expr, $expected:expr) => {
+            let mut buf = [0; 4 * 1024];
+            let n = $read
+                .recv(&mut buf)
+                .await
+                .expect("failed to read data from socket");
+            let data = buf[..n].to_vec();
+
+            assert_eq!(data, $expected);
+        };
+    }
+
+    macro_rules! wait {
+        () => {
+            tokio::time::sleep(Duration::from_secs(3)).await;
+        }
+    }
+
+    async fn launch_token_server() {
+        let hosts = vec![
+            "127.0.0.1".to_string(),
+        ];
+        let routes = build_routes("supersecret".to_string(), hosts);
+
+        tokio::spawn(async move {
+            warp::serve(routes).run(([127, 0, 0, 1], 8888)).await;
+        });
+    }
+
+    async fn launch_proxy_server(control_port: u16) -> Result<Arc<Store>, Box<dyn std::error::Error>> {
+        let config = CONFIG.get_or_init(||
+            Config {
+                control_port: 5000,
+                token_secret: "supersecret".to_string(),
+                host: "127.0.0.1".to_string(),
+                remote_port_start: 4000,
+                remote_port_end: 4010,
+            }
+        );
+        let alloc = Arc::new(Mutex::new(PortAllocator::new(config.remote_port_start..config.remote_port_end)));
+        let store = Arc::new(Store::default());
+
+        let store_ = store.clone();
+        tokio::spawn(async move {
+            proxy_server::run2(
+                &CONFIG,
+                store_,
+                alloc,
+            )
+            .await.unwrap();
+        });
+        Ok(store)
+    }
+
+    async fn launch_proxy_client(
+        control_port: u16,
+        local_port: u16,
+        cancellation_token: CancellationToken,
+    ) -> Result<(ActiveStreamsClient, Receiver<ClientInfo>), Box<dyn std::error::Error>> {
+        lazy_static! {
+            pub static ref ACTIVE_STREAMS_CLIENT: ActiveStreamsClient =
+                Arc::new(RwLock::new(HashMap::new()));
+        }
+        // we must clear ACTIVE_STREAMS
+        ACTIVE_STREAMS_CLIENT.write().unwrap().clear();
+
+        let (tx, rx) = oneshot::channel();
+        tokio::spawn(async move {
+            let (client_info, handle) =
+                proxy_client::run(&ACTIVE_STREAMS_CLIENT, control_port, local_port, "http://127.0.0.1:8888/v0/request_token", Payload::UDP, cancellation_token)
+                    .await
+                    .expect("failed to launch proxy_client");
+            tx.send(client_info).unwrap();
+
+            handle.await.unwrap().unwrap();
+        });
+
+        Ok((ACTIVE_STREAMS_CLIENT.clone(), rx))
+    }
+
+    async fn launch_local_server(local_port: u16) {
+        let local_server = async move {
+            let socket = UdpSocket::bind(format!("127.0.0.1:{}", local_port)).await.unwrap();
+
+            tokio::spawn(async move {
+                loop {
+                    let mut buf = [0; 4 * 1024];
+                    let (n, addr) = socket
+                        .recv_from(&mut buf)
+                        .await
+                        .expect("failed to read data from socket");
+                    if n == 0 {
+                        return;
+                    }
+
+
+                    let mut msg = b"hello, ".to_vec();
+                    msg.append(&mut buf[..n].to_vec());
+                    tracing::info!("send data to remote socket: {:?}", msg);
+                    socket
+                        .send_to(&msg, addr)
+                        .await
+                        .expect("failed to write packet data to local udp socket");
+                }
+            });
+        };
+        tokio::spawn(local_server);
+    }
+
+    const CONTROL_PORT: u16 = 5000;
+    const LOCAL_PORT: u16 = 3000;
+
+    #[tokio::test]
+    #[serial]
+    async fn forward_remote_traffic_to_local() -> Result<(), Box<dyn std::error::Error>> {
+        let cancellation_token = CancellationToken::new();
+
+        launch_token_server().await;
+        let store = launch_proxy_server(CONTROL_PORT).await?;
+        wait!();
+
+        launch_local_server(LOCAL_PORT).await;
+        let (active_streams_client, client_info) =
+            launch_proxy_client(CONTROL_PORT, LOCAL_PORT, cancellation_token).await?;
+        let remote_addr = client_info.await?.remote_addr;
+        wait!();
+
+        let remote = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+            remote.connect(remote_addr).await.unwrap();
+        remote.send(b"foobar".as_ref()).await?;
+        wait!();
+
+        assert_socket_bytes_matches!(remote, b"hello, foobar");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn forward_multiple_remote_traffic_to_local() -> Result<(), Box<dyn std::error::Error>> {
+        let cancellation_token = CancellationToken::new();
+
+        launch_token_server().await;
+        let store = launch_proxy_server(CONTROL_PORT).await?;
+        wait!();
+
+        launch_local_server(LOCAL_PORT).await;
+        let (active_streams_client, client_info) =
+            launch_proxy_client(CONTROL_PORT, LOCAL_PORT, cancellation_token).await?;
+        let remote_addr = client_info.await?.remote_addr;
+        wait!();
+
+        let remote1 = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        remote1.connect(remote_addr.clone()).await.unwrap();
+        let remote2 = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        remote2.connect(remote_addr).await.unwrap();
+
+        remote1.send(b"foobar".as_ref()).await?;
+        remote2.send(b"fugapiyo".as_ref()).await?;
+        wait!();
+
+        assert_socket_bytes_matches!(remote1, b"hello, foobar");
+        assert_socket_bytes_matches!(remote2, b"hello, fugapiyo");
 
         Ok(())
     }

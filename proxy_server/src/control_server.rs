@@ -421,10 +421,11 @@ async fn handle_new_connection2(
 
     match handshake.payload {
         Payload::UDP => {
-            unimplemented!();
+            if let Err(e) = remote::udp::spawn_remote2(store.clone(), listen_addr, client_id, ct).await {
+                tracing::error!(cid = %client_id, port = %handshake.port, "failed to spawn remote listener {:?}", e);
+            }
         }
         _ => {
-            // TODO token
             if let Err(e) = remote::tcp::spawn_remote2(store.clone(), listen_addr, client_id, ct).await {
                 tracing::error!(cid = %client_id, port = %handshake.port, "failed to spawn remote listener {:?}", e);
             }

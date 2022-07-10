@@ -2,7 +2,7 @@ use std::{net::SocketAddr, sync::Arc};
 
 use active_stream::{StreamMessage, ActiveStream};
 use dashmap::DashMap;
-use futures::{channel::mpsc::SendError, StreamExt, stream::{SplitSink, SplitStream}, SinkExt, future::Remote};
+use futures::{channel::mpsc::SendError, StreamExt, stream::{SplitSink, SplitStream, self}, SinkExt, future::Remote};
 use magic_tunnel_lib::{ClientId, StreamId, ControlPacket};
 use metrics::gauge;
 use thiserror::Error;
@@ -175,7 +175,7 @@ impl Client {
 #[derive(Debug)]
 pub enum RemoteStream {
     RemoteTcp(RemoteTcp),
-    RemoteUdp,
+    RemoteUdp(RemoteUdp),
 }
 
 // #[async_trait]
@@ -191,8 +191,8 @@ impl RemoteStream {
             RemoteStream::RemoteTcp(tcp) => {
                 tcp.send_to_remote(stream_id, message).await
             }
-            _ => {
-                unimplemented!();
+            RemoteStream::RemoteUdp(udp) => {
+                udp.send_to_remote(stream_id, message).await
             }
         }
     }
@@ -202,8 +202,8 @@ impl RemoteStream {
             RemoteStream::RemoteTcp(tcp) => {
                 tcp.send_to_client(packet).await
             }
-            _ => {
-                unimplemented!();
+            RemoteStream::RemoteUdp(udp) => {
+                udp.send_to_client(packet).await
             }
         }
     }
@@ -214,8 +214,8 @@ impl RemoteStream {
             RemoteStream::RemoteTcp(tcp) => {
                 tcp.disable();
             }
-            _ => {
-                unimplemented!();
+            RemoteStream::RemoteUdp(udp) => {
+                udp.disable();
             }
         }
     }
@@ -225,8 +225,8 @@ impl RemoteStream {
             RemoteStream::RemoteTcp(tcp) => {
                 tcp.disabled()
             }
-            _ => {
-                unimplemented!();
+            RemoteStream::RemoteUdp(udp) => {
+                udp.disabled()
             }
         }
     }
@@ -236,8 +236,8 @@ impl RemoteStream {
             RemoteStream::RemoteTcp(tcp) => {
                 tcp.stream_id
             }
-            _ => {
-                unimplemented!();
+            RemoteStream::RemoteUdp(udp) => {
+                udp.stream_id
             }
         }
     }
@@ -295,6 +295,7 @@ impl RemoteTcp {
                             tracing::warn!(cid = %client_id, sid = %stream_id, "failed to send end signal: {:?}", e);
                         });
                     // safely close this remote stream
+                    break
                 }
 
                 let data = &buf[..n];
@@ -374,6 +375,81 @@ impl RemoteTcp {
     }
 }
 
+
+#[derive(Debug)]
+pub struct RemoteUdp {
+    pub stream_id: StreamId,
+    pub client_id: ClientId,
+    socket: Arc<UdpSocket>,
+    peer_addr: SocketAddr,
+    ct: CancellationToken,
+    store: Arc<Store>,
+    disabled: bool,
+}
+
+impl RemoteUdp {
+    pub fn new(store: Arc<Store>, socket: Arc<UdpSocket>, peer_addr: SocketAddr, client_id: ClientId) -> Self {
+        let stream_id = StreamId::new();
+        let ct = CancellationToken::new();
+
+        let mut buf = [0; 4096];
+        let store_ = store.clone();
+
+        Self { stream_id, client_id, socket, store, ct, peer_addr, disabled: false }
+    }
+
+    async fn send_to_remote(&mut self, stream_id: StreamId, message: StreamMessage) -> Result<(), ClientStreamError> {
+        if self.disabled() {
+            return Err(ClientStreamError::StreamNotAvailable(stream_id));
+        }
+
+        let data = match message {
+            StreamMessage::Data(data) => data,
+            StreamMessage::TunnelRefused => {
+                // TODO
+                tracing::info!(sid = %self.stream_id, "tunnel refused");
+
+                self.disable();
+                return Err(ClientStreamError::RemoteError(format!("stream_id: {}, TunnelRefused", self.stream_id)))
+            }
+            StreamMessage::NoClientTunnel => {
+                unimplemented!();
+            }
+        };
+
+        if let Err(e) = self.socket.send_to(&data, self.peer_addr).await {
+            tracing::warn!(sid = %self.stream_id, "could not write data to remote socket {:?}", e);
+
+            self.disable();
+            return Err(ClientStreamError::RemoteError(format!("stream_id: {}, {:?}", self.stream_id, e)))
+        }
+        Ok(())
+    }
+
+    pub async fn send_to_client(&self, packet: ControlPacket) -> Result<(), ClientStreamError> {
+        let client_id = self.client_id;
+        self.store.send_to_client(client_id, packet).await?;
+        Ok(())
+    }
+
+    pub async fn send_init_to_client(&self) -> Result<(), ClientStreamError> {
+        let client_id = self.client_id;
+        let packet = ControlPacket::Init(self.stream_id);
+        self.store.send_to_client(client_id, packet).await?;
+        Ok(())
+    }
+
+    pub fn disabled(&self) -> bool {
+        self.disabled
+    }
+    fn disable(&mut self) {
+        self.ct.cancel();
+        self.disabled = true;
+    }
+}
+
+
+
 #[derive(Error, Debug, PartialEq)]
 pub enum ClientStreamError {
     #[error("Failed to send data to client {0}.")]
@@ -401,13 +477,13 @@ pub enum ClientStreamError {
 // }
 
 
-#[derive(Debug)]
-pub struct RemoteUdp {
-    pub id: StreamId,
-    pub client_id: ClientId,
-    socket: Arc<UdpSocket>,
-    store: Arc<Store>,
-}
+// #[derive(Debug)]
+// pub struct RemoteUdp {
+//     pub id: StreamId,
+//     pub client_id: ClientId,
+//     socket: Arc<UdpSocket>,
+//     store: Arc<Store>,
+// }
 
 
 #[derive(Debug, Default)]
@@ -463,13 +539,23 @@ impl Store {
         gauge!("magic_tunnel_server.control.connections", self.clients.len() as f64);
     }
 
-    pub fn add_remote(&self, remote: RemoteStream) {
+    pub fn add_remote(&self, remote: RemoteStream, peer_addr: SocketAddr) {
         let stream_id = remote.stream_id();
         self.streams.insert(stream_id, remote);
+        self.addrs_map.insert(peer_addr, stream_id);
     }
 
     pub fn cleanup(&self) {
         self.streams.retain(|_, v| !v.disabled());
         self.clients.retain(|_, v| !v.disabled());
+    }
+
+    pub fn find_stream_id_by_addr(&self, addr: &SocketAddr) -> Option<StreamId> {
+        if let Some(stream) = self.addrs_map.get(addr).and_then(|stream_id| self.streams.get(&stream_id)) {
+            if !stream.disabled() {
+                return Some(stream.stream_id())
+            }
+        }
+        None
     }
 }
