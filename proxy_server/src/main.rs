@@ -1,7 +1,7 @@
 use magic_tunnel_server::Store;
 pub use magic_tunnel_server::{
     port_allocator::PortAllocator,
-    proxy_server::run2,
+    proxy_server::run,
     Config,
 };
 use metrics::{describe_counter, describe_gauge};
@@ -116,7 +116,7 @@ async fn main() {
     let alloc = Arc::new(Mutex::new(PortAllocator::new(*remote_port_start..*remote_port_end)));
     let store = Arc::new(Store::default());
 
-    let handle = run2(
+    let handle = run(
         &CONFIG,
         store,
         alloc,

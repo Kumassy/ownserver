@@ -7,7 +7,7 @@ use std::sync::Arc;
 use crate::{Store, RemoteUdp, RemoteStream};
 pub use magic_tunnel_lib::{ClientId, ControlPacket, StreamId};
 
-pub async fn spawn_remote2(
+pub async fn spawn_remote(
     store: Arc<Store>,
     listen_addr: impl ToSocketAddrs + std::fmt::Debug + Clone,
     client_id: ClientId,
@@ -21,7 +21,7 @@ pub async fn spawn_remote2(
 
     tokio::spawn(
         async move {
-            process_udp_stream2(ct, store, client_id, socket).await;
+            process_udp_stream(ct, store, client_id, socket).await;
         }
         .instrument(tracing::info_span!("process_udp_stream")),
     );
@@ -31,7 +31,7 @@ pub async fn spawn_remote2(
 
 
 #[tracing::instrument(skip(ct, store, udp_socket))]
-async fn process_udp_stream2(
+async fn process_udp_stream(
     ct: CancellationToken,
     store: Arc<Store>,
     client_id: ClientId,

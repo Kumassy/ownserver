@@ -1,5 +1,5 @@
 use magic_tunnel_lib::Payload;
-use magic_tunnel_server::{proxy_server::run2, Store};
+use magic_tunnel_server::{proxy_server::run, Store};
 use serial_test::serial;
 use futures::{SinkExt, StreamExt};
 use magic_tunnel_client::proxy_client::{send_client_hello, verify_server_hello, ClientInfo};
@@ -78,7 +78,7 @@ mod server_tcp_test {
 
         let store_ = store.clone();
         tokio::spawn(async move {
-            run2(
+            run(
                 &CONFIG,
                 store_,
                 alloc,
@@ -307,7 +307,7 @@ mod server_udp_test {
 
         let store_ = store.clone();
         tokio::spawn(async move {
-            run2(
+            run(
                 &CONFIG,
                 store_,
                 alloc,

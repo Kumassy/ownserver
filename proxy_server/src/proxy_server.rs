@@ -10,7 +10,7 @@ use crate::port_allocator::PortAllocator;
 use crate::{Config, ProxyServerError};
 
 #[tracing::instrument(skip(config, store, alloc))]
-pub async fn run2(
+pub async fn run(
     config: &'static OnceCell<Config>,
     store: Arc<Store>,
     alloc: Arc<Mutex<PortAllocator<Range<u16>>>>,
@@ -27,7 +27,7 @@ pub async fn run2(
         }
     };
 
-    let handle = control_server::spawn2(
+    let handle = control_server::spawn(
         config,
         store,
         alloc,

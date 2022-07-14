@@ -26,7 +26,7 @@ use crate::port_allocator::PortAllocator;
 use crate::remote;
 use crate::{Config, ProxyServerError};
 
-pub fn spawn2<A: Into<SocketAddr>>(
+pub fn spawn<A: Into<SocketAddr>>(
     config: &'static OnceCell<Config>,
     store: Arc<Store>,
     alloc: Arc<Mutex<PortAllocator<Range<u16>>>>,
@@ -43,7 +43,7 @@ pub fn spawn2<A: Into<SocketAddr>>(
             let store_ = store.clone();
             ws.on_upgrade(move |w| {
                 async move {
-                    handle_new_connection2(
+                    handle_new_connection(
                         config,
                         store_,
                         alloc_,
@@ -285,7 +285,7 @@ where
 }
 
 #[tracing::instrument(skip(config, store, alloc, websocket))]
-async fn handle_new_connection2(
+async fn handle_new_connection(
     config: &'static OnceCell<Config>,
     store: Arc<Store>,
     alloc: Arc<Mutex<PortAllocator<Range<u16>>>>,
@@ -310,12 +310,12 @@ async fn handle_new_connection2(
 
     match handshake.payload {
         Payload::UDP => {
-            if let Err(e) = remote::udp::spawn_remote2(store.clone(), listen_addr, client_id, ct).await {
+            if let Err(e) = remote::udp::spawn_remote(store.clone(), listen_addr, client_id, ct).await {
                 tracing::error!(cid = %client_id, port = %handshake.port, "failed to spawn remote listener {:?}", e);
             }
         }
         _ => {
-            if let Err(e) = remote::tcp::spawn_remote2(store.clone(), listen_addr, client_id, ct).await {
+            if let Err(e) = remote::tcp::spawn_remote(store.clone(), listen_addr, client_id, ct).await {
                 tracing::error!(cid = %client_id, port = %handshake.port, "failed to spawn remote listener {:?}", e);
             }
         }

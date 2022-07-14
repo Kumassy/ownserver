@@ -79,7 +79,7 @@ mod e2e_tcp_test {
 
         let store_ = store.clone();
         tokio::spawn(async move {
-            proxy_server::run2(
+            proxy_server::run(
                 &CONFIG,
                 store_,
                 alloc,
@@ -384,7 +384,7 @@ mod e2e_udp_test {
 
         let store_ = store.clone();
         tokio::spawn(async move {
-            proxy_server::run2(
+            proxy_server::run(
                 &CONFIG,
                 store_,
                 alloc,
