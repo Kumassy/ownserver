@@ -8,6 +8,7 @@ use tokio_util::sync::CancellationToken;
 use crate::{RemoteTcp, Store, RemoteStream};
 pub use magic_tunnel_lib::{ClientId, ControlPacket, StreamId};
 
+#[tracing::instrument(skip(store, cancellation_token))]
 pub async fn spawn_remote(
     store: Arc<Store>,
     listen_addr: impl ToSocketAddrs + std::fmt::Debug + Clone,
@@ -51,6 +52,7 @@ pub async fn spawn_remote(
     Ok(())
 }
 
+#[tracing::instrument(skip(store, socket))]
 pub async fn accept_connection(
     store: Arc<Store>,
     socket: TcpStream,

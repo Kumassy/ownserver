@@ -7,6 +7,7 @@ use std::sync::Arc;
 use crate::{Store, RemoteUdp, RemoteStream};
 pub use magic_tunnel_lib::{ClientId, ControlPacket, StreamId};
 
+#[tracing::instrument(skip(store, cancellation_token))]
 pub async fn spawn_remote(
     store: Arc<Store>,
     listen_addr: impl ToSocketAddrs + std::fmt::Debug + Clone,

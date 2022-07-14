@@ -26,7 +26,8 @@ use crate::port_allocator::PortAllocator;
 use crate::remote;
 use crate::{Config, ProxyServerError};
 
-pub fn spawn<A: Into<SocketAddr>>(
+#[tracing::instrument(skip(config, store, alloc))]
+pub fn spawn<A: Into<SocketAddr> + std::fmt::Debug>(
     config: &'static OnceCell<Config>,
     store: Arc<Store>,
     alloc: Arc<Mutex<PortAllocator<Range<u16>>>>,

@@ -39,6 +39,7 @@ pub enum ForwardingError {
 
 use tokio::{net::{TcpStream, UdpSocket}, io::{WriteHalf, AsyncReadExt, AsyncWriteExt}, select};
 use tokio_util::sync::CancellationToken;
+use tracing::Instrument;
 use warp::{
     ws::{Message, WebSocket, Ws},
     Error as WarpError, Filter,
@@ -129,7 +130,7 @@ impl Client {
                 }
             }
             store_.disable_client(client_id);
-        });
+        }.instrument(tracing::info_span!("client_read_loop")));
 
         Self { client_id, host, ws_tx: sink, store, ct: token, disabled: false }
     }
@@ -315,7 +316,7 @@ impl RemoteTcp {
 
             tracing::info!(cid = %client_id, sid = %stream_id, "exit from read loop");
             store_.disable_remote(stream_id);
-        });
+        }.instrument(tracing::info_span!("remote_tcp_read_loop")));
 
         Self { stream_id, client_id, socket_tx: sink, store, ct, disabled: false }
     }
