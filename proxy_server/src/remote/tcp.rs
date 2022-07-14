@@ -1,12 +1,14 @@
 use metrics::{increment_counter};
 use std::io;
 use std::sync::Arc;
-use tokio::net::{TcpListener, TcpStream, ToSocketAddrs};
+use tokio::{net::{TcpListener, TcpStream, ToSocketAddrs}, io::{WriteHalf, AsyncReadExt, AsyncWriteExt}};
 use tracing::Instrument;
 use tokio_util::sync::CancellationToken;
 
-use crate::{RemoteTcp, Store, RemoteStream};
+use crate::{ClientStreamError, Store, remote::stream::RemoteStream};
 pub use magic_tunnel_lib::{ClientId, ControlPacket, StreamId};
+
+use super::stream::StreamMessage;
 
 #[tracing::instrument(skip(store, cancellation_token))]
 pub async fn spawn_remote(
@@ -78,3 +80,138 @@ pub async fn accept_connection(
         store.add_remote(RemoteStream::RemoteTcp(remote), peer_addr);
     }
 }
+
+
+
+#[derive(Debug)]
+pub struct RemoteTcp {
+    pub stream_id: StreamId,
+    pub client_id: ClientId,
+    socket_tx: WriteHalf<TcpStream>,
+    ct: CancellationToken,
+    store: Arc<Store>,
+    disabled: bool,
+}
+
+impl RemoteTcp {
+    pub fn new(store: Arc<Store>, socket: TcpStream, client_id: ClientId) -> Self {
+        let (mut stream, sink) = tokio::io::split(socket);
+        let stream_id = StreamId::new();
+        let ct = CancellationToken::new();
+
+        let mut buf = [0; 4096];
+        let ct_ = ct.clone();
+        let store_ = store.clone();
+        tokio::spawn(async move {
+            loop {
+                let n = tokio::select! {
+                    read = stream.read(&mut buf) => {
+                        match read {
+                            Ok(n) => n,
+                            Err(e) => {
+                                tracing::warn!(cid = %client_id, sid = %stream_id, "failed to read from tcp socket: {:?}", e);
+        
+                                // error: clean up this remote stream
+                                break
+                            }
+                        }
+                    }
+                    _ = ct_.cancelled() => {
+                        // exit from this remote stream
+                        tracing::info!(cid = %client_id, id=%stream_id, "read loop was cancelled");
+                        return;
+                    }
+                };
+                tracing::debug!(cid = %client_id, sid = %stream_id, "read {} bytes message from remote", n);
+
+                if n == 0 {
+                    tracing::debug!(cid = %client_id, sid = %stream_id, "remote client streams end");
+
+
+                    let _ = store_ 
+                        .send_to_client(client_id, ControlPacket::End(stream_id))
+                        .await
+                        .map_err(|e| {
+                            tracing::warn!(cid = %client_id, sid = %stream_id, "failed to send end signal: {:?}", e);
+                        });
+                    // safely close this remote stream
+                    break
+                }
+
+                let data = &buf[..n];
+                let packet = ControlPacket::Data(stream_id, data.to_vec());
+
+                match store_.send_to_client(client_id, packet).await {
+                    Ok(_) => {
+                        tracing::debug!(cid = %client_id, sid = %stream_id, "sent data packet to client");
+                    },
+                    Err(e) => {
+                        tracing::warn!(cid = %client_id, sid = %stream_id, "failed to forward tcp packets to client. {:?}", e);
+                        // error: client is unavailable or error
+                        // error: clean up this remote stream
+                        break
+                    }
+                }
+            }
+
+            tracing::info!(cid = %client_id, sid = %stream_id, "exit from read loop");
+            store_.disable_remote(stream_id);
+        }.instrument(tracing::info_span!("remote_tcp_read_loop")));
+
+        Self { stream_id, client_id, socket_tx: sink, store, ct, disabled: false }
+    }
+
+    pub async fn send_to_remote(&mut self, stream_id: StreamId, message: StreamMessage) -> Result<(), ClientStreamError> {
+        if self.disabled() {
+            return Err(ClientStreamError::StreamNotAvailable(stream_id));
+        }
+
+        let data = match message {
+            StreamMessage::Data(data) => data,
+            StreamMessage::TunnelRefused => {
+                // TODO
+                tracing::info!(sid = %self.stream_id, "tunnel refused");
+
+                let _ = self.socket_tx.shutdown().await.map_err(|_e| {
+                    tracing::error!(sid = %self.stream_id, "error shutting down remote tcp stream");
+                });
+
+                self.disable();
+                return Err(ClientStreamError::RemoteError(format!("stream_id: {}, TunnelRefused", self.stream_id)))
+            }
+            StreamMessage::NoClientTunnel => {
+                unimplemented!();
+            }
+        };
+
+        if let Err(e) = self.socket_tx.write_all(&data).await {
+            tracing::warn!(sid = %self.stream_id, "could not write data to remote socket {:?}", e);
+
+            self.disable();
+            return Err(ClientStreamError::RemoteError(format!("stream_id: {}, {:?}", self.stream_id, e)))
+        }
+        Ok(())
+    }
+
+    pub async fn send_to_client(&self, packet: ControlPacket) -> Result<(), ClientStreamError> {
+        let client_id = self.client_id;
+        self.store.send_to_client(client_id, packet).await?;
+        Ok(())
+    }
+
+    pub async fn send_init_to_client(&self) -> Result<(), ClientStreamError> {
+        let client_id = self.client_id;
+        let packet = ControlPacket::Init(self.stream_id);
+        self.store.send_to_client(client_id, packet).await?;
+        Ok(())
+    }
+
+    pub fn disabled(&self) -> bool {
+        self.disabled
+    }
+    pub fn disable(&mut self) {
+        self.ct.cancel();
+        self.disabled = true;
+    }
+}
+

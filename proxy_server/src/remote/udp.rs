@@ -1,11 +1,13 @@
-use std::io;
+use std::{io, net::SocketAddr};
 use tokio::net::{ToSocketAddrs, UdpSocket};
 use tracing::Instrument;
 use tokio_util::sync::CancellationToken;
 use std::sync::Arc;
 
-use crate::{Store, RemoteUdp, RemoteStream};
+use crate::{Store, remote::stream::RemoteStream, ClientStreamError};
 pub use magic_tunnel_lib::{ClientId, ControlPacket, StreamId};
+
+use super::stream::StreamMessage;
 
 #[tracing::instrument(skip(store, cancellation_token))]
 pub async fn spawn_remote(
@@ -98,3 +100,77 @@ async fn process_udp_stream(
         }
     }
 }
+
+
+#[derive(Debug)]
+pub struct RemoteUdp {
+    pub stream_id: StreamId,
+    pub client_id: ClientId,
+    socket: Arc<UdpSocket>,
+    peer_addr: SocketAddr,
+    ct: CancellationToken,
+    store: Arc<Store>,
+    disabled: bool,
+}
+
+impl RemoteUdp {
+    pub fn new(store: Arc<Store>, socket: Arc<UdpSocket>, peer_addr: SocketAddr, client_id: ClientId) -> Self {
+        let stream_id = StreamId::new();
+        let ct = CancellationToken::new();
+
+        let mut buf = [0; 4096];
+        let store_ = store.clone();
+
+        Self { stream_id, client_id, socket, store, ct, peer_addr, disabled: false }
+    }
+
+    pub async fn send_to_remote(&mut self, stream_id: StreamId, message: StreamMessage) -> Result<(), ClientStreamError> {
+        if self.disabled() {
+            return Err(ClientStreamError::StreamNotAvailable(stream_id));
+        }
+
+        let data = match message {
+            StreamMessage::Data(data) => data,
+            StreamMessage::TunnelRefused => {
+                // TODO
+                tracing::info!(sid = %self.stream_id, "tunnel refused");
+
+                self.disable();
+                return Err(ClientStreamError::RemoteError(format!("stream_id: {}, TunnelRefused", self.stream_id)))
+            }
+            StreamMessage::NoClientTunnel => {
+                unimplemented!();
+            }
+        };
+
+        if let Err(e) = self.socket.send_to(&data, self.peer_addr).await {
+            tracing::warn!(sid = %self.stream_id, "could not write data to remote socket {:?}", e);
+
+            self.disable();
+            return Err(ClientStreamError::RemoteError(format!("stream_id: {}, {:?}", self.stream_id, e)))
+        }
+        Ok(())
+    }
+
+    pub async fn send_to_client(&self, packet: ControlPacket) -> Result<(), ClientStreamError> {
+        let client_id = self.client_id;
+        self.store.send_to_client(client_id, packet).await?;
+        Ok(())
+    }
+
+    pub async fn send_init_to_client(&self) -> Result<(), ClientStreamError> {
+        let client_id = self.client_id;
+        let packet = ControlPacket::Init(self.stream_id);
+        self.store.send_to_client(client_id, packet).await?;
+        Ok(())
+    }
+
+    pub fn disabled(&self) -> bool {
+        self.disabled
+    }
+    pub fn disable(&mut self) {
+        self.ct.cancel();
+        self.disabled = true;
+    }
+}
+
