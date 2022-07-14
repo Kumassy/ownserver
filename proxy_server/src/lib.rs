@@ -1,14 +1,13 @@
 use std::{net::SocketAddr, sync::Arc};
 
-use active_stream::{StreamMessage, ActiveStream};
+use active_stream::StreamMessage;
 use dashmap::DashMap;
-use futures::{channel::mpsc::SendError, StreamExt, stream::{SplitSink, SplitStream, self}, SinkExt, future::Remote};
+use futures::{channel::mpsc::SendError, StreamExt, stream::SplitSink, SinkExt};
 use magic_tunnel_lib::{ClientId, StreamId, ControlPacket};
 use metrics::gauge;
 use thiserror::Error;
 
 pub mod active_stream;
-pub mod connected_clients;
 pub mod control_server;
 pub mod remote;
 pub mod proxy_server;
