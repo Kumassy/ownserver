@@ -4,7 +4,7 @@ use serial_test::serial;
 use lazy_static::lazy_static;
 use magic_tunnel_client::{
     proxy_client::{self, ClientInfo},
-    ActiveStreams as ActiveStreamsClient,
+    Store as ClientStore,
 };
 use magic_tunnel_server::{
     port_allocator::PortAllocator,
@@ -94,18 +94,13 @@ mod e2e_tcp_test {
         control_port: u16,
         local_port: u16,
         cancellation_token: CancellationToken,
-    ) -> Result<(ActiveStreamsClient, Receiver<ClientInfo>), Box<dyn std::error::Error>> {
-        lazy_static! {
-            pub static ref ACTIVE_STREAMS_CLIENT: ActiveStreamsClient =
-                Arc::new(RwLock::new(HashMap::new()));
-        }
-        // we must clear ACTIVE_STREAMS
-        ACTIVE_STREAMS_CLIENT.write().unwrap().clear();
-
+    ) -> Result<Receiver<ClientInfo>, Box<dyn std::error::Error>> {
+        let client_store: Arc<ClientStore> = Default::default();
         let (tx, rx) = oneshot::channel();
+
         tokio::spawn(async move {
             let (client_info, handle) =
-                proxy_client::run(&ACTIVE_STREAMS_CLIENT, control_port, local_port, "http://127.0.0.1:8888/v0/request_token", Payload::Other, cancellation_token)
+                proxy_client::run(client_store, control_port, local_port, "http://127.0.0.1:8888/v0/request_token", Payload::Other, cancellation_token)
                     .await
                     .expect("failed to launch proxy_client");
             tx.send(client_info).unwrap();
@@ -113,7 +108,7 @@ mod e2e_tcp_test {
             handle.await.unwrap().unwrap();
         });
 
-        Ok((ACTIVE_STREAMS_CLIENT.clone(), rx))
+        Ok(rx)
     }
 
     async fn launch_local_server(local_port: u16) {
@@ -162,7 +157,7 @@ mod e2e_tcp_test {
         wait!();
 
         launch_local_server(LOCAL_PORT).await;
-        let (active_streams_client, client_info) =
+        let client_info =
             launch_proxy_client(CONTROL_PORT, LOCAL_PORT, cancellation_token).await?;
         let remote_addr = client_info.await?.remote_addr;
         wait!();
@@ -186,7 +181,7 @@ mod e2e_tcp_test {
         wait!();
 
         launch_local_server(LOCAL_PORT).await;
-        let (active_streams_client, client_info) =
+        let client_info =
             launch_proxy_client(CONTROL_PORT, LOCAL_PORT, cancellation_token).await?;
         let remote_addr = client_info.await?.remote_addr;
         wait!();
@@ -218,7 +213,7 @@ mod e2e_tcp_test {
         let store = launch_proxy_server(CONTROL_PORT).await?;
         wait!();
 
-        let (active_streams_client, client_info) =
+        let client_info =
             launch_proxy_client(CONTROL_PORT, LOCAL_PORT, cancellation_token).await?;
         let remote_addr = client_info.await?.remote_addr;
         wait!();
@@ -273,7 +268,7 @@ mod e2e_tcp_test {
         wait!();
 
         launch_local_server(LOCAL_PORT).await;
-        let (active_streams_client, client_info) =
+        let client_info =
             launch_proxy_client(CONTROL_PORT, LOCAL_PORT, cancellation_token.clone()).await?;
         let remote_addr = client_info.await?.remote_addr;
         wait!();
@@ -306,7 +301,7 @@ mod e2e_tcp_test {
         wait!();
 
         launch_local_server(LOCAL_PORT).await;
-        let (active_streams_client, client_info) =
+        let client_info =
             launch_proxy_client(CONTROL_PORT, LOCAL_PORT, cancellation_token.clone()).await?;
         let remote_addr = client_info.await?.remote_addr;
         wait!();
@@ -398,18 +393,13 @@ mod e2e_udp_test {
         control_port: u16,
         local_port: u16,
         cancellation_token: CancellationToken,
-    ) -> Result<(ActiveStreamsClient, Receiver<ClientInfo>), Box<dyn std::error::Error>> {
-        lazy_static! {
-            pub static ref ACTIVE_STREAMS_CLIENT: ActiveStreamsClient =
-                Arc::new(RwLock::new(HashMap::new()));
-        }
-        // we must clear ACTIVE_STREAMS
-        ACTIVE_STREAMS_CLIENT.write().unwrap().clear();
-
+    ) -> Result<Receiver<ClientInfo>, Box<dyn std::error::Error>> {
+        let client_store: Arc<ClientStore> = Default::default();
         let (tx, rx) = oneshot::channel();
+
         tokio::spawn(async move {
             let (client_info, handle) =
-                proxy_client::run(&ACTIVE_STREAMS_CLIENT, control_port, local_port, "http://127.0.0.1:8888/v0/request_token", Payload::UDP, cancellation_token)
+                proxy_client::run(client_store, control_port, local_port, "http://127.0.0.1:8888/v0/request_token", Payload::UDP, cancellation_token)
                     .await
                     .expect("failed to launch proxy_client");
             tx.send(client_info).unwrap();
@@ -417,7 +407,7 @@ mod e2e_udp_test {
             handle.await.unwrap().unwrap();
         });
 
-        Ok((ACTIVE_STREAMS_CLIENT.clone(), rx))
+        Ok(rx)
     }
 
     async fn launch_local_server(local_port: u16) {
@@ -462,7 +452,7 @@ mod e2e_udp_test {
         wait!();
 
         launch_local_server(LOCAL_PORT).await;
-        let (active_streams_client, client_info) =
+        let client_info =
             launch_proxy_client(CONTROL_PORT, LOCAL_PORT, cancellation_token).await?;
         let remote_addr = client_info.await?.remote_addr;
         wait!();
@@ -487,7 +477,7 @@ mod e2e_udp_test {
         wait!();
 
         launch_local_server(LOCAL_PORT).await;
-        let (active_streams_client, client_info) =
+        let client_info =
             launch_proxy_client(CONTROL_PORT, LOCAL_PORT, cancellation_token).await?;
         let remote_addr = client_info.await?.remote_addr;
         wait!();

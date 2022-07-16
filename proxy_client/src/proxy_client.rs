@@ -3,6 +3,7 @@ use futures::channel::mpsc::{unbounded, UnboundedSender};
 use futures::{Sink, SinkExt, Stream, StreamExt};
 use log::*;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::task::JoinHandle;
 use tokio_tungstenite::{
@@ -13,15 +14,15 @@ use tokio_util::sync::CancellationToken;
 use url::Url;
 
 use crate::error::Error;
-use crate::local;
+use crate::{local, Store};
 use crate::localudp;
-use crate::{ActiveStreams, StreamMessage};
+use crate::{StreamMessage};
 use magic_tunnel_lib::{
     ClientHello, ClientId, ControlPacket, Payload, ServerHello, StreamId, CLIENT_HELLO_VERSION,
 };
 
 pub async fn run(
-    active_streams: &'static ActiveStreams,
+    store: Arc<Store>,
     control_port: u16,
     local_port: u16,
     token_server: &str,
@@ -94,7 +95,7 @@ pub async fn run(
                         }
                         Some(Ok(message)) => {
                             let packet = process_control_flow_message(
-                                active_streams.clone(),
+                                store.clone(),
                                 tunnel_tx.clone(),
                                 message.into_data(),
                                 local_port,
@@ -216,9 +217,8 @@ where
     })
 }
 
-// TODO: improve testability, fix return value
 pub async fn process_control_flow_message(
-    active_streams: ActiveStreams,
+    store: Arc<Store>,
     mut tunnel_tx: UnboundedSender<ControlPacket>,
     payload: Vec<u8>,
     local_port: u16,
@@ -229,9 +229,9 @@ pub async fn process_control_flow_message(
         ControlPacket::Init(stream_id) => {
             debug!("sid={} init stream", stream_id);
 
-            if !active_streams.read().unwrap().contains_key(&stream_id) {
+            if !store.has_stream(&stream_id) {
                 local::setup_new_stream(
-                    active_streams.clone(),
+                    store.clone(),
                     local_port,
                     tunnel_tx.clone(),
                     stream_id,
@@ -253,11 +253,8 @@ pub async fn process_control_flow_message(
             debug!("sid={} end stream", stream_id);
             // proxy server try to close control stream and local stream
 
-            // find the stream
-
             tokio::spawn(async move {
-                let stream = active_streams.read().unwrap().get(&stream_id).cloned();
-                if let Some(mut tx) = stream {
+                if let Some((stream_id, mut tx)) = store.remove_stream(&stream_id) {
                     tokio::time::sleep(Duration::from_secs(5)).await;
                     let _ = tx.send(StreamMessage::Close).await.map_err(|e| {
                         error!(
@@ -266,38 +263,34 @@ pub async fn process_control_flow_message(
                             e
                         );
                     });
-                    active_streams.write().unwrap().remove(&stream_id);
                 }
             });
         }
         ControlPacket::Data(stream_id, ref data) => {
             debug!("sid={} new data: {}", stream_id, data.len());
-            // find the right stream
-            let active_stream = active_streams.read().unwrap().get(&stream_id).cloned();
 
-            // forward data to it
-            if let Some(mut tx) = active_stream {
-                tx.send(StreamMessage::Data(data.clone())).await?;
-                debug!("sid={} forwarded to local tcp", stream_id);
-            } else {
-                error!(
-                    "sid={} got data but no stream to send it to.",
-                    stream_id
-                );
-                let _ = tunnel_tx
-                    .send(ControlPacket::Refused(stream_id))
-                    .await?;
+            match store.get_mut_stream(&stream_id) {
+                Some(mut tx) => {
+                    tx.send(StreamMessage::Data(data.clone())).await?;
+                    debug!("sid={} forwarded to local tcp", stream_id);
+                }
+                None => {
+                    error!(
+                        "sid={} got data but no stream to send it to.",
+                        stream_id
+                    );
+                    let _ = tunnel_tx
+                        .send(ControlPacket::Refused(stream_id))
+                        .await?;
+                }
             }
         }
         ControlPacket::UdpData(stream_id, ref data) => {
             debug!("sid={} new data: {}", stream_id, data.len());
             // find the right stream
-            let active_stream = active_streams.read().unwrap().get(&stream_id).cloned();
-
-            // forward data to it
-            if active_stream.is_none() {
+            if !store.has_stream(&stream_id) {
                 localudp::setup_new_stream(
-                    active_streams.clone(),
+                    store.clone(),
                     local_port,
                     tunnel_tx.clone(),
                     stream_id,
@@ -305,8 +298,8 @@ pub async fn process_control_flow_message(
                 .await;
             }
 
-            let active_stream = active_streams.read().unwrap().get(&stream_id).cloned();
-            if let Some(mut tx) = active_stream {
+            // forward data to it
+            if let Some(mut tx) = store.get_mut_stream(&stream_id) {
                 tx.send(StreamMessage::Data(data.clone())).await?;
                 debug!("sid={} forwarded to local tcp", stream_id);
             } else {
@@ -381,6 +374,90 @@ mod fetch_token_test {
 
         let error = result.err().unwrap();
         assert_eq!(error.to_string(), "failed to generate token");
+        Ok(())
+    }
+}
+
+
+#[cfg(test)]
+mod client_verify_server_hello_test {
+    use super::*;
+    use futures::{channel::mpsc, SinkExt};
+    use magic_tunnel_lib::{ClientId, ServerHello};
+    use tokio_tungstenite::{
+        tungstenite::{Error as WsError, Message},
+    };
+
+    #[tokio::test]
+    async fn it_accept_server_hello() -> Result<(), Box<dyn std::error::Error>> {
+        let (mut tx, mut rx) = mpsc::unbounded();
+
+        let cid = ClientId::new();
+        let hello = serde_json::to_vec(&ServerHello::Success {
+            client_id: cid,
+            remote_addr: "foo.bar.local:256".to_string(),
+        })
+        .unwrap_or_default();
+        tx.send(Ok(Message::binary(hello))).await?;
+
+        let client_info = verify_server_hello(&mut rx)
+            .await
+            .expect("unexpected server hello error");
+        let ClientInfo {
+            client_id,
+            remote_addr,
+        } = client_info;
+        assert_eq!(cid, client_id);
+        assert_eq!("foo.bar.local:256".to_string(), remote_addr);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn returns_errors_when_websocket_yields_nothing() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let (mut tx, mut rx) = mpsc::unbounded();
+
+        tx.disconnect();
+
+        let server_hello = verify_server_hello(&mut rx)
+            .await
+            .err()
+            .expect("server hello is unexpectedly correct");
+        assert!(matches!(server_hello, Error::NoResponseFromServer));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn returns_errors_when_server_hello_is_invalid() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let (mut tx, mut rx) = mpsc::unbounded();
+
+        let hello = serde_json::to_vec(&"hello server").unwrap_or_default();
+        tx.send(Ok(Message::binary(hello))).await?;
+
+        let server_hello = verify_server_hello(&mut rx)
+            .await
+            .err()
+            .expect("server hello is unexpectedly correct");
+        assert!(matches!(server_hello, Error::ServerReplyInvalid));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn returns_errors_when_websocket_error() -> Result<(), Box<dyn std::error::Error>> {
+        let (mut tx, mut rx) = mpsc::unbounded();
+
+        tx.send(Err(WsError::AlreadyClosed)).await?;
+
+        let server_hello = verify_server_hello(&mut rx)
+            .await
+            .err()
+            .expect("server hello is unexpectedly correct");
+        assert!(matches!(server_hello, Error::WebSocketError(_)));
+
         Ok(())
     }
 }
