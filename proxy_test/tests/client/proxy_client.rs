@@ -6,7 +6,8 @@ mod client_process_control_flow_message_test {
     use futures::{SinkExt, StreamExt};
     use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
     use log::*;
-    use magic_tunnel_client::{ActiveStreams, proxy_client::process_control_flow_message};
+    use magic_tunnel_client::Store;
+    use magic_tunnel_client::{proxy_client::process_control_flow_message};
     use magic_tunnel_lib::{ControlPacket, StreamId};
     use std::collections::HashMap;
     use std::sync::{Arc, RwLock};
@@ -15,14 +16,14 @@ mod client_process_control_flow_message_test {
     use tokio::sync::oneshot;
 
     async fn setup() -> (
-        ActiveStreams,
+        Arc<Store>,
         UnboundedSender<ControlPacket>,
         UnboundedReceiver<ControlPacket>,
         StreamId,
         u16,
         UnboundedReceiver<Vec<u8>>,
     ) {
-        let active_streams = Arc::new(RwLock::new(HashMap::new()));
+        let store = Arc::new(Store::default());
 
         let (con_tx, con_rx) = oneshot::channel();
         let (mut msg_tx, msg_rx) = unbounded();
@@ -67,7 +68,7 @@ mod client_process_control_flow_message_test {
         let (tunnel_tx, tunnel_rx) = unbounded::<ControlPacket>();
 
         (
-            active_streams,
+            store,
             tunnel_tx,
             tunnel_rx,
             stream_id,
@@ -76,45 +77,29 @@ mod client_process_control_flow_message_test {
         )
     }
 
-    fn assert_active_streams_len(active_streams: &ActiveStreams, expected: usize) {
-        assert_eq!(
-            active_streams
-                .read()
-                .expect("failed to obtain read lock over ActiveStreams")
-                .len(),
-            expected
-        );
-    }
-
     #[tokio::test]
     async fn handle_control_packet_init() {
-        let (active_streams, tunnel_tx, _tunnel_rx, stream_id, local_port, _) = setup().await;
+        let (store, tunnel_tx, _tunnel_rx, stream_id, local_port, _) = setup().await;
 
         // ensure active_streams has registered
-        assert_eq!(
-            0,
-            active_streams
-                .read()
-                .expect("failed to obtain read lock over ActiveStreams")
-                .len()
-        );
+        assert_eq!(store.len_stream(), 0);
         let _ = process_control_flow_message(
-            active_streams.clone(),
+            store.clone(),
             tunnel_tx,
             rmp_serde::to_vec(&ControlPacket::Init(stream_id)).unwrap(),
             local_port,
         )
         .await
         .expect("failed to decode packet");
-        assert_active_streams_len(&active_streams, 1);
+        assert_eq!(store.len_stream(), 1);
     }
 
     #[tokio::test]
     async fn handle_control_packet_ping() {
-        let (active_streams, tunnel_tx, mut tunnel_rx, _, local_port, _) = setup().await;
+        let (store, tunnel_tx, mut tunnel_rx, _, local_port, _) = setup().await;
 
         let _ = process_control_flow_message(
-            active_streams.clone(),
+            store.clone(),
             tunnel_tx,
             rmp_serde::to_vec(&ControlPacket::Ping).unwrap(),
             local_port,
@@ -130,10 +115,10 @@ mod client_process_control_flow_message_test {
     #[tokio::test]
     #[should_panic(expected = "ControlPacket::Refused may be unimplemented")]
     async fn handle_control_packet_refused() {
-        let (active_streams, tunnel_tx, _tunnel_rx, stream_id, local_port, _) = setup().await;
+        let (store, tunnel_tx, _tunnel_rx, stream_id, local_port, _) = setup().await;
 
         let _ = process_control_flow_message(
-            active_streams.clone(),
+            store.clone(),
             tunnel_tx,
             rmp_serde::to_vec(&ControlPacket::Refused(stream_id)).unwrap(),
             local_port,
@@ -144,22 +129,22 @@ mod client_process_control_flow_message_test {
 
     #[tokio::test]
     async fn handle_control_packet_end() {
-        let (active_streams, tunnel_tx, _tunnel_rx, stream_id, local_port, _) = setup().await;
+        let (store, tunnel_tx, _tunnel_rx, stream_id, local_port, _) = setup().await;
 
         // set up local connection
         let _ = process_control_flow_message(
-            active_streams.clone(),
+            store.clone(),
             tunnel_tx.clone(),
             rmp_serde::to_vec(&ControlPacket::Init(stream_id)).unwrap(),
             local_port,
         )
         .await
         .expect("failed to decode packet");
-        assert_active_streams_len(&active_streams, 1);
+        assert_eq!(store.len_stream(), 1);
 
         // terminate local connection
         let _ = process_control_flow_message(
-            active_streams.clone(),
+            store.clone(),
             tunnel_tx,
             rmp_serde::to_vec(&ControlPacket::End(stream_id)).unwrap(),
             local_port,
@@ -167,20 +152,17 @@ mod client_process_control_flow_message_test {
         .await
         .expect("failed to decode packet");
 
-        tokio::time::sleep(Duration::from_secs(1)).await;
-        assert_active_streams_len(&active_streams, 1);
-
         tokio::time::sleep(Duration::from_secs(8)).await;
-        assert_active_streams_len(&active_streams, 0);
+        assert_eq!(store.len_stream(), 0);
     }
 
     #[tokio::test]
     async fn handle_control_packet_data() {
-        let (active_streams, tunnel_tx, _tunnel_rx, stream_id, local_port, mut msg_rx) = setup().await;
+        let (store, tunnel_tx, _tunnel_rx, stream_id, local_port, mut msg_rx) = setup().await;
 
         // set up local connection
         let _ = process_control_flow_message(
-            active_streams.clone(),
+            store.clone(),
             tunnel_tx.clone(),
             rmp_serde::to_vec(&ControlPacket::Init(stream_id)).unwrap(),
             local_port,
@@ -190,7 +172,7 @@ mod client_process_control_flow_message_test {
 
         // receive data from server
         let _ = process_control_flow_message(
-            active_streams.clone(),
+            store.clone(),
             tunnel_tx,
             rmp_serde::to_vec(&ControlPacket::Data(stream_id, b"some message 1".to_vec())).unwrap(),
             local_port,
@@ -204,11 +186,11 @@ mod client_process_control_flow_message_test {
 
     #[tokio::test]
     async fn handle_control_packet_data_refused() {
-        let (active_streams, tunnel_tx, mut tunnel_rx, stream_id, _, _) = setup().await;
+        let (store, tunnel_tx, mut tunnel_rx, stream_id, _, _) = setup().await;
 
         // receive data from server
         let _ = process_control_flow_message(
-            active_streams.clone(),
+            store.clone(),
             tunnel_tx,
             rmp_serde::to_vec(&ControlPacket::Data(stream_id, b"some message 2".to_vec())).unwrap(),
             25565,

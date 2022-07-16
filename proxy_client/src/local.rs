@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use futures::channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use futures::{SinkExt, StreamExt};
 
@@ -5,13 +7,13 @@ use tokio::io::{split, AsyncReadExt, AsyncWriteExt};
 use tokio::io::{ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
 
-use crate::{ActiveStreams, StreamMessage};
+use crate::{StreamMessage, Store};
 use log::*;
 use magic_tunnel_lib::{ControlPacket, StreamId};
 
 /// Establish a new local stream and start processing messages to it
 pub async fn setup_new_stream(
-    active_streams: ActiveStreams,
+    store: Arc<Store>,
     local_port: u16,
     mut tunnel_tx: UnboundedSender<ControlPacket>,
     stream_id: StreamId,
@@ -29,24 +31,17 @@ pub async fn setup_new_stream(
     let (stream, sink) = split(local_tcp);
 
     // Read local tcp bytes, send them tunnel
-    let active_streams_clone = active_streams.clone();
+    let store_ = store.clone();
     tokio::spawn(async move {
-        let active_streams = active_streams_clone;
         let _ = process_local_tcp(stream, tunnel_tx, stream_id).await;
-        active_streams
-            .write()
-            .unwrap()
-            .remove(&stream_id);
-        info!("sid={} remove stream to active_streams. len={}", &stream_id, active_streams.read().unwrap().len());
+        store_.remove_stream(&stream_id);
+        info!("sid={} remove stream to active_streams. len={}", &stream_id, store_.len_stream());
     });
 
     // Forward remote packets to local tcp
     let (tx, rx) = unbounded();
-    active_streams
-        .write()
-        .unwrap()
-        .insert(stream_id, tx);
-    info!("sid={} insert stream to active_streams. len={}", &stream_id, active_streams.read().unwrap().len());
+    store.add_stream(stream_id, tx);
+    info!("sid={} insert stream to active_streams. len={}", &stream_id, store.len_stream());
 
     tokio::spawn(async move {
         forward_to_local_tcp(stream_id, sink, rx).await;

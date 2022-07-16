@@ -6,11 +6,7 @@ use std::sync::{Arc, RwLock};
 use tokio_util::sync::CancellationToken;
 use structopt::StructOpt;
 
-use magic_tunnel_client::{proxy_client::run, ActiveStreams, error::Error};
-
-lazy_static::lazy_static! {
-    pub static ref ACTIVE_STREAMS: ActiveStreams = Arc::new(RwLock::new(HashMap::new()));
-}
+use magic_tunnel_client::{proxy_client::run, error::Error};
 
 #[derive(StructOpt, Debug)]
 #[structopt(name = "basic")]
@@ -40,10 +36,11 @@ async fn main() -> Result<()> {
     };
     debug!("{:?}", payload);
 
+    let store = Default::default();
     let cancellation_token = CancellationToken::new();
 
     let (client_info, handle) =
-        run(&ACTIVE_STREAMS, opt.control_port, opt.local_port, &opt.token_server, payload, cancellation_token).await?;
+        run(store, opt.control_port, opt.local_port, &opt.token_server, payload, cancellation_token).await?;
     info!("client is running under configuration: {:?}", client_info);
 
 

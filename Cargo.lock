@@ -777,6 +777,7 @@ name = "magic_tunnel_client"
 version = "0.3.0"
 dependencies = [
  "anyhow",
+ "dashmap",
  "futures",
  "lazy_static",
  "log",
