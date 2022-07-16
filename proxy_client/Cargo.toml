@@ -1,13 +1,13 @@
 [package]
 name = "magic_tunnel_client"
-version = "0.3.0"
+version = "0.4.0"
 authors = ["Kumassy <kumassyii@gmail.com>"]
 edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-magic_tunnel_lib = { version = "0.3.0", path = "../proxy_lib" }
+magic_tunnel_lib = { version = "0.4.0", path = "../proxy_lib" }
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.6.8"
 tokio-tungstenite = { version = '0.14', features = ["rustls"] }
