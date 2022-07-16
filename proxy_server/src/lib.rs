@@ -1,11 +1,15 @@
+use futures::{channel::mpsc::SendError};
+use magic_tunnel_lib::{ClientId, StreamId};
 use thiserror::Error;
 
-pub mod active_stream;
-pub mod connected_clients;
+pub mod client;
+pub use client::Client;
 pub mod control_server;
 pub mod remote;
 pub mod proxy_server;
 pub mod port_allocator;
+pub mod store;
+pub use store::Store;
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -22,3 +26,26 @@ pub enum ProxyServerError {
     #[error("Failed to load config because it is not initialized.")]
     ConfigNotInitialized,
 }
+
+#[derive(Error, Debug, PartialEq)]
+pub enum ForwardingError {
+    #[error("Destination is disabled.")]
+    DestinationDisabled,
+    #[error("Failed to put data into sender buffer.")]
+    SendError(#[from] SendError),
+}
+
+#[derive(Error, Debug, PartialEq)]
+pub enum ClientStreamError {
+    #[error("Failed to send data to client {0}.")]
+    ClientError(String),
+    #[error("Failed to send data to remote.")]
+    RemoteError(String),
+    #[error("Client {0} is not registered to Store or no longer available.")]
+    ClientNotAvailable(ClientId),
+    #[error("Stream {0} is not registered to Store or no longer available.")]
+    StreamNotAvailable(StreamId),
+    #[error("Remote stream has closed.")]
+    RemoteEnd,
+}
+

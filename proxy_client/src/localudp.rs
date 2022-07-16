@@ -18,37 +18,35 @@ pub async fn setup_new_stream(
     mut tunnel_tx: UnboundedSender<ControlPacket>,
     stream_id: StreamId,
 ) {
-    info!("sid={} setting up local udp stream", &stream_id.to_string());
+    info!("sid={} setting up local udp stream", &stream_id);
 
     let local_udp = match UdpSocket::bind("127.0.0.1:0").await {
         Ok(s) => s,
         Err(e) => {
-            warn!("sid={} failed to bind socket: {:?}", &stream_id.to_string(), e);
+            warn!("sid={} failed to bind socket: {:?}", &stream_id, e);
             return;
         } 
     };
     debug!("local udp addr: {:?}", local_udp.local_addr());
 
     if let Err(e) = local_udp.connect(format!("localhost:{}", local_port)).await {
-        warn!("sid={} failed to bind socket: {:?}", &stream_id.to_string(), e);
+        warn!("sid={} failed to bind socket: {:?}", &stream_id, e);
         return;
     }
 
     let local_udp = Arc::new(local_udp);
 
     // Read local tcp bytes, send them tunnel
-    let stream_id_clone = stream_id.clone();
     let active_streams_clone = active_streams.clone();
     let local_udp_ = local_udp.clone();
     tokio::spawn(async move {
         let active_streams = active_streams_clone;
-        let stream_id = stream_id_clone;
-        let _ = process_local_udp(local_udp_, tunnel_tx, stream_id.clone()).await;
+        let _ = process_local_udp(local_udp_, tunnel_tx, stream_id).await;
         active_streams
             .write()
             .unwrap()
             .remove(&stream_id);
-        info!("sid={} remove stream to active_streams. len={}", &stream_id.to_string(), active_streams.read().unwrap().len());
+        info!("sid={} remove stream to active_streams. len={}", &stream_id, active_streams.read().unwrap().len());
     });
 
     // Forward remote packets to local tcp
@@ -56,12 +54,12 @@ pub async fn setup_new_stream(
     active_streams
         .write()
         .unwrap()
-        .insert(stream_id.clone(), tx.clone());
-    info!("sid={} insert stream to active_streams. len={}", &stream_id.to_string(), active_streams.read().unwrap().len());
+        .insert(stream_id, tx);
+    info!("sid={} insert stream to active_streams. len={}", &stream_id, active_streams.read().unwrap().len());
 
     tokio::spawn(async move {
-        forward_to_local_udp(stream_id.clone(), local_udp, rx).await;
-        info!("sid={} end forward to local", &stream_id.to_string());
+        forward_to_local_udp(stream_id, local_udp, rx).await;
+        info!("sid={} end forward to local", &stream_id);
     });
 }
 
@@ -78,26 +76,26 @@ pub async fn process_local_udp(
         let n = match stream.recv(&mut buf).await {
             Ok(n) => n,
             Err(e) => {
-                error!("sid={} failed to read data from socket: {:?}", &stream_id.to_string(), e);
+                error!("sid={} failed to read data from socket: {:?}", &stream_id, e);
                 return;
             }
         };
 
         if n == 0 {
-            info!("sid={} done reading from client stream", &stream_id.to_string());
+            info!("sid={} done reading from client stream", &stream_id);
             return;
         }
 
         let data = buf[..n].to_vec();
         debug!(
             "sid={} read from local service: {}",
-            &stream_id.to_string(),
+            &stream_id,
             data.len(),
         );
 
-        let packet = ControlPacket::UdpData(stream_id.clone(), data.clone());
+        let packet = ControlPacket::UdpData(stream_id, data.clone());
         if let Err(e) = tunnel.send(packet).await {
-            error!("sid={} failed to tunnel packet from local tcp to tunnel: {:?}", &stream_id.to_string(), e);
+            error!("sid={} failed to tunnel packet from local tcp to tunnel: {:?}", &stream_id, e);
             return;
         }
     }
@@ -113,9 +111,9 @@ pub async fn forward_to_local_udp(
         let data = match queue.next().await {
             Some(StreamMessage::Data(data)) => data,
             None | Some(StreamMessage::Close) => {
-                warn!("sid={} closing stream", &stream_id.to_string());
+                warn!("sid={} closing stream", &stream_id);
                 // let _ = sink.shutdown().await.map_err(|e| {
-                //     error!("sid={} failed to shutdown: {:?}", &stream_id.to_string(), e);
+                //     error!("sid={} failed to shutdown: {:?}", &stream_id, e);
                 // });
                 return;
             }
@@ -123,9 +121,9 @@ pub async fn forward_to_local_udp(
 
         // if let Err(e) = sink.write_all(&data).await {
         if let Err(e) = sink.send(&data).await {
-            error!("sid={} failed to write packet data to local tcp socket: {:?}", &stream_id.to_string(), e);
+            error!("sid={} failed to write packet data to local tcp socket: {:?}", &stream_id, e);
             return;
         }
-        debug!("sid={} wrote to local service: {}", &stream_id.to_string(), data.len());
+        debug!("sid={} wrote to local service: {}", &stream_id, data.len());
     }
 }

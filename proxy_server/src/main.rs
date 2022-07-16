@@ -1,8 +1,6 @@
-use dashmap::DashMap;
-use lazy_static::lazy_static;
-use magic_tunnel_lib::ClientId;
+use magic_tunnel_server::Store;
 pub use magic_tunnel_server::{
-    active_stream::ActiveStreams, connected_clients::Connections, port_allocator::PortAllocator,
+    port_allocator::PortAllocator,
     proxy_server::run,
     Config,
 };
@@ -12,14 +10,8 @@ use tracing_subscriber::prelude::*;
 use std::{sync::Arc, fs};
 use tokio::sync::Mutex;
 use once_cell::sync::OnceCell;
-use tokio_util::sync::CancellationToken;
 use structopt::StructOpt;
 use opentelemetry::{sdk::{trace::{self, XrayIdGenerator}, Resource}, KeyValue};
-
-lazy_static! {
-    pub static ref CONNECTIONS: Connections = Connections::new();
-    pub static ref ACTIVE_STREAMS: ActiveStreams = ActiveStreams::default();
-}
 
 static CONFIG: OnceCell<Config> = OnceCell::new();
 
@@ -122,15 +114,13 @@ async fn main() {
     let Config {remote_port_start, remote_port_end  , ..}  = CONFIG.get().expect("failed to read config");
 
     let alloc = Arc::new(Mutex::new(PortAllocator::new(*remote_port_start..*remote_port_end)));
-    let remote_cancellers: Arc<DashMap<ClientId, CancellationToken>> = Arc::new(DashMap::new());
+    let store = Arc::new(Store::default());
+
     let handle = run(
         &CONFIG,
-        &CONNECTIONS,
-        &ACTIVE_STREAMS,
+        store,
         alloc,
-        remote_cancellers,
-    )
-    .await;
+    ).await;
     
     let handle = match handle {
         Ok(handle) => handle,

@@ -17,8 +17,7 @@ mod client_local_test {
         let (service_addr_tx, service_addr_rx) = oneshot::channel();
         let (notify_exit_from_fn_tx, notify_exit_from_fn_rx) = oneshot::channel();
         let (tunnel_tx, mut tunnel_rx) = unbounded();
-        let stream_id = StreamId::generate();
-        let stream_id_clone = stream_id.clone();
+        let stream_id = StreamId::new();
         let proxy_client_service = async move {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             service_addr_tx
@@ -27,7 +26,7 @@ mod client_local_test {
             let (stream, _) = listener.accept().await.expect("No connections to accept");
             let (reader, _writer) = split(stream);
 
-            let _ = process_local_tcp(reader, tunnel_tx, stream_id_clone).await;
+            let _ = process_local_tcp(reader, tunnel_tx, stream_id).await;
             notify_exit_from_fn_tx.send(()).unwrap();
         };
         tokio::spawn(proxy_client_service);
@@ -56,7 +55,7 @@ mod client_local_test {
         assert_eq!(
             tunnel_rx.next().await,
             Some(ControlPacket::Data(
-                stream_id.clone(),
+                stream_id,
                 b"some bytes".to_vec()
             ))
         );
@@ -68,7 +67,7 @@ mod client_local_test {
         let (service_addr_tx, service_addr_rx) = oneshot::channel();
         let (mut msg_tx, mut msg_rx) = unbounded();
         let (mut tunnel_tx, tunnel_rx) = unbounded();
-        let stream_id = StreamId::generate();
+        let stream_id = StreamId::new();
         let proxy_client_service = async move {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             service_addr_tx

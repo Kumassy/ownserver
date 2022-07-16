@@ -1,5 +1,4 @@
 use futures::{
-    channel::mpsc::{unbounded, SendError},
     Sink, SinkExt, Stream, StreamExt,
 };
 use magic_tunnel_lib::Payload;
@@ -15,49 +14,43 @@ use warp::{
     Error as WarpError, Filter,
 };
 
-use dashmap::DashMap;
 use rand::{rngs::StdRng, SeedableRng};
 use std::ops::Range;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use once_cell::sync::OnceCell;
 use thiserror::Error;
-use tokio_util::sync::CancellationToken;
 
-use crate::active_stream::{ActiveStream, ActiveStreams, StreamMessage};
-use crate::connected_clients::{ConnectedClient, Connections};
+use crate::{Store, Client};
 use crate::port_allocator::PortAllocator;
 use crate::remote;
 use crate::{Config, ProxyServerError};
 
-pub fn spawn<A: Into<SocketAddr>>(
+#[tracing::instrument(skip(config, store, alloc))]
+pub fn spawn<A: Into<SocketAddr> + std::fmt::Debug>(
     config: &'static OnceCell<Config>,
-    conn: &'static Connections,
-    active_streams: &'static ActiveStreams,
+    store: Arc<Store>,
     alloc: Arc<Mutex<PortAllocator<Range<u16>>>>,
-    remote_cancellers: Arc<DashMap<ClientId, CancellationToken>>,
     addr: A,
 ) -> JoinHandle<()> {
     let health_check = warp::get().and(warp::path("health_check")).map(|| {
         tracing::debug!("Health Check #2 triggered");
         "ok"
     });
+
     let client_conn = warp::path("tunnel").and(client_addr()).and(warp::ws()).map(
         move |client_addr: SocketAddr, ws: Ws| {
-            let alloc_clone = alloc.clone();
-            let remote_cancellers_clone = remote_cancellers.clone();
+            let alloc_ = alloc.clone();
+            let store_ = store.clone();
             ws.on_upgrade(move |w| {
                 async move {
                     handle_new_connection(
                         config,
-                        conn,
-                        active_streams,
-                        alloc_clone,
-                        remote_cancellers_clone,
+                        store_,
+                        alloc_,
                         client_addr,
-                        w,
-                    )
-                    .await
+                        w
+                    ).await
                 }
                 .instrument(tracing::info_span!("handle_websocket"))
             })
@@ -117,9 +110,9 @@ async fn try_client_handshake(
             let mut rng = StdRng::from_entropy();
             match alloc.lock().await.allocate_port(&mut rng) {
                 Ok(port) => {
-                    let client_id = ClientId::generate();
+                    let client_id = ClientId::new();
                     let server_hello = ServerHello::Success {
-                        client_id: client_id.clone(),
+                        client_id,
                         remote_addr: format!("{}:{}", host, port),
                     };
 
@@ -292,13 +285,11 @@ where
     Ok(())
 }
 
-#[tracing::instrument(skip(config, conn, active_streams, alloc, remote_cancellers, websocket))]
+#[tracing::instrument(skip(config, store, alloc, websocket))]
 async fn handle_new_connection(
     config: &'static OnceCell<Config>,
-    conn: &'static Connections,
-    active_streams: &'static ActiveStreams,
+    store: Arc<Store>,
     alloc: Arc<Mutex<PortAllocator<Range<u16>>>>,
-    remote_cancellers: Arc<DashMap<ClientId, CancellationToken>>,
     client_ip: SocketAddr,
     mut websocket: WebSocket,
 ) {
@@ -310,190 +301,25 @@ async fn handle_new_connection(
     let client_id = handshake.id;
     tracing::info!(cid = %client_id, port = %handshake.port, "open tunnel");
     let host = format!("host-foobar-{}", handshake.port);
-    // let listen_addr = format!("[::]:{}", handshake.port); // 今までは v6 で listen すると v4 でも listen していた？
     let listen_addr = format!("0.0.0.0:{}", handshake.port);
-    let canceller =
-        match handshake.payload {
-            Payload::UDP => {
-                match remote::udp::spawn_remote(conn, active_streams, listen_addr, host.clone()).await {
-                    Ok(canceller) => canceller,
-                    Err(_) => {
-                        tracing::error!("failed to bind to allocated port");
-                        return;
-                    }
-                }
-            }
-            _ => {
-                match remote::tcp::spawn_remote(conn, active_streams, listen_addr, host.clone()).await {
-                    Ok(canceller) => canceller,
-                    Err(_) => {
-                        tracing::error!("failed to bind to allocated port");
-                        return;
-                    }
-                }
-            }
-        };
 
-    remote_cancellers.insert(client_id.clone(), canceller);
-    tracing::debug!(cid = %client_id, "register remote_cancellers len={}", remote_cancellers.len());
 
-    let (tx, rx) = unbounded::<ControlPacket>();
-    let client = ConnectedClient {
-        id: client_id.clone(),
-        host,
-        tx,
-    };
-    Connections::add(conn, client.clone());
-    tracing::debug!(cid = %client_id, "register client to connections len_clients={} len_hosts={}", Connections::len_clients(conn), Connections::len_hosts(conn));
-    let active_streams = active_streams.clone();
-    let (sink, stream) = websocket.split();
+    let client = Client::new(store.clone(), client_id, host, websocket);
+    let ct = client.cancellation_token();
+    store.add_client(client);
+    tracing::info!(cid=%client_id, "register client to store");
 
-    let client_clone = client.clone();
-    let remote_cancellers_clone = remote_cancellers.clone();
-    let client_id_clone = client_id.clone();
-    tokio::spawn(
-        async move {
-            let client = client_clone;
-            let remote_cancellers = remote_cancellers_clone;
-            let client_id = client_id_clone;
-
-            let client = tunnel_client(client, sink, rx).await;
-            Connections::remove(conn, &client);
-            tracing::debug!(cid = %client_id, "remove client from connections len_clients={} len_hosts={}", Connections::len_clients(conn), Connections::len_hosts(conn));
-            if let Some((_cid, ct)) = remote_cancellers.remove(&client_id) {
-                tracing::debug!(cid = %client_id, "cancel remote process");
-                ct.cancel();
+    match handshake.payload {
+        Payload::UDP => {
+            if let Err(e) = remote::udp::spawn_remote(store.clone(), listen_addr, client_id, ct).await {
+                tracing::error!(cid = %client_id, port = %handshake.port, "failed to spawn remote listener {:?}", e);
             }
         }
-        .instrument(tracing::info_span!("tunnel_client")),
-    );
-    tokio::spawn(
-        async move {
-            let client = process_client_messages(active_streams, client, stream).await;
-            Connections::remove(conn, &client);
-            tracing::debug!(cid = %client_id, "remove client from connections len_clients={} len_hosts={}", Connections::len_clients(conn), Connections::len_hosts(conn));
-            if let Some((_cid, ct)) = remote_cancellers.remove(&client_id) {
-                tracing::debug!(cid = %client_id, "cancel remote process");
-                ct.cancel();
+        _ => {
+            if let Err(e) = remote::tcp::spawn_remote(store.clone(), listen_addr, client_id, ct).await {
+                tracing::error!(cid = %client_id, port = %handshake.port, "failed to spawn remote listener {:?}", e);
             }
         }
-        .instrument(tracing::info_span!("process_client")),
-    );
-}
-
-/// Send the client a "stream init" message
-pub async fn send_client_stream_init(mut stream: ActiveStream) -> Result<(), SendError> {
-    stream
-        .client
-        .tx
-        .send(ControlPacket::Init(stream.id.clone()))
-        .await
-}
-
-/// Process client control messages
-#[tracing::instrument(skip(client_conn, active_streams, client))]
-pub async fn process_client_messages<T>(
-    active_streams: ActiveStreams,
-    client: ConnectedClient,
-    mut client_conn: T,
-) -> ConnectedClient
-where
-    T: Stream<Item = Result<Message, WarpError>> + Unpin,
-{
-    loop {
-        let result = client_conn.next().await;
-
-        let message = match result {
-            // handle protocol message
-            Some(Ok(msg)) if (msg.is_binary() || msg.is_text()) && !msg.as_bytes().is_empty() => {
-                msg.into_bytes()
-            }
-            // handle close with reason
-            Some(Ok(msg)) if msg.is_close() && !msg.as_bytes().is_empty() => {
-                tracing::debug!(close_reason=?msg, "got close");
-                return client;
-            }
-            _ => {
-                tracing::debug!(cid = %client.id, "goodbye client");
-                return client;
-            }
-        };
-
-        let packet = match ControlPacket::deserialize(&message) {
-            Ok(packet) => packet,
-            Err(e) => {
-                tracing::error!(error = ?e, "invalid data packet");
-                continue;
-            }
-        };
-
-        tracing::trace!(cid = %client.id, ?packet, "got control packet from client");
-        let (stream_id, message) = match packet {
-            ControlPacket::Data(stream_id, data) => {
-                tracing::trace!(cid = %client.id, sid = %stream_id.to_string(), "forwarding to stream: {}", data.len());
-                (stream_id, StreamMessage::Data(data))
-            }
-            ControlPacket::Refused(stream_id) => {
-                tracing::debug!(cid = %client.id, sid = %stream_id.to_string(), "tunnel says: refused");
-                (stream_id, StreamMessage::TunnelRefused)
-            }
-            ControlPacket::Init(stream_id) | ControlPacket::End(stream_id) => {
-                tracing::error!(cid = %client.id, sid = %stream_id.to_string(), "invalid protocol control::init message");
-                continue;
-            }
-            ControlPacket::Ping => {
-                tracing::trace!(cid = %client.id, "pong");
-                // Connections::add(connections, client.clone());
-                continue;
-            }
-            ControlPacket::UdpData(stream_id, data) => {
-                tracing::trace!(cid = %client.id, sid = %stream_id.to_string(), "forwarding udp to stream: {}", data.len());
-                (stream_id, StreamMessage::Data(data))
-            }
-        };
-
-        let stream = active_streams.get(&stream_id).map(|s| s.value().clone());
-
-        if let Some(mut stream) = stream {
-            tracing::trace!(cid = %client.id, sid = %stream_id.to_string(), "forward message to active stream");
-            let _ = stream.tx.send(message).await.map_err(|error| {
-                tracing::debug!(cid = %client.id, sid = %stream_id.to_string(), error = ?error, "Failed to send to stream tx");
-            });
-        }
-    }
-}
-
-// async fn tunnel_client(
-//     client: ConnectedClient,
-//     mut sink: SplitSink<WebSocket, Message>,
-//     mut queue: UnboundedReceiver<ControlPacket>,
-// ) -> ConnectedClient
-#[must_use]
-#[tracing::instrument(skip(sink, queue, client))]
-pub async fn tunnel_client<T, U>(
-    client: ConnectedClient,
-    mut sink: T,
-    mut queue: U,
-) -> ConnectedClient
-where
-    T: Sink<Message> + Unpin,
-    U: Stream<Item = ControlPacket> + Unpin,
-    T::Error: std::fmt::Debug,
-{
-    loop {
-        match queue.next().await {
-            Some(packet) => {
-                let result = sink.send(Message::binary(packet.serialize())).await;
-                if let Err(error) = result {
-                    tracing::debug!(cid = %client.id, error = ?error, "client disconnected: aborting");
-                    return client;
-                }
-            }
-            None => {
-                tracing::debug!(cid = %client.id, "ending client tunnel");
-                return client;
-            }
-        };
     }
 }
 
@@ -628,157 +454,6 @@ mod verify_client_handshake_test {
 
         let hello = verify_client_handshake(config, client_hello_data).await;
         assert!(hello.is_ok());
-        Ok(())
-    }
-}
-
-#[cfg(test)]
-mod process_client_messages_test {
-    use super::*;
-    use dashmap::DashMap;
-    use futures::channel::mpsc::{unbounded, UnboundedReceiver};
-    use std::{sync::Arc, str::FromStr};
-
-    async fn send_messages_to_client_and_process_client_message(
-        is_add_stream_to_streams: bool,
-        messages: Vec<Box<dyn Fn(StreamId) -> Message>>,
-    ) -> Result<UnboundedReceiver<StreamMessage>, Box<dyn std::error::Error>> {
-        let (mut stream_tx, stream_rx) = unbounded::<Result<Message, WarpError>>();
-        let active_streams = ActiveStreams::default();
-
-        let (tx, _rx) = unbounded::<ControlPacket>();
-        let client = ConnectedClient {
-            id: ClientId::generate(),
-            host: "foobar".into(),
-            tx,
-        };
-        let addr = "127.0.0.1:12345".parse().unwrap();
-
-        let (active_stream, queue_rx) = ActiveStream::new(client.clone());
-        let stream_id = active_stream.id.clone();
-        if is_add_stream_to_streams {
-            active_streams.insert(stream_id.clone(), active_stream.clone(), addr);
-        }
-
-        for message in messages {
-            let msg = message(stream_id.clone());
-            stream_tx.send(Ok(msg)).await?;
-        }
-        stream_tx.close_channel();
-
-        let _ = process_client_messages(active_streams, client, stream_rx).await;
-        // all active stream must be dropped
-        // so that queue_rx.next().await returns None
-        drop(active_stream);
-
-        Ok(queue_rx)
-    }
-
-    #[tokio::test]
-    async fn discard_control_packet_data_no_active_stream() -> Result<(), Box<dyn std::error::Error>>
-    {
-        let message = |stream_id| {
-            let packet = ControlPacket::Data(stream_id, b"foobarbaz".to_vec());
-            Message::binary(packet.serialize())
-        };
-        let mut queue_rx =
-            send_messages_to_client_and_process_client_message(false, vec![Box::new(message)])
-                .await?;
-        assert_eq!(queue_rx.next().await, None);
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn forward_control_packet_data_to_appropriate_stream(
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let message = |stream_id| {
-            let packet = ControlPacket::Data(stream_id, b"foobarbaz".to_vec());
-            Message::binary(packet.serialize())
-        };
-        let mut queue_rx =
-            send_messages_to_client_and_process_client_message(true, vec![Box::new(message)])
-                .await?;
-
-        // ControlPacket::Data must be sent to ActiveStream
-        assert_eq!(
-            queue_rx.next().await,
-            Some(StreamMessage::Data(b"foobarbaz".to_vec()))
-        );
-        assert_eq!(queue_rx.next().await, None);
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn forward_control_packet_refused_to_appropriate_stream(
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let message = |stream_id| {
-            let packet = ControlPacket::Refused(stream_id);
-            Message::binary(packet.serialize())
-        };
-        let mut queue_rx =
-            send_messages_to_client_and_process_client_message(true, vec![Box::new(message)])
-                .await?;
-
-        // ControlPacket::Data must be sent to ActiveStream
-        assert_eq!(queue_rx.next().await, Some(StreamMessage::TunnelRefused));
-        assert_eq!(queue_rx.next().await, None);
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn close_stream_remove_client() -> Result<(), Box<dyn std::error::Error>> {
-        let message = |_| Message::close();
-        let mut queue_rx =
-            send_messages_to_client_and_process_client_message(true, vec![Box::new(message)])
-                .await?;
-
-        assert_eq!(queue_rx.next().await, None);
-        Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tunnel_client_test {
-    use super::*;
-    use futures::channel::mpsc::{unbounded, UnboundedReceiver};
-
-    async fn send_control_packet_and_forward_to_websocket(
-        packets: Vec<Box<dyn Fn(StreamId) -> ControlPacket>>,
-    ) -> Result<(StreamId, UnboundedReceiver<Message>), Box<dyn std::error::Error>> {
-        let (tx, _rx) = unbounded::<ControlPacket>();
-        let client_id = ClientId::generate();
-        let client = ConnectedClient {
-            id: client_id.clone(),
-            host: "foobar".into(),
-            tx,
-        };
-
-        let (ws_tx, ws_rx) = unbounded::<Message>();
-        let (mut control_tx, control_rx) = unbounded::<ControlPacket>();
-        let stream_id = StreamId::generate();
-
-        for packet in packets {
-            let pkt = packet(stream_id.clone());
-            control_tx.send(pkt).await?;
-        }
-        control_tx.close_channel();
-
-        let _ = tunnel_client(client, ws_tx, control_rx).await;
-
-        Ok((stream_id, ws_rx))
-    }
-
-    #[tokio::test]
-    async fn forward_control_packet_to_websocket() -> Result<(), Box<dyn std::error::Error>> {
-        let packet = |stream_id| ControlPacket::Init(stream_id);
-        let (stream_id, mut ws_rx) =
-            send_control_packet_and_forward_to_websocket(vec![Box::new(packet)]).await?;
-
-        let payload = ws_rx.next().await.unwrap().into_bytes();
-        let packet = ControlPacket::deserialize(&payload)?;
-        assert_eq!(packet, ControlPacket::Init(stream_id.clone()));
-        assert_eq!(ws_rx.next().await, None);
-
         Ok(())
     }
 }

@@ -783,6 +783,7 @@ dependencies = [
  "magic_tunnel_lib",
  "pretty_env_logger",
  "reqwest",
+ "rmp-serde",
  "serde",
  "serde_json",
  "structopt",
@@ -800,8 +801,10 @@ version = "0.3.0"
 dependencies = [
  "base64 0.13.0",
  "rand",
+ "rmp-serde",
  "serde",
  "sha2",
+ "uuid",
 ]
 
 [[package]]
@@ -825,6 +828,7 @@ dependencies = [
  "opentelemetry-jaeger",
  "pretty_env_logger",
  "rand",
+ "rmp-serde",
  "serde",
  "serde_json",
  "serial_test",
@@ -858,6 +862,7 @@ dependencies = [
  "magic_tunnel_server",
  "once_cell",
  "pretty_env_logger",
+ "rmp-serde",
  "serde",
  "serde_json",
  "serial_test",
@@ -1230,6 +1235,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "paste"
+version = "1.0.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0c520e05135d6e763148b6426a837e239041653ba7becd2e538c076c738025fc"
+
+[[package]]
 name = "pem"
 version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1501,6 +1512,28 @@ dependencies = [
  "untrusted",
  "web-sys",
  "winapi",
+]
+
+[[package]]
+name = "rmp"
+version = "0.8.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "44519172358fd6d58656c86ab8e7fbc9e1490c3e8f14d35ed78ca0dd07403c9f"
+dependencies = [
+ "byteorder",
+ "num-traits",
+ "paste",
+]
+
+[[package]]
+name = "rmp-serde"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "25786b0d276110195fa3d6f3f31299900cf71dfbd6c28450f3f58a0e7f7a347e"
+dependencies = [
+ "byteorder",
+ "rmp",
+ "serde",
 ]
 
 [[package]]
@@ -2311,6 +2344,16 @@ name = "utf-8"
 version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "09cc8ee72d2a9becf2f2febe0205bbed8fc6615b7cb429ad062dc7b7ddd036a9"
+
+[[package]]
+name = "uuid"
+version = "1.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dd6469f4314d5f1ffec476e05f17cc9a78bc7a27a6a857842170bdf8d6f98d2f"
+dependencies = [
+ "getrandom",
+ "serde",
+]
 
 [[package]]
 name = "valuable"

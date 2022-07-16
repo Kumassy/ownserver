@@ -48,12 +48,10 @@ pub async fn run(
     // tunnel channel
     let (tunnel_tx, mut tunnel_rx) = unbounded::<ControlPacket>();
 
-    let client_id = client_info.client_id.clone();
-    let client_id_clone = client_id.clone();
+    let client_id = client_info.client_id;
     let ct = cancellation_token.child_token();
     // continuously write to websocket tunnel
     let handle_client_to_control: JoinHandle<()> = tokio::spawn(async move {
-        let client_id = client_id_clone;
         loop {
             tokio::select! {
                 v = tunnel_rx.next() => {
@@ -64,7 +62,14 @@ pub async fn run(
                             return;
                         }
                     };
-                    if let Err(e) = ws_sink.send(Message::binary(packet.serialize())).await {
+                    let data = match rmp_serde::to_vec(&packet) {
+                        Ok(data) => data,
+                        Err(e) => {
+                            warn!("cid={} failed to encode message: {:?}", client_id, e);
+                            return;
+                        }
+                    };
+                    if let Err(e) = ws_sink.send(Message::binary(data)).await {
                         warn!("cid={} failed to write message to tunnel websocket: {:?}", client_id, e);
                         return;
                     }
@@ -218,24 +223,24 @@ pub async fn process_control_flow_message(
     payload: Vec<u8>,
     local_port: u16,
 ) -> Result<ControlPacket, Box<dyn std::error::Error>> {
-    let control_packet = ControlPacket::deserialize(&payload)?;
+    let control_packet: ControlPacket = rmp_serde::from_slice(&payload)?;
 
-    match &control_packet {
+    match control_packet {
         ControlPacket::Init(stream_id) => {
-            debug!("sid={} init stream", stream_id.to_string());
+            debug!("sid={} init stream", stream_id);
 
             if !active_streams.read().unwrap().contains_key(&stream_id) {
                 local::setup_new_stream(
                     active_streams.clone(),
                     local_port,
                     tunnel_tx.clone(),
-                    stream_id.clone(),
+                    stream_id,
                 )
                 .await;
             } else {
                 warn!(
                     "sid={} already exist at init process",
-                    stream_id.to_string()
+                    stream_id
                 );
             }
         }
@@ -245,11 +250,10 @@ pub async fn process_control_flow_message(
         }
         ControlPacket::Refused(_) => return Err("unexpected control packet".into()),
         ControlPacket::End(stream_id) => {
-            debug!("sid={} end stream", stream_id.to_string());
+            debug!("sid={} end stream", stream_id);
             // proxy server try to close control stream and local stream
 
             // find the stream
-            let stream_id = stream_id.clone();
 
             tokio::spawn(async move {
                 let stream = active_streams.read().unwrap().get(&stream_id).cloned();
@@ -258,7 +262,7 @@ pub async fn process_control_flow_message(
                     let _ = tx.send(StreamMessage::Close).await.map_err(|e| {
                         error!(
                             "sid={} failed to send stream close: {:?}",
-                            stream_id.to_string(),
+                            stream_id,
                             e
                         );
                     });
@@ -266,27 +270,27 @@ pub async fn process_control_flow_message(
                 }
             });
         }
-        ControlPacket::Data(stream_id, data) => {
-            debug!("sid={} new data: {}", stream_id.to_string(), data.len());
+        ControlPacket::Data(stream_id, ref data) => {
+            debug!("sid={} new data: {}", stream_id, data.len());
             // find the right stream
             let active_stream = active_streams.read().unwrap().get(&stream_id).cloned();
 
             // forward data to it
             if let Some(mut tx) = active_stream {
                 tx.send(StreamMessage::Data(data.clone())).await?;
-                debug!("sid={} forwarded to local tcp", stream_id.to_string());
+                debug!("sid={} forwarded to local tcp", stream_id);
             } else {
                 error!(
                     "sid={} got data but no stream to send it to.",
-                    stream_id.to_string()
+                    stream_id
                 );
                 let _ = tunnel_tx
-                    .send(ControlPacket::Refused(stream_id.clone()))
+                    .send(ControlPacket::Refused(stream_id))
                     .await?;
             }
         }
-        ControlPacket::UdpData(stream_id, data) => {
-            debug!("sid={} new data: {}", stream_id.to_string(), data.len());
+        ControlPacket::UdpData(stream_id, ref data) => {
+            debug!("sid={} new data: {}", stream_id, data.len());
             // find the right stream
             let active_stream = active_streams.read().unwrap().get(&stream_id).cloned();
 
@@ -296,7 +300,7 @@ pub async fn process_control_flow_message(
                     active_streams.clone(),
                     local_port,
                     tunnel_tx.clone(),
-                    stream_id.clone(),
+                    stream_id,
                 )
                 .await;
             }
@@ -304,14 +308,14 @@ pub async fn process_control_flow_message(
             let active_stream = active_streams.read().unwrap().get(&stream_id).cloned();
             if let Some(mut tx) = active_stream {
                 tx.send(StreamMessage::Data(data.clone())).await?;
-                debug!("sid={} forwarded to local tcp", stream_id.to_string());
+                debug!("sid={} forwarded to local tcp", stream_id);
             } else {
                 warn!("active_stream is not yet registered {}", stream_id);
             }
         }
     };
 
-    Ok(control_packet.clone())
+    Ok(control_packet)
 }
 
 #[derive(Serialize, Deserialize)]
