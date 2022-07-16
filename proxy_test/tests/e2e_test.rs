@@ -393,7 +393,7 @@ mod e2e_udp_test {
         control_port: u16,
         local_port: u16,
         cancellation_token: CancellationToken,
-    ) -> Result<(Receiver<ClientInfo>), Box<dyn std::error::Error>> {
+    ) -> Result<Receiver<ClientInfo>, Box<dyn std::error::Error>> {
         let client_store: Arc<ClientStore> = Default::default();
         let (tx, rx) = oneshot::channel();
 

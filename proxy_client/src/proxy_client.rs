@@ -377,3 +377,87 @@ mod fetch_token_test {
         Ok(())
     }
 }
+
+
+#[cfg(test)]
+mod client_verify_server_hello_test {
+    use super::*;
+    use futures::{channel::mpsc, SinkExt};
+    use magic_tunnel_lib::{ClientId, ServerHello};
+    use tokio_tungstenite::{
+        tungstenite::{Error as WsError, Message},
+    };
+
+    #[tokio::test]
+    async fn it_accept_server_hello() -> Result<(), Box<dyn std::error::Error>> {
+        let (mut tx, mut rx) = mpsc::unbounded();
+
+        let cid = ClientId::new();
+        let hello = serde_json::to_vec(&ServerHello::Success {
+            client_id: cid,
+            remote_addr: "foo.bar.local:256".to_string(),
+        })
+        .unwrap_or_default();
+        tx.send(Ok(Message::binary(hello))).await?;
+
+        let client_info = verify_server_hello(&mut rx)
+            .await
+            .expect("unexpected server hello error");
+        let ClientInfo {
+            client_id,
+            remote_addr,
+        } = client_info;
+        assert_eq!(cid, client_id);
+        assert_eq!("foo.bar.local:256".to_string(), remote_addr);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn returns_errors_when_websocket_yields_nothing() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let (mut tx, mut rx) = mpsc::unbounded();
+
+        tx.disconnect();
+
+        let server_hello = verify_server_hello(&mut rx)
+            .await
+            .err()
+            .expect("server hello is unexpectedly correct");
+        assert!(matches!(server_hello, Error::NoResponseFromServer));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn returns_errors_when_server_hello_is_invalid() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let (mut tx, mut rx) = mpsc::unbounded();
+
+        let hello = serde_json::to_vec(&"hello server").unwrap_or_default();
+        tx.send(Ok(Message::binary(hello))).await?;
+
+        let server_hello = verify_server_hello(&mut rx)
+            .await
+            .err()
+            .expect("server hello is unexpectedly correct");
+        assert!(matches!(server_hello, Error::ServerReplyInvalid));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn returns_errors_when_websocket_error() -> Result<(), Box<dyn std::error::Error>> {
+        let (mut tx, mut rx) = mpsc::unbounded();
+
+        tx.send(Err(WsError::AlreadyClosed)).await?;
+
+        let server_hello = verify_server_hello(&mut rx)
+            .await
+            .err()
+            .expect("server hello is unexpectedly correct");
+        assert!(matches!(server_hello, Error::WebSocketError(_)));
+
+        Ok(())
+    }
+}
