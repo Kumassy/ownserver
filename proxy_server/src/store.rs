@@ -57,13 +57,14 @@ impl Store {
         let host = client.host.clone();
         self.clients.insert(client_id, client);
         self.hosts_map.insert(host, client_id);
-        gauge!("magic_tunnel_server.control.connections", self.clients.len() as f64);
+        gauge!("magic_tunnel_server.store.clients", self.clients.len() as f64);
     }
 
     pub fn add_remote(&self, remote: RemoteStream, peer_addr: SocketAddr) {
         let stream_id = remote.stream_id();
         self.streams.insert(stream_id, remote);
         self.addrs_map.insert(peer_addr, stream_id);
+        gauge!("magic_tunnel_server.store.streams", self.streams.len() as f64);
     }
 
     pub fn cleanup(&self) {

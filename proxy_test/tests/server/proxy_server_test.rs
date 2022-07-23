@@ -429,6 +429,7 @@ mod server_udp_test {
     #[tokio::test]
     #[serial]
     async fn forward_client_traffic_to_multiple_remote() -> Result<(), Box<dyn std::error::Error>> {
+        pretty_env_logger::init();
         let (websoket, store, client_info) = launch_proxy_server(CONTROL_PORT).await?;
         let (mut raw_client_ws_sink, mut _raw_client_ws_stream) = websoket.split();
 
