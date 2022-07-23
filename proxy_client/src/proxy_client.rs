@@ -29,9 +29,12 @@ pub async fn run(
     payload: Payload,
     cancellation_token: CancellationToken,
 ) -> Result<(ClientInfo, JoinHandle<Result<(), Error>>)> {
+    println!("Connecting to auth server: {}", token_server);
     let (token, host) = fetch_token(token_server).await?;
     info!("got token: {}, host: {}", token, host);
+    println!("Your proxy server: {}", host);
 
+    println!("Connecting to proxy server: {}:{}", host, control_port);
     let url = Url::parse(&format!("wss://{}:{}/tunnel", host, control_port))?;
     let (mut websocket, _) = connect_async(url).await.map_err(|_| Error::ServerDown)?;
     info!("WebSocket handshake has been successfully completed");
@@ -42,6 +45,7 @@ pub async fn run(
         "cid={} got client_info from server: {:?}",
         client_info.client_id, client_info
     );
+    println!("Your Client ID: {}", client_info.client_id);
 
     // split reading and writing
     let (mut ws_sink, mut ws_stream) = websocket.split();
@@ -132,6 +136,11 @@ pub async fn run(
             (_, Err(join_error)) => Err(join_error.into()),
         }
     });
+
+    let message = format!("Your server {}://localhost:{} is now available at {}://{}", payload, local_port, payload, client_info.remote_addr);
+    println!("+{}+", "-".repeat(message.len() + 2));
+    println!("| {} |", message);
+    println!("+{}+", "-".repeat(message.len() + 2));
 
     Ok((client_info, handle))
 }
@@ -237,6 +246,7 @@ pub async fn process_control_flow_message(
                     stream_id,
                 )
                 .await;
+                println!("new tcp stream arrived: {}", stream_id);
             } else {
                 warn!(
                     "sid={} already exist at init process",
@@ -263,6 +273,7 @@ pub async fn process_control_flow_message(
                             e
                         );
                     });
+                    println!("close tcp stream: {}", stream_id);
                 }
             });
         }
@@ -296,6 +307,7 @@ pub async fn process_control_flow_message(
                     stream_id,
                 )
                 .await;
+                println!("new udp stream arrived: {}", stream_id);
             }
 
             // forward data to it

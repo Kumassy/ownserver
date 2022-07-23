@@ -37,7 +37,7 @@ impl ClientId {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 pub enum Payload {
     Other = 0,
     UDP = 65535,
@@ -45,6 +45,19 @@ pub enum Payload {
     Minecraft = 25565,
     Factorio = 34197,
 }
+
+impl std::fmt::Display for Payload {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+         match self {
+            Payload::Other => write!(f, "tcp"),
+            Payload::UDP => write!(f, "udp"),
+            Payload::Http => write!(f, "http"),
+            Payload::Minecraft => write!(f, "tcp+minecraft"),
+            Payload::Factorio => write!(f, "udp+factorio"),
+        }
+    }
+}
+
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ClientHello {
