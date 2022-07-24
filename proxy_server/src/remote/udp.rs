@@ -1,4 +1,5 @@
 use std::{io, net::SocketAddr};
+use metrics::increment_counter;
 use tokio::net::{ToSocketAddrs, UdpSocket};
 use tracing::Instrument;
 use tokio_util::sync::CancellationToken;
@@ -29,6 +30,7 @@ pub async fn spawn_remote(
         .instrument(tracing::info_span!("process_udp_stream")),
     );
 
+    increment_counter!("magic_tunnel_server.remote.udp.swawn_remote");
     Ok(())
 }
 

@@ -51,6 +51,8 @@ pub async fn spawn_remote(
             );
         }
     }.instrument(tracing::info_span!("spawn_accept_connection")));
+
+    increment_counter!("magic_tunnel_server.remote.tcp.swawn_remote");
     Ok(())
 }
 
@@ -71,7 +73,6 @@ pub async fn accept_connection(
         }
     };
     tracing::info!(cid = %client_id, "remote ip is {}", peer_addr);
-    increment_counter!("magic_tunnel_server.remotes.success");
 
 
     let remote = RemoteTcp::new(store.clone(), socket, client_id);

@@ -69,7 +69,7 @@ mod server_tcp_test {
                 token_secret: "supersecret".to_string(),
                 host: "127.0.0.1".to_string(),
                 remote_port_start: 4000,
-                remote_port_end: 4010,
+                remote_port_end: 4099,
             }
         );
 
@@ -298,8 +298,8 @@ mod server_udp_test {
                 control_port: 5000,
                 token_secret: "supersecret".to_string(),
                 host: "127.0.0.1".to_string(),
-                remote_port_start: 4000,
-                remote_port_end: 4010,
+                remote_port_start: 4100,
+                remote_port_end: 4199,
             }
         );
         let alloc = Arc::new(Mutex::new(PortAllocator::new(config.remote_port_start..config.remote_port_end)));
@@ -429,6 +429,7 @@ mod server_udp_test {
     #[tokio::test]
     #[serial]
     async fn forward_client_traffic_to_multiple_remote() -> Result<(), Box<dyn std::error::Error>> {
+        pretty_env_logger::init();
         let (websoket, store, client_info) = launch_proxy_server(CONTROL_PORT).await?;
         let (mut raw_client_ws_sink, mut _raw_client_ws_stream) = websoket.split();
 
