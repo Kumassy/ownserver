@@ -70,7 +70,7 @@ mod e2e_tcp_test {
                 token_secret: "supersecret".to_string(),
                 host: "127.0.0.1".to_string(),
                 remote_port_start: 4500,
-                remote_port_end: 4510,
+                remote_port_end: 4599,
             }
         );
 
@@ -371,7 +371,7 @@ mod e2e_udp_test {
                 token_secret: "supersecret".to_string(),
                 host: "127.0.0.1".to_string(),
                 remote_port_start: 4600,
-                remote_port_end: 4610,
+                remote_port_end: 4699,
             }
         );
         let alloc = Arc::new(Mutex::new(PortAllocator::new(config.remote_port_start..config.remote_port_end)));
