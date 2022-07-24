@@ -298,8 +298,8 @@ mod server_udp_test {
                 control_port: 5000,
                 token_secret: "supersecret".to_string(),
                 host: "127.0.0.1".to_string(),
-                remote_port_start: 4000,
-                remote_port_end: 4010,
+                remote_port_start: 4100,
+                remote_port_end: 4110,
             }
         );
         let alloc = Arc::new(Mutex::new(PortAllocator::new(config.remote_port_start..config.remote_port_end)));
