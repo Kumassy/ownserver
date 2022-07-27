@@ -49,11 +49,18 @@ This software was initially developed as a fork of tunnelto.
 
 ## Contributing
 ### Project Layout
-- ownserver/proxy_lib
-- ownserver/proxy_client
-- ownserver/proxy_server
+- ownserver/ownserver
+  - include executable of client application
+  - also serves library for ownserver-gui
+- ownserver/ownserver_lib
+  - define encoding/decoding scheme between client and server
+- ownserver/ownserver_server
+  - establish private tunnel to client
+  - forward request between public endpoints to a set of client
 - ownserver-auth
-- ownserver-client-gui
+  - performs user authentication and load balancing
+- ownserver-gui
+  - GUI for ownserver client
 
 ## Running tests
 
@@ -67,7 +74,6 @@ TODO
 
 ### Issue/PR
 Feel free to open Issues, send Pull Requests!
-
 
 ### License
 MIT
