@@ -11,7 +11,7 @@ use ownserver_server::{
     proxy_server,
     Config,
 };
-use magic_tunnel_auth::build_routes;
+use ownserver_auth::build_routes;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;

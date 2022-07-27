@@ -754,25 +754,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "magic-tunnel-auth"
-version = "0.1.3"
-source = "git+ssh://git@github.com/Kumassy/magic-tunnel-auth.git?branch=main#c46e26849404c57b351649b29a79df40b3aa22a9"
-dependencies = [
- "chrono",
- "jsonwebtoken",
- "rand",
- "reqwest",
- "serde",
- "serde_json",
- "structopt",
- "thiserror",
- "tokio",
- "tracing",
- "tracing-subscriber 0.2.25",
- "warp",
-]
-
-[[package]]
 name = "matchers"
 version = "0.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1107,6 +1088,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "ownserver-auth"
+version = "0.2.0"
+source = "git+https://github.com/Kumassy/ownserver-auth.git?branch=main#ab2f80a90e12ae61ca32beea8d3b6aa2ddb3eff6"
+dependencies = [
+ "chrono",
+ "jsonwebtoken",
+ "rand",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "structopt",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-subscriber 0.2.25",
+ "warp",
+]
+
+[[package]]
 name = "ownserver_lib"
 version = "0.4.0"
 dependencies = [
@@ -1129,13 +1129,13 @@ dependencies = [
  "futures",
  "lazy_static",
  "log",
- "magic-tunnel-auth",
  "metrics",
  "metrics-exporter-prometheus",
  "once_cell",
  "opentelemetry",
  "opentelemetry-jaeger",
  "ownserver",
+ "ownserver-auth",
  "ownserver_lib",
  "pretty_env_logger",
  "rand",
@@ -1167,9 +1167,9 @@ dependencies = [
  "futures",
  "lazy_static",
  "log",
- "magic-tunnel-auth",
  "once_cell",
  "ownserver",
+ "ownserver-auth",
  "ownserver_lib",
  "ownserver_server",
  "pretty_env_logger",

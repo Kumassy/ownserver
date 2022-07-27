@@ -3,7 +3,7 @@ use futures::{
 };
 use ownserver_lib::Payload;
 pub use ownserver_lib::{ClientHello, ClientId, ControlPacket, ServerHello, StreamId, CLIENT_HELLO_VERSION};
-use magic_tunnel_auth::decode_jwt;
+use ownserver_auth::decode_jwt;
 use metrics::increment_counter;
 use std::convert::Infallible;
 use std::net::SocketAddr;
@@ -327,7 +327,7 @@ async fn handle_new_connection(
 mod verify_client_handshake_test {
     use super::*;
     use futures::channel::mpsc;
-    use magic_tunnel_auth::make_jwt;
+    use ownserver_auth::make_jwt;
     use chrono::Duration;
     use ownserver_lib::Payload;
 

@@ -16,7 +16,7 @@ use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, Web
 use url::Url;
 use once_cell::sync::OnceCell;
 use ownserver_server::Config;
-use magic_tunnel_auth::make_jwt;
+use ownserver_auth::make_jwt;
 use chrono::Duration as CDuration;
 use tokio::net::UdpSocket;
 
