@@ -1,10 +1,10 @@
-use magic_tunnel_lib::Payload;
-use magic_tunnel_server::{proxy_server::run, Store};
+use ownserver_lib::Payload;
+use ownserver_server::{proxy_server::run, Store};
 use serial_test::serial;
 use futures::{SinkExt, StreamExt};
-use magic_tunnel_client::proxy_client::{send_client_hello, verify_server_hello, ClientInfo};
-use magic_tunnel_lib::ControlPacket;
-use magic_tunnel_server::{
+use ownserver::proxy_client::{send_client_hello, verify_server_hello, ClientInfo};
+use ownserver_lib::ControlPacket;
+use ownserver_server::{
     port_allocator::PortAllocator,
 };
 use std::sync::Arc;
@@ -15,7 +15,7 @@ use tokio::sync::Mutex;
 use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
 use url::Url;
 use once_cell::sync::OnceCell;
-use magic_tunnel_server::Config;
+use ownserver_server::Config;
 use magic_tunnel_auth::make_jwt;
 use chrono::Duration as CDuration;
 use tokio::net::UdpSocket;

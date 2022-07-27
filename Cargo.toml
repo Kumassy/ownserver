@@ -1,8 +1,8 @@
 [workspace]
 
 members = [
-    "proxy_lib",
-    "proxy_client",
-    "proxy_server",
-    "proxy_test",
+    "ownserver_lib",
+    "ownserver",
+    "ownserver_server",
+    "ownserver_test",
 ]

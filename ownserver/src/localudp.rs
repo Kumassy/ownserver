@@ -9,7 +9,7 @@ use tokio::net::UdpSocket;
 
 use crate::{StreamMessage, Store};
 use log::*;
-use magic_tunnel_lib::{ControlPacket, StreamId};
+use ownserver_lib::{ControlPacket, StreamId};
 
 /// Establish a new local stream and start processing messages to it
 pub async fn setup_new_stream(

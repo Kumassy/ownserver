@@ -1,5 +1,5 @@
 use futures::{channel::mpsc::SendError};
-use magic_tunnel_lib::{ClientId, StreamId};
+use ownserver_lib::{ClientId, StreamId};
 use thiserror::Error;
 
 pub mod client;

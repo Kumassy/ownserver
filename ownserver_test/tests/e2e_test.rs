@@ -1,12 +1,12 @@
-use magic_tunnel_lib::Payload;
-use magic_tunnel_server::Store;
+use ownserver_lib::Payload;
+use ownserver_server::Store;
 use serial_test::serial;
 use lazy_static::lazy_static;
-use magic_tunnel_client::{
+use ownserver::{
     proxy_client::{self, ClientInfo},
     Store as ClientStore,
 };
-use magic_tunnel_server::{
+use ownserver_server::{
     port_allocator::PortAllocator,
     proxy_server,
     Config,

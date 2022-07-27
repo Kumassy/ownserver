@@ -1,5 +1,5 @@
 [package]
-name = "magic_tunnel_client"
+name = "ownserver"
 version = "0.4.1"
 authors = ["Kumassy <kumassyii@gmail.com>"]
 edition = "2018"
@@ -7,7 +7,7 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-magic_tunnel_lib = { version = "0.4.0", path = "../proxy_lib" }
+ownserver_lib = { version = "0.4.0", path = "../ownserver_lib" }
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.6.8"
 tokio-tungstenite = { version = '0.14', features = ["rustls"] }
@@ -27,5 +27,5 @@ reqwest = { version = "0.11", default-features = false, features = ["json", "rus
 dashmap = "4.0"
 
 [[bin]]
-name = "proxy-client"
+name = "ownserver"
 path = "src/main.rs"
