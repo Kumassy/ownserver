@@ -62,14 +62,14 @@ async fn process_udp_stream(
             }
         };
 
-        let stream_id = match store.find_stream_id_by_addr(&peer_addr) {
+        let stream_id = match store.find_stream_id_by_addr(&peer_addr).await {
             Some(stream_id) => stream_id,
             None => {
                 tracing::info!(cid = %client_id, "remote ip is {}", peer_addr);
                 let remote = RemoteUdp::new(store.clone(), udp_socket.clone(), peer_addr, client_id);
                 let stream_id = remote.stream_id;
                 tracing::info!(cid = %client_id, sid = %remote.stream_id, "add new remote stream");
-                store.add_remote(RemoteStream::RemoteUdp(remote), peer_addr);
+                store.add_remote(RemoteStream::RemoteUdp(remote), peer_addr).await;
                 stream_id
             }
         };
@@ -119,9 +119,6 @@ impl RemoteUdp {
     pub fn new(store: Arc<Store>, socket: Arc<UdpSocket>, peer_addr: SocketAddr, client_id: ClientId) -> Self {
         let stream_id = StreamId::new();
         let ct = CancellationToken::new();
-
-        let mut buf = [0; 4096];
-        let store_ = store.clone();
 
         Self { stream_id, client_id, socket, store, ct, peer_addr, disabled: false }
     }

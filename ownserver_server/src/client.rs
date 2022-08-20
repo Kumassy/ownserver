@@ -90,12 +90,12 @@ impl Client {
                         if let Err(e) = store_.send_to_remote(stream_id, message).await {
                             tracing::debug!(cid = %client_id, sid = %stream_id, error = ?e, "Failed to send to remote stream");
 
-                            store_.disable_remote(stream_id);
+                            store_.disable_remote(stream_id).await;
                         }
                     }
                 }
             }
-            store_.disable_client(client_id);
+            store_.disable_client(client_id).await;
         }.instrument(tracing::info_span!("client_read_loop")));
 
         Self { client_id, host, ws_tx: sink, store, ct: token, disabled: false }
