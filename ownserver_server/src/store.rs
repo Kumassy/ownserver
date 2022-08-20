@@ -9,12 +9,11 @@ use crate::{remote::stream::{RemoteStream, StreamMessage}, Client, ClientStreamE
 
 #[derive(Debug, Default)]
 pub struct Store {
-    // pub streams: DashMap<StreamId, Arc<dyn RemoteStream>>,
-    pub streams: DashMap<StreamId, RemoteStream>,
-    pub addrs_map: DashMap<SocketAddr, StreamId>,
+    streams: DashMap<StreamId, RemoteStream>,
+    addrs_map: DashMap<SocketAddr, StreamId>,
 
-    pub clients: DashMap<ClientId, Client>,
-    pub hosts_map: DashMap<String, ClientId>,
+    clients: DashMap<ClientId, Client>,
+    hosts_map: DashMap<String, ClientId>,
 }
 
 impl Store {
@@ -79,5 +78,9 @@ impl Store {
             }
         }
         None
+    }
+
+    pub fn get_stream_ids(&self) -> Vec<StreamId> {
+        self.streams.iter().map(|v| v.stream_id()).collect()
     }
 }

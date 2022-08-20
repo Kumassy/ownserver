@@ -118,7 +118,7 @@ mod server_tcp_test {
             .expect("failed to send client hello");
 
         wait!();
-        let stream_id = store.streams.iter().next().unwrap().stream_id();
+        let stream_id = store.get_stream_ids()[0];
 
         assert_control_packet_matches!(
             raw_client_ws_stream,
@@ -142,7 +142,7 @@ mod server_tcp_test {
             .expect("Failed to connect to remote port");
 
         wait!();
-        let stream_id = store.streams.iter().next().unwrap().stream_id();
+        let stream_id = store.get_stream_ids()[0];
 
         raw_client_ws_sink
             .send(Message::binary(
@@ -164,17 +164,16 @@ mod server_tcp_test {
             .await
             .expect("Failed to connect to remote port");
         wait!();
-        let stream_id1 = store.streams.iter().next().unwrap().stream_id();
+        let stream_id1 = store.get_stream_ids()[0];
 
         let mut remote2 = TcpStream::connect(client_info.remote_addr.clone())
             .await
             .expect("Failed to connect to remote port");
         wait!();
-        let stream_id2 = store.streams
-            .iter()
-            .find(|sid| sid.key() != &stream_id1)
-            .unwrap()
-            .stream_id();
+        let stream_id2 = store.get_stream_ids()
+            .into_iter()
+            .find(|sid| sid != &stream_id1)
+            .unwrap();
 
         assert_ne!(stream_id1, stream_id2);
 
@@ -217,17 +216,16 @@ mod server_tcp_test {
             .await
             .expect("Failed to connect to remote port");
         wait!();
-        let stream_id1 = store.streams.iter().next().unwrap().stream_id();
+        let stream_id1 = store.get_stream_ids()[0];
 
         let mut remote2 = TcpStream::connect(client_info.remote_addr.clone())
             .await
             .expect("Failed to connect to remote port");
         wait!();
-        let stream_id2 = store.streams
-            .iter()
-            .find(|sid| sid.key() != &stream_id1)
-            .unwrap()
-            .stream_id();
+        let stream_id2 = store.get_stream_ids()
+            .into_iter()
+            .find(|sid| sid != &stream_id1)
+            .unwrap();
 
         assert_ne!(stream_id1, stream_id2);
 
@@ -347,7 +345,7 @@ mod server_udp_test {
             .expect("failed to send client hello");
 
         wait!();
-        let stream_id = store.streams.iter().next().unwrap().stream_id();
+        let stream_id = store.get_stream_ids()[0];
 
         assert_control_packet_matches!(
             raw_client_ws_stream,
@@ -372,7 +370,7 @@ mod server_udp_test {
             .expect("failed to send client hello");
 
         wait!();
-        let stream_id = store.streams.iter().next().unwrap().stream_id();
+        let stream_id = store.get_stream_ids()[0];
 
         raw_client_ws_sink
             .send(Message::binary(
@@ -398,7 +396,7 @@ mod server_udp_test {
             .await
             .expect("failed to send client hello");
         wait!();
-        let stream_id1 = store.streams.iter().next().unwrap().stream_id();
+        let stream_id1 = store.get_stream_ids()[0];
 
         let remote2 = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         remote2.connect(client_info.remote_addr.clone()).await.unwrap();
@@ -408,11 +406,10 @@ mod server_udp_test {
             .await
             .expect("failed to send client hello");
         wait!();
-        let stream_id2 = store.streams
-            .iter()
-            .find(|sid| sid.key() != &stream_id1)
-            .unwrap()
-            .stream_id();
+        let stream_id2 = store.get_stream_ids()
+            .into_iter()
+            .find(|sid| sid != &stream_id1)
+            .unwrap();
 
 
         assert_control_packet_matches!(
@@ -441,7 +438,7 @@ mod server_udp_test {
             .await
             .expect("failed to send client hello");
         wait!();
-        let stream_id1 = store.streams.iter().next().unwrap().stream_id();
+        let stream_id1 = store.get_stream_ids()[0];
 
         let remote2 = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         remote2.connect(client_info.remote_addr.clone()).await.unwrap();
@@ -451,11 +448,10 @@ mod server_udp_test {
             .await
             .expect("failed to send client hello");
         wait!();
-        let stream_id2 = store.streams
-            .iter()
-            .find(|sid| sid.key() != &stream_id1)
-            .unwrap()
-            .stream_id();
+        let stream_id2 = store.get_stream_ids()
+            .into_iter()
+            .find(|sid| sid != &stream_id1)
+            .unwrap();
 
         raw_client_ws_sink
             .send(Message::binary(
