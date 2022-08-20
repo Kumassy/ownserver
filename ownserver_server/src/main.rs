@@ -60,6 +60,9 @@ impl From<Opt> for Config {
 
 #[tokio::main]
 async fn main() {
+    // for tokio-console
+    // console_subscriber::init();
+
     let opt = Opt::from_args();
     let log_file = opt.log_file.clone();
     let config = Config::from(opt);
