@@ -12,6 +12,7 @@ ownserver = { version = "0.4.0", path = "../ownserver" }
 tokio-tungstenite = { version = '0.14', features = ["rustls"] }
 tokio = { version = "1", features = ["full", "tracing"] }
 tokio-util = "0.6.8"
+console-subscriber = "0.1.7"
 futures = "0.3"
 log = "0.4"
 pretty_env_logger = "0.4"
