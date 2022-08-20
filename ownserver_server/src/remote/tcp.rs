@@ -146,6 +146,9 @@ impl RemoteTcp {
                     Ok(_) => {
                         tracing::debug!(cid = %client_id, sid = %stream_id, "sent data packet to client");
                     },
+                    Err(ClientStreamError::Locked) => {
+                        tracing::warn!(cid = %client_id, sid = %stream_id, "client is locked");
+                    }
                     Err(e) => {
                         tracing::warn!(cid = %client_id, sid = %stream_id, "failed to forward tcp packets to client. {:?}", e);
                         // error: client is unavailable or error
@@ -211,6 +214,7 @@ impl RemoteTcp {
         self.disabled
     }
     pub fn disable(&mut self) {
+        tracing::info!(sid = %self.stream_id, "tcp stream was disabled");
         self.ct.cancel();
         self.disabled = true;
     }

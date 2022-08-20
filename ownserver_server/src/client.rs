@@ -87,10 +87,17 @@ impl Client {
                         };
 
                         tracing::trace!(cid = %client_id, sid = %stream_id, "forward message to remote stream");
-                        if let Err(e) = store_.send_to_remote(stream_id, message).await {
-                            tracing::debug!(cid = %client_id, sid = %stream_id, error = ?e, "Failed to send to remote stream");
 
-                            store_.disable_remote(stream_id);
+                        match store_.send_to_remote(stream_id, message).await {
+                            Ok(_) => {}
+                            Err(ClientStreamError::Locked) => {
+                                tracing::warn!(cid = %client_id, sid = %stream_id, "stream is locked");
+                            },
+                            Err(e) => {
+                                tracing::debug!(cid = %client_id, sid = %stream_id, error = ?e, "Failed to send to remote stream");
+                                store_.disable_remote(stream_id);
+                            }
+
                         }
                     }
                 }
@@ -124,6 +131,7 @@ impl Client {
     }
 
     pub fn disable(&mut self) {
+        tracing::info!(cid = %self.client_id, "client was disabled");
         self.ct.cancel();
         self.disabled = true;
     }

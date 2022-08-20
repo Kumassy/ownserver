@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 
-use dashmap::DashMap;
+use dashmap::{DashMap, try_result::TryResult};
 use ownserver_lib::{StreamId, ClientId, ControlPacket};
 use metrics::gauge;
 
@@ -19,23 +19,31 @@ pub struct Store {
 
 impl Store {
     pub async fn send_to_client(&self, client_id: ClientId, packet: ControlPacket) -> Result<(), ClientStreamError> {
-        match self.clients.get_mut(&client_id) {
-            Some(mut client) => {
+        match self.clients.try_get_mut(&client_id) {
+            TryResult::Present(mut client) => {
                 client.send_to_client(packet).await
             },
-            None => {
+            TryResult::Absent => {
                 Err(ClientStreamError::ClientNotAvailable(client_id))
+            },
+            TryResult::Locked => {
+                tracing::warn!(cid = %client_id, "client is locked");
+                Err(ClientStreamError::Locked)
             }
         }
     }
 
     pub async fn send_to_remote(&self, stream_id: StreamId, message: StreamMessage) -> Result<(), ClientStreamError> {
-        match self.streams.get_mut(&stream_id) {
-            Some(mut stream) => {
+        match self.streams.try_get_mut(&stream_id) {
+            TryResult::Present(mut stream) => {
                 stream.send_to_remote(stream_id, message).await
             },
-            None => {
+            TryResult::Absent => {
                 Err(ClientStreamError::StreamNotAvailable(stream_id))
+            },
+            TryResult::Locked => {
+                tracing::warn!(sid = %stream_id, "stream is locked");
+                Err(ClientStreamError::Locked)
             }
         }
     }

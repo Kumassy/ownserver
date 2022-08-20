@@ -95,6 +95,9 @@ async fn process_udp_stream(
 
         match store.send_to_client(client_id, packet).await {
             Ok(_) => tracing::debug!(cid = %client_id, sid = %stream_id, "sent data packet to client"),
+            Err(ClientStreamError::Locked) => {
+                tracing::warn!(cid = %client_id, sid = %stream_id, "client is locked");
+            }
             Err(_) => {
                 tracing::warn!(cid = %client_id, sid = %stream_id, "failed to forward udp packets to client");
                 continue
@@ -171,6 +174,7 @@ impl RemoteUdp {
         self.disabled
     }
     pub fn disable(&mut self) {
+        tracing::info!(sid = %self.stream_id, "udp stream was disabled");
         self.ct.cancel();
         self.disabled = true;
     }

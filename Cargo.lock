@@ -279,6 +279,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "dashmap"
+version = "5.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3495912c9c1ccf2e18976439f4443f3fee0fd61f424ff99fde6a66b15ecb448f"
+dependencies = [
+ "cfg-if",
+ "hashbrown 0.12.3",
+ "lock_api",
+ "parking_lot_core 0.9.3",
+]
+
+[[package]]
 name = "digest"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -498,6 +510,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "hashbrown"
+version = "0.12.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8a9ee70c43aaf417c914396645a0fa852624801b24ebb7ae78fe8272889ac888"
+
+[[package]]
 name = "headers"
 version = "0.3.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -651,7 +669,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6012d540c5baa3589337a98ce73408de9b5a25ec9fc2c6fd6be8f0d39e0ca5a"
 dependencies = [
  "autocfg",
- "hashbrown",
+ "hashbrown 0.11.2",
 ]
 
 [[package]]
@@ -840,7 +858,7 @@ dependencies = [
  "atomic-shim",
  "crossbeam-epoch",
  "crossbeam-utils",
- "hashbrown",
+ "hashbrown 0.11.2",
  "metrics",
  "num_cpus",
  "parking_lot 0.11.2",
@@ -1068,7 +1086,7 @@ name = "ownserver"
 version = "0.4.1"
 dependencies = [
  "anyhow",
- "dashmap",
+ "dashmap 4.0.2",
  "futures",
  "lazy_static",
  "log",
@@ -1125,7 +1143,7 @@ dependencies = [
  "anyhow",
  "base64 0.13.0",
  "chrono",
- "dashmap",
+ "dashmap 5.3.4",
  "futures",
  "lazy_static",
  "log",
@@ -1163,7 +1181,7 @@ dependencies = [
  "anyhow",
  "base64 0.13.0",
  "chrono",
- "dashmap",
+ "dashmap 4.0.2",
  "futures",
  "lazy_static",
  "log",

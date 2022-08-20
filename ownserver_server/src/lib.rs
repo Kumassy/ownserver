@@ -47,5 +47,7 @@ pub enum ClientStreamError {
     StreamNotAvailable(StreamId),
     #[error("Remote stream has closed.")]
     RemoteEnd,
+    #[error("Target resouce is locked.")]
+    Locked,
 }
 
