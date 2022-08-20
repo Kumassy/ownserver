@@ -6,7 +6,7 @@ use tracing::Instrument;
 use tokio_util::sync::CancellationToken;
 
 use crate::{ClientStreamError, Store, remote::stream::RemoteStream};
-pub use magic_tunnel_lib::{ClientId, ControlPacket, StreamId};
+pub use ownserver_lib::{ClientId, ControlPacket, StreamId};
 
 use super::stream::StreamMessage;
 
@@ -52,7 +52,7 @@ pub async fn spawn_remote(
         }
     }.instrument(tracing::info_span!("spawn_accept_connection")));
 
-    increment_counter!("magic_tunnel_server.remote.tcp.swawn_remote");
+    increment_counter!("ownserver_server.remote.tcp.swawn_remote");
     Ok(())
 }
 

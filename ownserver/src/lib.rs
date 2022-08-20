@@ -1,7 +1,7 @@
 use dashmap::DashMap;
 use dashmap::mapref::one::{Ref, RefMut};
 use futures::channel::mpsc::UnboundedSender;
-use magic_tunnel_lib::StreamId;
+use ownserver_lib::StreamId;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 

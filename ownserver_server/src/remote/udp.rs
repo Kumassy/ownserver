@@ -6,7 +6,7 @@ use tokio_util::sync::CancellationToken;
 use std::sync::Arc;
 
 use crate::{Store, remote::stream::RemoteStream, ClientStreamError};
-pub use magic_tunnel_lib::{ClientId, ControlPacket, StreamId};
+pub use ownserver_lib::{ClientId, ControlPacket, StreamId};
 
 use super::stream::StreamMessage;
 
@@ -30,7 +30,7 @@ pub async fn spawn_remote(
         .instrument(tracing::info_span!("process_udp_stream")),
     );
 
-    increment_counter!("magic_tunnel_server.remote.udp.swawn_remote");
+    increment_counter!("ownserver_server.remote.udp.swawn_remote");
     Ok(())
 }
 
@@ -75,7 +75,7 @@ async fn process_udp_stream(
         };
 
         // TODO
-        // gauge!("magic_tunnel_server.remotes.udp.streams", active_streams.len() as f64);
+        // gauge!("ownserver_server.remotes.udp.streams", active_streams.len() as f64);
 
         if n == 0 {
             tracing::debug!(cid = %client_id, sid = %stream_id, "remote client streams end");

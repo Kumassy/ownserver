@@ -1,12 +1,12 @@
 use anyhow::Result;
 use log::*;
-use magic_tunnel_lib::Payload;
+use ownserver_lib::Payload;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use tokio_util::sync::CancellationToken;
 use structopt::StructOpt;
 
-use magic_tunnel_client::{proxy_client::run, error::Error};
+use ownserver::{proxy_client::run, error::Error};
 
 #[derive(StructOpt, Debug)]
 #[structopt(name = "basic")]

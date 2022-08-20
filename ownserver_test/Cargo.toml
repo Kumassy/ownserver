@@ -1,5 +1,5 @@
 [package]
-name = "magic_tunnel_test"
+name = "ownserver_test"
 version = "0.1.2"
 authors = ["Kumassy <kumassyii@gmail.com>"]
 edition = "2018"
@@ -7,9 +7,9 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-magic_tunnel_lib = { version = "0.4.0", path = "../proxy_lib" }
-magic_tunnel_client = { version = "0.4.0", path = "../proxy_client" }
-magic_tunnel_server = { version = "0.4.0", path = "../proxy_server" }
+ownserver_lib = { version = "0.4.0", path = "../ownserver_lib" }
+ownserver = { version = "0.4.0", path = "../ownserver" }
+ownserver_server = { version = "0.4.0", path = "../ownserver_server" }
 tokio-tungstenite = { version = '0.14', features = ["rustls"] }
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.6.8"
@@ -27,7 +27,7 @@ warp = "0.3"
 lazy_static = "1.4"
 base64 = "0.13"
 dashmap = "4.0"
-magic-tunnel-auth = { git = "ssh://git@github.com/Kumassy/magic-tunnel-auth.git", branch = "main", version = "0.1.3" }
+ownserver-auth = { git = "https://github.com/Kumassy/ownserver-auth.git", branch = "main", version = "0.2.0" }
 once_cell = "1.8"
 chrono = "0.4"
 

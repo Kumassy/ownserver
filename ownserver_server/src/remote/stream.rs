@@ -1,4 +1,4 @@
-use magic_tunnel_lib::{StreamId, ControlPacket};
+use ownserver_lib::{StreamId, ControlPacket};
 use crate::ClientStreamError;
 
 use super::{tcp::RemoteTcp, udp::RemoteUdp};

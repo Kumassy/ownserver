@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use futures::{stream::SplitSink, StreamExt, SinkExt};
-use magic_tunnel_lib::{ClientId, ControlPacket};
+use ownserver_lib::{ClientId, ControlPacket};
 use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
 use warp::{

@@ -1,4 +1,4 @@
-pub use magic_tunnel_lib::{ClientHello, ClientId, ControlPacket, ServerHello, StreamId};
+pub use ownserver_lib::{ClientHello, ClientId, ControlPacket, ServerHello, StreamId};
 use std::ops::Range;
 use std::sync::Arc;
 use tokio::sync::Mutex;

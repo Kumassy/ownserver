@@ -17,7 +17,7 @@ use crate::error::Error;
 use crate::{local, Store};
 use crate::localudp;
 use crate::{StreamMessage};
-use magic_tunnel_lib::{
+use ownserver_lib::{
     ClientHello, ClientId, ControlPacket, Payload, ServerHello, StreamId, CLIENT_HELLO_VERSION,
 };
 
@@ -395,7 +395,7 @@ mod fetch_token_test {
 mod client_verify_server_hello_test {
     use super::*;
     use futures::{channel::mpsc, SinkExt};
-    use magic_tunnel_lib::{ClientId, ServerHello};
+    use ownserver_lib::{ClientId, ServerHello};
     use tokio_tungstenite::{
         tungstenite::{Error as WsError, Message},
     };
