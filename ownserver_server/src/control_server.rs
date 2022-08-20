@@ -306,7 +306,7 @@ async fn handle_new_connection(
 
     let client = Client::new(store.clone(), client_id, host, websocket);
     let ct = client.cancellation_token();
-    store.add_client(client);
+    store.add_client(client).await;
     tracing::info!(cid=%client_id, "register client to store");
 
     match handshake.payload {

@@ -78,7 +78,7 @@ pub async fn accept_connection(
     let remote = RemoteTcp::new(store.clone(), socket, client_id);
     if remote.send_init_to_client().await.is_ok() {
         tracing::info!(cid = %client_id, sid = %remote.stream_id, "add new remote stream");
-        store.add_remote(RemoteStream::RemoteTcp(remote), peer_addr);
+        store.add_remote(RemoteStream::RemoteTcp(remote), peer_addr).await;
     }
 }
 
@@ -159,7 +159,7 @@ impl RemoteTcp {
             }
 
             tracing::info!(cid = %client_id, sid = %stream_id, "exit from read loop");
-            store_.disable_remote(stream_id);
+            store_.disable_remote(stream_id).await;
         }.instrument(tracing::info_span!("remote_tcp_read_loop")));
 
         Self { stream_id, client_id, socket_tx: sink, store, ct, disabled: false }

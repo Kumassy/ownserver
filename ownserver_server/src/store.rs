@@ -1,86 +1,87 @@
-use std::net::SocketAddr;
+use std::{net::SocketAddr, collections::HashMap};
 
 use dashmap::{DashMap, try_result::TryResult};
 use ownserver_lib::{StreamId, ClientId, ControlPacket};
 use metrics::gauge;
+use tokio::sync::RwLock;
 
 use crate::{remote::stream::{RemoteStream, StreamMessage}, Client, ClientStreamError};
 
 
 #[derive(Debug, Default)]
 pub struct Store {
-    streams: DashMap<StreamId, RemoteStream>,
+    streams: RwLock<HashMap<StreamId, RemoteStream>>,
+    clients: RwLock<HashMap<ClientId, Client>>,
     addrs_map: DashMap<SocketAddr, StreamId>,
-
-    clients: DashMap<ClientId, Client>,
     hosts_map: DashMap<String, ClientId>,
 }
 
 impl Store {
     pub async fn send_to_client(&self, client_id: ClientId, packet: ControlPacket) -> Result<(), ClientStreamError> {
-        match self.clients.try_get_mut(&client_id) {
-            TryResult::Present(mut client) => {
+        match self.clients.write().await.get_mut(&client_id) {
+            Some(mut client) => {
                 client.send_to_client(packet).await
             },
-            TryResult::Absent => {
+            None => {
                 Err(ClientStreamError::ClientNotAvailable(client_id))
             },
-            TryResult::Locked => {
-                tracing::warn!(cid = %client_id, "client is locked");
-                Err(ClientStreamError::Locked)
-            }
         }
     }
 
     pub async fn send_to_remote(&self, stream_id: StreamId, message: StreamMessage) -> Result<(), ClientStreamError> {
-        match self.streams.try_get_mut(&stream_id) {
-            TryResult::Present(mut stream) => {
+        match self.streams.write().await.get_mut(&stream_id) {
+            Some(mut stream) => {
                 stream.send_to_remote(stream_id, message).await
             },
-            TryResult::Absent => {
+            None => {
                 Err(ClientStreamError::StreamNotAvailable(stream_id))
             },
-            TryResult::Locked => {
-                tracing::warn!(sid = %stream_id, "stream is locked");
-                Err(ClientStreamError::Locked)
-            }
         }
     }
 
-    pub fn disable_remote(&self, stream_id: StreamId) {
-        if let Some(mut stream) = self.streams.get_mut(&stream_id) {
+    pub async fn disable_remote(&self, stream_id: StreamId) {
+        if let Some(mut stream) = self.streams.write().await.get_mut(&stream_id) {
             stream.disable();
         }
     }
 
-    pub fn disable_client(&self, client_id: ClientId) {
-        if let Some(mut client) = self.clients.get_mut(&client_id) {
+    pub async fn disable_client(&self, client_id: ClientId) {
+        if let Some(mut client) = self.clients.write().await.get_mut(&client_id) {
             client.disable();
         }
     }
 
-    pub fn add_client(&self, client: Client) {
+    pub async fn add_client(&self, client: Client) {
         let client_id = client.client_id;
         let host = client.host.clone();
-        self.clients.insert(client_id, client);
+        self.clients.write().await.insert(client_id, client);
         self.hosts_map.insert(host, client_id);
-        gauge!("ownserver_server.store.clients", self.clients.len() as f64);
+
+        let v = self.clients.read().await.len() as f64;
+        gauge!("ownserver_server.store.clients", v);
     }
 
-    pub fn add_remote(&self, remote: RemoteStream, peer_addr: SocketAddr) {
+    pub async fn add_remote(&self, remote: RemoteStream, peer_addr: SocketAddr) {
         let stream_id = remote.stream_id();
-        self.streams.insert(stream_id, remote);
+        self.streams.write().await.insert(stream_id, remote);
         self.addrs_map.insert(peer_addr, stream_id);
-        gauge!("ownserver_server.store.streams", self.streams.len() as f64);
+        let v = self.streams.read().await.len() as f64;
+        gauge!("ownserver_server.store.streams", v);
     }
 
-    pub fn cleanup(&self) {
-        self.streams.retain(|_, v| !v.disabled());
-        self.clients.retain(|_, v| !v.disabled());
+    pub async fn cleanup(&self) {
+        self.streams.write().await.retain(|_, v| !v.disabled());
+        self.clients.write().await.retain(|_, v| !v.disabled());
     }
 
-    pub fn find_stream_id_by_addr(&self, addr: &SocketAddr) -> Option<StreamId> {
-        if let Some(stream) = self.addrs_map.get(addr).and_then(|stream_id| self.streams.get(&stream_id)) {
+    pub async fn find_stream_id_by_addr(&self, addr: &SocketAddr) -> Option<StreamId> {
+        let stream_id = if let Some(e) = self.addrs_map.get(addr) {
+            e.value().to_owned()
+        } else {
+            return None
+        };
+        
+        if let Some(stream) = self.streams.read().await.get(&stream_id) {
             if !stream.disabled() {
                 return Some(stream.stream_id())
             }
@@ -88,7 +89,7 @@ impl Store {
         None
     }
 
-    pub fn get_stream_ids(&self) -> Vec<StreamId> {
-        self.streams.iter().map(|v| v.stream_id()).collect()
+    pub async fn get_stream_ids(&self) -> Vec<StreamId> {
+        self.streams.read().await.iter().map(|(_, v)| v.stream_id()).collect()
     }
 }
