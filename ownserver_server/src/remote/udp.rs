@@ -168,6 +168,7 @@ impl RemoteUdp {
         self.disabled
     }
     pub fn disable(&mut self) {
+        tracing::info!(sid = %self.stream_id, "udp stream was disabled");
         self.ct.cancel();
         self.disabled = true;
     }

@@ -124,6 +124,7 @@ impl Client {
     }
 
     pub fn disable(&mut self) {
+        tracing::info!(cid = %self.client_id, "client was disabled");
         self.ct.cancel();
         self.disabled = true;
     }

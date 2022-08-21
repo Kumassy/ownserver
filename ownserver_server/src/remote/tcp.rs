@@ -211,6 +211,7 @@ impl RemoteTcp {
         self.disabled
     }
     pub fn disable(&mut self) {
+        tracing::info!(sid = %self.stream_id, "tcp stream was disabled");
         self.ct.cancel();
         self.disabled = true;
     }
