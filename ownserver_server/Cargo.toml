@@ -1,6 +1,6 @@
 [package]
 name = "ownserver_server"
-version = "0.4.1"
+version = "0.4.2"
 authors = ["Kumassy <kumassyii@gmail.com>"]
 edition = "2018"
 
