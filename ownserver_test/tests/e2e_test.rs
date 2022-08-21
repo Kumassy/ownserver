@@ -227,7 +227,7 @@ mod e2e_tcp_test {
 
         // store owns remote stream
         // remote stream never closes unless we release its ownership here
-        store.cleanup();
+        store.cleanup().await;
 
         // at the first write operation, proxy_server send FIN
         remote.write_all(b"foobar".as_ref()).await?;
