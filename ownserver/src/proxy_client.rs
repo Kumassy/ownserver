@@ -35,7 +35,7 @@ pub async fn run(
     println!("Your proxy server: {}", host);
 
     println!("Connecting to proxy server: {}:{}", host, control_port);
-    let url = Url::parse(&format!("wss://{}:{}/tunnel", host, control_port))?;
+    let url = Url::parse(&format!("ws://{}:{}/tunnel", host, control_port))?;
     let (mut websocket, _) = connect_async(url).await.map_err(|_| Error::ServerDown)?;
     info!("WebSocket handshake has been successfully completed");
 
