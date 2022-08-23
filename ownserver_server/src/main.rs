@@ -16,7 +16,7 @@ use opentelemetry::{sdk::{trace::{self, XrayIdGenerator}, Resource}, KeyValue};
 static CONFIG: OnceCell<Config> = OnceCell::new();
 
 #[derive(StructOpt, Debug)]
-#[structopt(name = "basic")]
+#[structopt(name = "ownserver-server")]
 struct Opt {
     #[structopt(long, default_value = "5000")]
     control_port: u16,
@@ -33,7 +33,7 @@ struct Opt {
     #[structopt(long)]
     remote_port_end: u16,
 
-    #[structopt(long, default_value = "/var/log/magic-tunnel/proxy_server.log")]
+    #[structopt(long, default_value = "/var/log/ownserver/proxy_server.log")]
     log_file: String,
 }
 
