@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-pub const CLIENT_HELLO_VERSION: u16 = 0;
+pub const CLIENT_HELLO_VERSION: u16 = 1;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[serde(transparent)]
