@@ -18,7 +18,7 @@ use crate::{local, Store};
 use crate::localudp;
 use crate::{StreamMessage};
 use ownserver_lib::{
-    ClientHello, ClientId, ControlPacket, Payload, ServerHello, StreamId, CLIENT_HELLO_VERSION,
+    ClientHello, ClientId, ControlPacket, Payload, ServerHello, CLIENT_HELLO_VERSION,
 };
 
 pub async fn run(

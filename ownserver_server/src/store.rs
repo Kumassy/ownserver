@@ -19,7 +19,7 @@ pub struct Store {
 impl Store {
     pub async fn send_to_client(&self, client_id: ClientId, packet: ControlPacket) -> Result<(), ClientStreamError> {
         match self.clients.write().await.get_mut(&client_id) {
-            Some(mut client) => {
+            Some(client) => {
                 client.send_to_client(packet).await
             },
             None => {
@@ -30,7 +30,7 @@ impl Store {
 
     pub async fn send_to_remote(&self, stream_id: StreamId, message: StreamMessage) -> Result<(), ClientStreamError> {
         match self.streams.write().await.get_mut(&stream_id) {
-            Some(mut stream) => {
+            Some(stream) => {
                 stream.send_to_remote(stream_id, message).await
             },
             None => {
@@ -40,13 +40,13 @@ impl Store {
     }
 
     pub async fn disable_remote(&self, stream_id: StreamId) {
-        if let Some(mut stream) = self.streams.write().await.get_mut(&stream_id) {
+        if let Some(stream) = self.streams.write().await.get_mut(&stream_id) {
             stream.disable();
         }
     }
 
     pub async fn disable_client(&self, client_id: ClientId) {
-        if let Some(mut client) = self.clients.write().await.get_mut(&client_id) {
+        if let Some(client) = self.clients.write().await.get_mut(&client_id) {
             client.disable();
         }
     }

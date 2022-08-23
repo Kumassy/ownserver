@@ -1,8 +1,6 @@
 use anyhow::Result;
 use log::*;
 use ownserver_lib::Payload;
-use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
 use tokio_util::sync::CancellationToken;
 use structopt::StructOpt;
 

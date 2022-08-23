@@ -1,7 +1,6 @@
 use ownserver_lib::Payload;
 use ownserver_server::Store;
 use serial_test::serial;
-use lazy_static::lazy_static;
 use ownserver::{
     proxy_client::{self, ClientInfo},
     Store as ClientStore,
@@ -12,8 +11,7 @@ use ownserver_server::{
     Config,
 };
 use ownserver_auth::build_routes;
-use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -153,7 +151,7 @@ mod e2e_tcp_test {
         let cancellation_token = CancellationToken::new();
 
         launch_token_server().await;
-        let store = launch_proxy_server(CONTROL_PORT).await?;
+        let _store = launch_proxy_server(CONTROL_PORT).await?;
         wait!();
 
         launch_local_server(LOCAL_PORT).await;
@@ -177,7 +175,7 @@ mod e2e_tcp_test {
         let cancellation_token = CancellationToken::new();
 
         launch_token_server().await;
-        let store = launch_proxy_server(CONTROL_PORT).await?;
+        let _store = launch_proxy_server(CONTROL_PORT).await?;
         wait!();
 
         launch_local_server(LOCAL_PORT).await;
@@ -249,7 +247,7 @@ mod e2e_tcp_test {
         let remote_port: u16 = 8080;
 
         launch_token_server().await;
-        let store = launch_proxy_server(CONTROL_PORT).await?;
+        let _store = launch_proxy_server(CONTROL_PORT).await?;
         wait!();
 
         let remote = TcpStream::connect(format!("127.0.0.1:{}", remote_port)).await;
@@ -264,7 +262,7 @@ mod e2e_tcp_test {
         let cancellation_token = CancellationToken::new();
 
         launch_token_server().await;
-        let store = launch_proxy_server(CONTROL_PORT).await?;
+        let _store = launch_proxy_server(CONTROL_PORT).await?;
         wait!();
 
         launch_local_server(LOCAL_PORT).await;
@@ -297,7 +295,7 @@ mod e2e_tcp_test {
         let cancellation_token = CancellationToken::new();
 
         launch_token_server().await;
-        let store = launch_proxy_server(CONTROL_PORT).await?;
+        let _store = launch_proxy_server(CONTROL_PORT).await?;
         wait!();
 
         launch_local_server(LOCAL_PORT).await;
@@ -367,7 +365,7 @@ mod e2e_udp_test {
     async fn launch_proxy_server(control_port: u16) -> Result<Arc<Store>, Box<dyn std::error::Error>> {
         let config = CONFIG.get_or_init(||
             Config {
-                control_port: 5000,
+                control_port,
                 token_secret: "supersecret".to_string(),
                 host: "127.0.0.1".to_string(),
                 remote_port_start: 4600,
@@ -448,7 +446,7 @@ mod e2e_udp_test {
         let cancellation_token = CancellationToken::new();
 
         launch_token_server().await;
-        let store = launch_proxy_server(CONTROL_PORT).await?;
+        let _store = launch_proxy_server(CONTROL_PORT).await?;
         wait!();
 
         launch_local_server(LOCAL_PORT).await;
@@ -473,7 +471,7 @@ mod e2e_udp_test {
         let cancellation_token = CancellationToken::new();
 
         launch_token_server().await;
-        let store = launch_proxy_server(CONTROL_PORT).await?;
+        let _store = launch_proxy_server(CONTROL_PORT).await?;
         wait!();
 
         launch_local_server(LOCAL_PORT).await;

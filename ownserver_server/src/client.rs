@@ -18,7 +18,7 @@ pub struct Client {
 
     ws_tx: SplitSink<WebSocket, Message>,
     // ws_rx: SplitStream<WebSocket>,
-    store: Arc<Store>,
+    _store: Arc<Store>,
     ct: CancellationToken,
     disabled: bool,
 }
@@ -98,7 +98,7 @@ impl Client {
             store_.disable_client(client_id).await;
         }.instrument(tracing::info_span!("client_read_loop")));
 
-        Self { client_id, host, ws_tx: sink, store, ct: token, disabled: false }
+        Self { client_id, host, ws_tx: sink, _store: store, ct: token, disabled: false }
     }
 
     // pub async fn send_to_stream(&self, stream_id: StreamId, message: StreamMessage) -> Result<(), Box<dyn std::error::Error>> {

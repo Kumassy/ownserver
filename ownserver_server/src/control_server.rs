@@ -67,7 +67,7 @@ pub fn spawn<A: Into<SocketAddr> + std::fmt::Debug>(
 fn client_addr() -> impl Filter<Extract = (SocketAddr,), Error = Infallible> + Copy {
     warp::any()
         .and(warp::addr::remote())
-        .map(|remote: Option<SocketAddr>| remote.unwrap_or(SocketAddr::from(([0, 0, 0, 0], 0))))
+        .map(|remote: Option<SocketAddr>| remote.unwrap_or_else(|| SocketAddr::from(([0, 0, 0, 0], 0))))
 }
 
 pub struct ClientHandshake {
@@ -326,7 +326,6 @@ async fn handle_new_connection(
 #[cfg(test)]
 mod verify_client_handshake_test {
     use super::*;
-    use futures::channel::mpsc;
     use ownserver_auth::make_jwt;
     use chrono::Duration;
     use ownserver_lib::Payload;
