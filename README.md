@@ -34,7 +34,7 @@ We also offer GUI. visit [ownserver-client-gui](https://github.com/Kumassy/ownse
 
 ```
 % ./ownserver -h
-ownserver 0.4.1
+ownserver 0.5.0
 
 USAGE:
     ownserver [OPTIONS]
@@ -50,14 +50,21 @@ OPTIONS:
         --payload <payload>              tcp or udp [default: tcp]
         --token-server <token-server>    Advanced settings [default: https://auth.ownserver.kumassy.com/v1/request_token]
 
-% ./ownserver --payload tcp --local-port 25565
-connecting to auth server: https://auth.ownserver.kumassy.com/v1/request_token
+# listen on local port
+% nc -kl 3000
+
+% ./ownserver --payload tcp --local-port 3000
+Connecting to auth server: https://auth.ownserver.kumassy.com/v1/request_token
 Your proxy server: shard-7924.ownserver.kumassy.com
 Connecting to proxy server: shard-7924.ownserver.kumassy.com:5000
-Your Client ID: client_dc7ccdae-9639-4a13-a89f-7b7366bd398a
-+----------------------------------------------------------------------------------------------------+
-| Your server tcp://localhost:25565 is now available at tcp://shard-7924.ownserver.kumassy.com:11186 |
-+----------------------------------------------------------------------------------------------------+
+Your Client ID: client_755d0b36-f863-41e1-b5ff-c6c89fdb92a5
++---------------------------------------------------------------------------------------------------+
+| Your server tcp://localhost:3000 is now available at tcp://shard-7924.ownserver.kumassy.com:17974 |
++---------------------------------------------------------------------------------------------------+
+
+# you can send any TCP packet to local port!
+% nc shard-7924.ownserver.kumassy.com 17974
+hello
 ```
 
 via cargo
