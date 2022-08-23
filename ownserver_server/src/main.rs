@@ -76,7 +76,7 @@ async fn main() {
         .unwrap_or_else(|_| panic!("failed to open log file {}", log_file));
 
     let tracer = opentelemetry_jaeger::new_pipeline()
-        .with_service_name("magic-tunnel-server")
+        .with_service_name("ownserver")
         .with_trace_config(
             trace::config()
                 .with_id_generator(XrayIdGenerator::default())
@@ -90,7 +90,7 @@ async fn main() {
         .install_batch(opentelemetry::runtime::Tokio)
         .expect("Failed to initialize tracer");
     tracing_subscriber::registry()
-        .with(tracing_subscriber::EnvFilter::new("DEBUG"))
+        .with(tracing_subscriber::EnvFilter::new("INFO"))
         .with(tracing_opentelemetry::layer().with_tracer(tracer))
         .with(tracing_subscriber::fmt::layer())
         .with(tracing_subscriber::fmt::layer().with_ansi(false).with_writer(file))
