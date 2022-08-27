@@ -91,7 +91,7 @@ mod server_tcp_test {
         let token = make_jwt("supersecret", CDuration::minutes(10), "127.0.0.1".to_string())?;
 
         // --- handshake
-        let url = Url::parse(&format!("wss://localhost:{}/tunnel", control_port))?;
+        let url = Url::parse(&format!("ws://localhost:{}/tunnel", control_port))?;
         let (mut websocket, _) = connect_async(url).await.expect("failed to connect");
 
         send_client_hello(&mut websocket, token, Payload::Other).await?;
@@ -318,7 +318,7 @@ mod server_udp_test {
         let token = make_jwt("supersecret", CDuration::minutes(10), "127.0.0.1".to_string())?;
 
         // --- handshake
-        let url = Url::parse(&format!("wss://localhost:{}/tunnel", control_port))?;
+        let url = Url::parse(&format!("ws://localhost:{}/tunnel", control_port))?;
         let (mut websocket, _) = connect_async(url).await.expect("failed to connect");
 
         send_client_hello(&mut websocket, token, Payload::UDP).await?;

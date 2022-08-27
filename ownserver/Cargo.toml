@@ -1,16 +1,16 @@
 [package]
 name = "ownserver"
-version = "0.4.1"
+version = "0.5.0"
 authors = ["Kumassy <kumassyii@gmail.com>"]
-edition = "2018"
+edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-ownserver_lib = { version = "0.4.0", path = "../ownserver_lib" }
+ownserver_lib = { version = "0.5.0", path = "../ownserver_lib" }
 tokio = { version = "1", features = ["full"] }
-tokio-util = "0.6.8"
-tokio-tungstenite = { version = '0.14', features = ["rustls"] }
+tokio-util = "0.7"
+tokio-tungstenite = { version = '0.17', features = ["rustls"] }
 futures = "0.3"
 log = "0.4"
 pretty_env_logger = "0.4"
@@ -19,12 +19,11 @@ anyhow = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 rmp-serde = "1.1"
-lazy_static = "1.4"
 warp = "0.3"
 thiserror = "1.0"
-structopt = "0.3.25"
+structopt = "0.3"
 reqwest = { version = "0.11", default-features = false, features = ["json", "rustls-tls"] }
-dashmap = "4.0"
+dashmap = "5.3"
 
 [[bin]]
 name = "ownserver"

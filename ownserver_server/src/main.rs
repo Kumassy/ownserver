@@ -16,7 +16,7 @@ use opentelemetry::{sdk::{trace::{self, XrayIdGenerator}, Resource}, KeyValue};
 static CONFIG: OnceCell<Config> = OnceCell::new();
 
 #[derive(StructOpt, Debug)]
-#[structopt(name = "basic")]
+#[structopt(name = "ownserver-server")]
 struct Opt {
     #[structopt(long, default_value = "5000")]
     control_port: u16,
@@ -33,7 +33,7 @@ struct Opt {
     #[structopt(long)]
     remote_port_end: u16,
 
-    #[structopt(long, default_value = "/var/log/magic-tunnel/proxy_server.log")]
+    #[structopt(long, default_value = "/var/log/ownserver/proxy_server.log")]
     log_file: String,
 }
 
@@ -76,7 +76,7 @@ async fn main() {
         .unwrap_or_else(|_| panic!("failed to open log file {}", log_file));
 
     let tracer = opentelemetry_jaeger::new_pipeline()
-        .with_service_name("magic-tunnel-server")
+        .with_service_name("ownserver")
         .with_trace_config(
             trace::config()
                 .with_id_generator(XrayIdGenerator::default())
@@ -90,7 +90,7 @@ async fn main() {
         .install_batch(opentelemetry::runtime::Tokio)
         .expect("Failed to initialize tracer");
     tracing_subscriber::registry()
-        .with(tracing_subscriber::EnvFilter::new("DEBUG"))
+        .with(tracing_subscriber::EnvFilter::new("INFO"))
         .with(tracing_opentelemetry::layer().with_tracer(tracer))
         .with(tracing_subscriber::fmt::layer())
         .with(tracing_subscriber::fmt::layer().with_ansi(false).with_writer(file))

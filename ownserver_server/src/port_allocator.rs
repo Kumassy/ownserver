@@ -29,7 +29,7 @@ where
 {
     pub fn new(range: R) -> Self {
         let mut set = HashSet::with_capacity(range.len());
-        for p in range.clone().into_iter() {
+        for p in range.clone() {
             set.insert(p);
         }
 
@@ -72,7 +72,7 @@ mod allocate_port_tests {
         let mut rng = thread_rng();
         let mut alloc = PortAllocator::new(1000..=2000);
         let port = alloc.allocate_port(&mut rng).unwrap();
-        assert!(1000 <= port && port <= 2000);
+        assert!((1000..=2000).contains(&port));
     }
 
     #[test]

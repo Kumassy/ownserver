@@ -1,10 +1,8 @@
-use std::net::SocketAddr;
 use std::sync::Arc;
 
 use futures::channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use futures::{SinkExt, StreamExt};
 
-use tokio::io::{split, AsyncReadExt, AsyncWriteExt};
 use tokio::net::UdpSocket;
 
 use crate::{StreamMessage, Store};
@@ -15,7 +13,7 @@ use ownserver_lib::{ControlPacket, StreamId};
 pub async fn setup_new_stream(
     store: Arc<Store>,
     local_port: u16,
-    mut tunnel_tx: UnboundedSender<ControlPacket>,
+    tunnel_tx: UnboundedSender<ControlPacket>,
     stream_id: StreamId,
 ) {
     info!("sid={} setting up local udp stream", &stream_id);
@@ -58,7 +56,7 @@ pub async fn setup_new_stream(
 
 pub async fn process_local_udp(
     // mut stream: ReadHalf<TcpStream>,
-    mut stream: Arc<UdpSocket>,
+    stream: Arc<UdpSocket>,
     mut tunnel: UnboundedSender<ControlPacket>,
     stream_id: StreamId,
 ) {
@@ -97,7 +95,7 @@ pub async fn process_local_udp(
 pub async fn forward_to_local_udp(
     stream_id: StreamId,
     // mut sink: WriteHalf<TcpStream>,
-    mut sink: Arc<UdpSocket>,
+    sink: Arc<UdpSocket>,
     mut queue: UnboundedReceiver<StreamMessage>,
 ) {
     loop {
