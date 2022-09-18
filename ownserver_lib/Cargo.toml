@@ -3,6 +3,13 @@ name = "ownserver_lib"
 version = "0.5.0"
 authors = ["Kumassy <kumassyii@gmail.com>"]
 edition = "2021"
+license = "MIT"
+description = "Expose your local game server to the Internet"
+repository = "https://github.com/Kumassy/ownserver"
+homepage = "https://github.com/Kumassy/ownserver"
+readme = "../README.md"
+categories = ["network-programming", "web-programming::websocket", "games"]
+keywords = ["network", "networking", "game", "minecraft"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
