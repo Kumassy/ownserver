@@ -46,7 +46,7 @@ We also offer GUI. visit [ownserver-client-gui](https://github.com/Kumassy/ownse
 
 ```
 % ownserver -h
-ownserver 0.5.0
+ownserver 0.5.1
 
 USAGE:
     ownserver [OPTIONS]
