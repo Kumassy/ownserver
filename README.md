@@ -17,11 +17,25 @@ This software aims to minimize cost and effort to prepare local game server like
 - Offer GUI client for game server for Minecraft, factorio, RUST, etc.
 
 ## Installation
-Download binary for your OS: 
-
-or build it by yourself:
+### Recommended
+install it by [cargo](https://doc.rust-lang.org/cargo/getting-started/installation.html)
 
 ```
+cargo install ownserver
+```
+
+If you dont have cargo installed, please install [rustup](https://rustup.rs/) beforehand
+
+### Download binary
+Download binary for your OS:  
+https://github.com/Kumassy/ownserver/releases
+
+### cargo build
+Optionally, you can build ownserver by yourself:
+
+```
+git clone https://github.com/Kumassy/ownserver.git
+cd ownserver
 cargo build --release
 ```
 
@@ -31,7 +45,7 @@ cargo build --release
 We also offer GUI. visit [ownserver-client-gui](https://github.com/Kumassy/ownserver-client-gui)
 
 ```
-% ./ownserver -h
+% ownserver -h
 ownserver 0.5.0
 
 USAGE:
@@ -51,7 +65,7 @@ OPTIONS:
 # listen on local port
 % nc -kl 3000
 
-% ./ownserver --payload tcp --local-port 3000
+% ownserver --payload tcp --local-port 3000
 Connecting to auth server: https://auth.ownserver.kumassy.com/v1/request_token
 Your proxy server: shard-7924.ownserver.kumassy.com
 Connecting to proxy server: shard-7924.ownserver.kumassy.com:5000
@@ -76,7 +90,7 @@ via cargo
 java -Xmx1024M -Xms1024M -jar server.jar nogui
 
 # run ownserver client
-./ownserver  -- --payload tcp --local-port 25565
+ownserver  -- --payload tcp --local-port 25565
 ```
 
 share your public URL!
