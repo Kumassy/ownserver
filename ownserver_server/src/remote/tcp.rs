@@ -30,7 +30,7 @@ pub async fn spawn_remote(
                     match socket {
                         Ok((socket, _)) => socket,
                         _ => {
-                            tracing::error!(cid = %client_id, "failed to accept socket");
+                            tracing::debug!(cid = %client_id, "failed to accept socket");
                             continue;
                         }
                     }
