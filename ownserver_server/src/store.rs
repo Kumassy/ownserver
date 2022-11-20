@@ -13,7 +13,7 @@ pub struct Store {
     streams: RwLock<HashMap<StreamId, RemoteStream>>,
     clients: RwLock<HashMap<ClientId, Client>>,
     addrs_map: DashMap<SocketAddr, StreamId>,
-    hosts_map: DashMap<String, ClientId>,
+    port_map: DashMap<u16, ClientId>,
 }
 
 impl Store {
@@ -53,9 +53,9 @@ impl Store {
 
     pub async fn add_client(&self, client: Client) {
         let client_id = client.client_id;
-        let host = client.host.clone();
+        let remote_port = client.remote_port();
         self.clients.write().await.insert(client_id, client);
-        self.hosts_map.insert(host, client_id);
+        self.port_map.insert(remote_port, client_id);
 
         let v = self.clients.read().await.len() as f64;
         gauge!("ownserver_server.store.clients", v);
@@ -91,5 +91,13 @@ impl Store {
 
     pub async fn get_stream_ids(&self) -> Vec<StreamId> {
         self.streams.read().await.iter().map(|(_, v)| v.stream_id()).collect()
+    }
+
+    pub async fn len_streams(&self) -> usize {
+        self.streams.read().await.len()
+    }
+
+    pub async fn len_clients(&self) -> usize {
+        self.clients.read().await.len()
     }
 }

@@ -300,11 +300,10 @@ async fn handle_new_connection(
     };
     let client_id = handshake.id;
     tracing::info!(cid = %client_id, port = %handshake.port, "open tunnel");
-    let host = format!("host-foobar-{}", handshake.port);
     let listen_addr = format!("0.0.0.0:{}", handshake.port);
 
 
-    let client = Client::new(store.clone(), client_id, host, websocket);
+    let client = Client::new(store.clone(), client_id, handshake.port, websocket);
     let ct = client.cancellation_token();
     store.add_client(client).await;
     tracing::info!(cid=%client_id, "register client to store");
