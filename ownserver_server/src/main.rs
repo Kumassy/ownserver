@@ -116,13 +116,11 @@ async fn main() {
     tracing::debug!("{:?}", CONFIG.get().expect("failed to read config"));
     let Config {remote_port_start, remote_port_end  , ..}  = CONFIG.get().expect("failed to read config");
 
-    let alloc = Arc::new(Mutex::new(PortAllocator::new(*remote_port_start..*remote_port_end)));
-    let store = Arc::new(Store::default());
+    let store = Arc::new(Store::new(*remote_port_start..*remote_port_end));
 
     let handle = run(
         &CONFIG,
         store,
-        alloc,
     ).await;
     
     let handle = match handle {

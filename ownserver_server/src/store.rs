@@ -1,11 +1,12 @@
-use std::{net::SocketAddr, collections::HashMap};
+use std::{net::SocketAddr, collections::{HashMap}, sync::Arc, ops::Range};
 
 use dashmap::DashMap;
 use ownserver_lib::{StreamId, ClientId, ControlPacket};
 use metrics::gauge;
-use tokio::sync::RwLock;
+use rand::Rng;
+use tokio::sync::{RwLock, Mutex};
 
-use crate::{remote::stream::{RemoteStream, StreamMessage}, Client, ClientStreamError};
+use crate::{remote::stream::{RemoteStream, StreamMessage}, Client, ClientStreamError, port_allocator::{PortAllocator, PortAllocatorError}};
 
 
 #[derive(Debug, Default)]
@@ -14,9 +15,20 @@ pub struct Store {
     clients: RwLock<HashMap<ClientId, Client>>,
     addrs_map: DashMap<SocketAddr, StreamId>,
     port_map: DashMap<u16, ClientId>,
+    alloc: Mutex<PortAllocator>,
 }
 
 impl Store {
+    pub fn new(range: Range<u16>) -> Self {
+        Self {
+            streams: Default::default(),
+            clients: Default::default(),
+            addrs_map: Default::default(),
+            port_map: Default::default(),
+            alloc: Mutex::new(PortAllocator::new(range)),
+        }
+    }
+
     pub async fn send_to_client(&self, client_id: ClientId, packet: ControlPacket) -> Result<(), ClientStreamError> {
         match self.clients.write().await.get_mut(&client_id) {
             Some(client) => {
@@ -99,5 +111,14 @@ impl Store {
 
     pub async fn len_clients(&self) -> usize {
         self.clients.read().await.len()
+    }
+
+
+    pub async fn allocate_port(&self, rng: &mut impl Rng) -> Result<u16, PortAllocatorError> {
+        self.alloc.lock().await.allocate_port(rng)
+    }
+
+    pub async fn release_port(&self, port: u16) -> Result<(), PortAllocatorError> {
+        self.alloc.lock().await.release_port(port)
     }
 }
