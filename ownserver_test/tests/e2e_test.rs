@@ -6,7 +6,6 @@ use ownserver::{
     Store as ClientStore,
 };
 use ownserver_server::{
-    port_allocator::PortAllocator,
     proxy_server,
     Config,
 };
@@ -16,7 +15,6 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::oneshot::{self, Receiver};
-use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use once_cell::sync::OnceCell;
 use tokio::net::UdpSocket;
@@ -72,15 +70,13 @@ mod e2e_tcp_test {
             }
         );
 
-        let alloc = Arc::new(Mutex::new(PortAllocator::new(config.remote_port_start..config.remote_port_end)));
-        let store = Arc::new(Store::default());
+        let store = Arc::new(Store::new(config.remote_port_start..config.remote_port_end));
 
         let store_ = store.clone();
         tokio::spawn(async move {
             proxy_server::run(
                 &CONFIG,
                 store_,
-                alloc,
             )
             .await.unwrap();
         });
@@ -372,15 +368,13 @@ mod e2e_udp_test {
                 remote_port_end: 4699,
             }
         );
-        let alloc = Arc::new(Mutex::new(PortAllocator::new(config.remote_port_start..config.remote_port_end)));
-        let store = Arc::new(Store::default());
+        let store = Arc::new(Store::new(config.remote_port_start..config.remote_port_end));
 
         let store_ = store.clone();
         tokio::spawn(async move {
             proxy_server::run(
                 &CONFIG,
                 store_,
-                alloc,
             )
             .await.unwrap();
         });

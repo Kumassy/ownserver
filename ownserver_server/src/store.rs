@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, collections::{HashMap}, sync::Arc, ops::Range};
+use std::{net::SocketAddr, collections::{HashMap}, ops::Range};
 
 use dashmap::DashMap;
 use ownserver_lib::{StreamId, ClientId, ControlPacket};

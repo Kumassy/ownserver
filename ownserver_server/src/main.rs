@@ -8,7 +8,6 @@ use metrics::{describe_counter, describe_gauge};
 use metrics_exporter_prometheus::PrometheusBuilder;
 use tracing_subscriber::prelude::*;
 use std::{sync::Arc, fs};
-use tokio::sync::Mutex;
 use once_cell::sync::OnceCell;
 use structopt::StructOpt;
 use opentelemetry::{sdk::{trace::{self, XrayIdGenerator}, Resource}, KeyValue};

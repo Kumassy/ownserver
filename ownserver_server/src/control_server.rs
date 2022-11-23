@@ -402,19 +402,17 @@ mod verify_client_handshake_test {
     }
 
     #[tokio::test]
-    async fn reject_when_config_not_initialized() -> Result<(), Box<dyn std::error::Error>> {
+    #[should_panic]
+    async fn panic_when_config_not_initialized() {
         let hello = serde_json::to_vec(&ClientHello {
             version: CLIENT_HELLO_VERSION,
-            token: make_jwt("supersecret", Duration::minutes(10), "foohost.test.local".to_string())?,
+            token: make_jwt("supersecret", Duration::minutes(10), "foohost.test.local".to_string()).unwrap(),
             payload: Payload::Other,
         })
         .unwrap_or_default();
         let client_hello_data = Message::binary(hello).into_bytes();
 
-        let handshake= verify_client_handshake(&EMPTY_CONFIG, client_hello_data).await;
-        let handshake_error = handshake.err().unwrap();
-        assert_eq!(handshake_error, VerifyClientHandshakeError::Other(ProxyServerError::ConfigNotInitialized));
-        Ok(())
+        let _ = verify_client_handshake(&EMPTY_CONFIG, client_hello_data).await;
     }
 
     #[tokio::test]
