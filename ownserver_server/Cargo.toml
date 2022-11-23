@@ -10,7 +10,7 @@ edition = "2021"
 ownserver_lib = { version = "0.5.1", path = "../ownserver_lib" }
 ownserver = { version = "0.5.1", path = "../ownserver" }
 tokio-tungstenite = { version = '0.17', features = ["rustls"] }
-tokio = { version = "1", features = ["full", "tracing"] }
+tokio = { version = "1.21", features = ["full", "tracing"] }
 tokio-util = "0.7"
 console-subscriber = "0.1.7"
 futures = "0.3"

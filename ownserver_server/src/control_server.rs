@@ -5,9 +5,10 @@ use ownserver_lib::Payload;
 pub use ownserver_lib::{ClientHello, ClientId, ControlPacket, ServerHello, StreamId, CLIENT_HELLO_VERSION};
 use ownserver_auth::decode_jwt;
 use metrics::increment_counter;
-use std::convert::Infallible;
+use std::{convert::Infallible, time::Duration};
 use std::net::SocketAddr;
-use tokio::task::JoinHandle;
+use tokio::time::sleep;
+use tokio::task::JoinSet;
 use tracing::Instrument;
 use warp::{
     ws::{Message, WebSocket, Ws},
@@ -28,15 +29,18 @@ pub fn spawn<A: Into<SocketAddr> + std::fmt::Debug>(
     config: &'static OnceCell<Config>,
     store: Arc<Store>,
     addr: A,
-) -> JoinHandle<()> {
+) -> JoinSet<()> {
+    let periodic_cleanup_interval = config.get().expect("failed to read config").periodic_cleanup_interval;
+
     let health_check = warp::get().and(warp::path("health_check")).map(|| {
         tracing::debug!("Health Check #2 triggered");
         "ok"
     });
 
+    let store_ = store.clone();
     let client_conn = warp::path("tunnel").and(client_addr()).and(warp::ws()).map(
         move |client_addr: SocketAddr, ws: Ws| {
-            let store_ = store.clone();
+            let store_ = store_.clone();
             ws.on_upgrade(move |w| {
                 async move {
                     handle_new_connection(
@@ -53,8 +57,17 @@ pub fn spawn<A: Into<SocketAddr> + std::fmt::Debug>(
 
     let routes = client_conn.or(health_check);
 
+    let mut set = JoinSet::new();
     // TODO tls https://docs.rs/warp/0.3.1/warp/struct.Server.html#method.tls
-    tokio::spawn(warp::serve(routes).run(addr.into()))
+    set.spawn(warp::serve(routes).run(addr.into()));
+
+    set.spawn(async move {
+        loop {
+            sleep(Duration::from_secs(periodic_cleanup_interval)).await;
+            store.cleanup().await;
+        }
+    });
+    set
 }
 
 // fn client_ip() -> impl Filter<Extract = (IpAddr,), Error = Rejection> + Copy {
@@ -319,6 +332,7 @@ mod verify_client_handshake_test {
                 host: "foohost.test.local".to_string(),
                 remote_port_start: 10010,
                 remote_port_end: 10011,
+                periodic_cleanup_interval: 15,
             }
         );
         &CONFIG

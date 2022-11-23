@@ -66,6 +66,7 @@ mod server_tcp_test {
                 host: "127.0.0.1".to_string(),
                 remote_port_start: 4000,
                 remote_port_end: 4099,
+                periodic_cleanup_interval: 2 << 30,
             }
         );
 
@@ -77,7 +78,7 @@ mod server_tcp_test {
                 &CONFIG,
                 store_,
             )
-            .await.unwrap();
+            .await.join_next().await;
         });
 
         // setup proxy client
@@ -292,6 +293,7 @@ mod server_udp_test {
                 host: "127.0.0.1".to_string(),
                 remote_port_start: 4100,
                 remote_port_end: 4199,
+                periodic_cleanup_interval: 2 << 30,
             }
         );
         let store = Arc::new(Store::new(config.remote_port_start..config.remote_port_end));
@@ -302,7 +304,7 @@ mod server_udp_test {
                 &CONFIG,
                 store_,
             )
-            .await.unwrap();
+            .await.join_next().await;
         });
 
         // setup proxy client

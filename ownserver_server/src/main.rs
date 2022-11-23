@@ -34,6 +34,9 @@ struct Opt {
 
     #[structopt(long, default_value = "/var/log/ownserver/proxy_server.log")]
     log_file: String,
+
+    #[structopt(long, default_value = "15")]
+    periodic_cleanup_interval: u64,
 }
 
 impl From<Opt> for Config {
@@ -44,6 +47,7 @@ impl From<Opt> for Config {
             host,
             remote_port_start,
             remote_port_end,
+            periodic_cleanup_interval,
             ..
         } = opt;
 
@@ -53,6 +57,7 @@ impl From<Opt> for Config {
             host,
             remote_port_start,
             remote_port_end,
+            periodic_cleanup_interval,
         }
     }
 }
@@ -117,26 +122,20 @@ async fn main() {
 
     let store = Arc::new(Store::new(*remote_port_start..*remote_port_end));
 
-    let handle = run(
+    let mut set = run(
         &CONFIG,
         store,
     ).await;
     
-    let handle = match handle {
-        Ok(handle) => handle,
-        Err(_) => {
-            tracing::error!("failed to read config");
-            return;
-        }
-    };
     
-    let server = handle.await;
-    match server {
-        Err(join_error) => {
-            tracing::error!("join error {:?} for proxy_server", join_error);
-        }
-        Ok(_) => {
-            tracing::info!("proxy_server successfully terminated");
+    while let Some(res) = set.join_next().await {
+        match res {
+            Err(join_error) => {
+                tracing::error!("join error {:?} for proxy_server", join_error);
+            }
+            Ok(_) => {
+                tracing::info!("proxy_server successfully terminated");
+            }
         }
     }
 

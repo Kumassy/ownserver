@@ -18,6 +18,7 @@ pub struct Config {
     pub host: String,
     pub remote_port_start: u16,
     pub remote_port_end: u16,
+    pub periodic_cleanup_interval: u64,
 }
 
 
