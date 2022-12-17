@@ -5,9 +5,10 @@ use ownserver_lib::Payload;
 pub use ownserver_lib::{ClientHello, ClientId, ControlPacket, ServerHello, StreamId, CLIENT_HELLO_VERSION};
 use ownserver_auth::decode_jwt;
 use metrics::increment_counter;
-use std::convert::Infallible;
+use std::{convert::Infallible, time::Duration};
 use std::net::SocketAddr;
-use tokio::task::JoinHandle;
+use tokio::time::sleep;
+use tokio::task::JoinSet;
 use tracing::Instrument;
 use warp::{
     ws::{Message, WebSocket, Ws},
@@ -15,39 +16,36 @@ use warp::{
 };
 
 use rand::{rngs::StdRng, SeedableRng};
-use std::ops::Range;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use once_cell::sync::OnceCell;
 use thiserror::Error;
 
 use crate::{Store, Client};
-use crate::port_allocator::PortAllocator;
 use crate::remote;
 use crate::{Config, ProxyServerError};
 
-#[tracing::instrument(skip(config, store, alloc))]
+#[tracing::instrument(skip(config, store))]
 pub fn spawn<A: Into<SocketAddr> + std::fmt::Debug>(
     config: &'static OnceCell<Config>,
     store: Arc<Store>,
-    alloc: Arc<Mutex<PortAllocator<Range<u16>>>>,
     addr: A,
-) -> JoinHandle<()> {
+) -> JoinSet<()> {
+    let periodic_cleanup_interval = config.get().expect("failed to read config").periodic_cleanup_interval;
+
     let health_check = warp::get().and(warp::path("health_check")).map(|| {
         tracing::debug!("Health Check #2 triggered");
         "ok"
     });
 
+    let store_ = store.clone();
     let client_conn = warp::path("tunnel").and(client_addr()).and(warp::ws()).map(
         move |client_addr: SocketAddr, ws: Ws| {
-            let alloc_ = alloc.clone();
-            let store_ = store.clone();
+            let store_ = store_.clone();
             ws.on_upgrade(move |w| {
                 async move {
                     handle_new_connection(
                         config,
                         store_,
-                        alloc_,
                         client_addr,
                         w
                     ).await
@@ -59,8 +57,17 @@ pub fn spawn<A: Into<SocketAddr> + std::fmt::Debug>(
 
     let routes = client_conn.or(health_check);
 
+    let mut set = JoinSet::new();
     // TODO tls https://docs.rs/warp/0.3.1/warp/struct.Server.html#method.tls
-    tokio::spawn(warp::serve(routes).run(addr.into()))
+    set.spawn(warp::serve(routes).run(addr.into()));
+
+    set.spawn(async move {
+        loop {
+            sleep(Duration::from_secs(periodic_cleanup_interval)).await;
+            store.cleanup().await;
+        }
+    });
+    set
 }
 
 // fn client_ip() -> impl Filter<Extract = (IpAddr,), Error = Rejection> + Copy {
@@ -78,21 +85,13 @@ pub struct ClientHandshake {
     pub port: u16,
 }
 
-#[tracing::instrument(skip(websocket, config, alloc))]
+#[tracing::instrument(skip(websocket, config, store))]
 async fn try_client_handshake(
     websocket: &mut WebSocket,
     config: &'static OnceCell<Config>,
-    alloc: Arc<Mutex<PortAllocator<Range<u16>>>>,
+    store: Arc<Store>,
 ) -> Option<ClientHandshake> {
-    let host = match config.get() {
-        Some(config) => {
-            &config.host
-        },
-        None => {
-            tracing::error!("failed to read config");
-            return None;
-        }
-    };
+    let host = &config.get().expect("failed to read config").host;
 
     let client_hello_data = match read_client_hello(websocket).await {
         Some(client_hello_data) => {
@@ -108,7 +107,7 @@ async fn try_client_handshake(
         Ok(payload) => {
             // TODO: initialization of StdRng may takes time
             let mut rng = StdRng::from_entropy();
-            match alloc.lock().await.allocate_port(&mut rng) {
+            match store.allocate_port(&mut rng).await {
                 Ok(port) => {
                     let client_id = ClientId::new();
                     let server_hello = ServerHello::Success {
@@ -215,13 +214,7 @@ async fn verify_client_handshake(
     config: &'static OnceCell<Config>,
     client_hello_data: Vec<u8>,
 ) -> Result<Payload, VerifyClientHandshakeError> {
-    let (token_secret, host) = match config.get() {
-        Some(config) => (&config.token_secret, &config.host),
-        None => {
-            tracing::error!("failed to read config");
-            return Err(VerifyClientHandshakeError::Other(ProxyServerError::ConfigNotInitialized));
-        }
-    };
+    let Config { ref token_secret, ref host, .. } = config.get().expect("failed to read config");
 
     let client_hello: ClientHello = match serde_json::from_slice(&client_hello_data) {
         Ok(client_hello) => client_hello,
@@ -285,26 +278,24 @@ where
     Ok(())
 }
 
-#[tracing::instrument(skip(config, store, alloc, websocket))]
+#[tracing::instrument(skip(config, store, websocket))]
 async fn handle_new_connection(
     config: &'static OnceCell<Config>,
     store: Arc<Store>,
-    alloc: Arc<Mutex<PortAllocator<Range<u16>>>>,
     client_ip: SocketAddr,
     mut websocket: WebSocket,
 ) {
     increment_counter!("ownserver_server.control_server.handle_new_connection");
-    let handshake = match try_client_handshake(&mut websocket, config, alloc).await {
+    let handshake = match try_client_handshake(&mut websocket, config, store.clone()).await {
         Some(ws) => ws,
         None => return,
     };
     let client_id = handshake.id;
     tracing::info!(cid = %client_id, port = %handshake.port, "open tunnel");
-    let host = format!("host-foobar-{}", handshake.port);
     let listen_addr = format!("0.0.0.0:{}", handshake.port);
 
 
-    let client = Client::new(store.clone(), client_id, host, websocket);
+    let client = Client::new(store.clone(), client_id, handshake.port, websocket);
     let ct = client.cancellation_token();
     store.add_client(client).await;
     tracing::info!(cid=%client_id, "register client to store");
@@ -341,6 +332,7 @@ mod verify_client_handshake_test {
                 host: "foohost.test.local".to_string(),
                 remote_port_start: 10010,
                 remote_port_end: 10011,
+                periodic_cleanup_interval: 15,
             }
         );
         &CONFIG
@@ -424,19 +416,17 @@ mod verify_client_handshake_test {
     }
 
     #[tokio::test]
-    async fn reject_when_config_not_initialized() -> Result<(), Box<dyn std::error::Error>> {
+    #[should_panic]
+    async fn panic_when_config_not_initialized() {
         let hello = serde_json::to_vec(&ClientHello {
             version: CLIENT_HELLO_VERSION,
-            token: make_jwt("supersecret", Duration::minutes(10), "foohost.test.local".to_string())?,
+            token: make_jwt("supersecret", Duration::minutes(10), "foohost.test.local".to_string()).unwrap(),
             payload: Payload::Other,
         })
         .unwrap_or_default();
         let client_hello_data = Message::binary(hello).into_bytes();
 
-        let handshake= verify_client_handshake(&EMPTY_CONFIG, client_hello_data).await;
-        let handshake_error = handshake.err().unwrap();
-        assert_eq!(handshake_error, VerifyClientHandshakeError::Other(ProxyServerError::ConfigNotInitialized));
-        Ok(())
+        let _ = verify_client_handshake(&EMPTY_CONFIG, client_hello_data).await;
     }
 
     #[tokio::test]

@@ -1,4 +1,4 @@
-use ownserver_lib::{StreamId, ControlPacket};
+use ownserver_lib::{StreamId, ClientId, ControlPacket};
 use crate::ClientStreamError;
 
 use super::{tcp::RemoteTcp, udp::RemoteUdp};
@@ -63,6 +63,17 @@ impl RemoteStream {
             }
             RemoteStream::RemoteUdp(udp) => {
                 udp.stream_id
+            }
+        }
+    }
+
+    pub fn client_id(&self) -> ClientId {
+        match self {
+            RemoteStream::RemoteTcp(tcp) => {
+                tcp.client_id
+            }
+            RemoteStream::RemoteUdp(udp) => {
+                udp.client_id
             }
         }
     }

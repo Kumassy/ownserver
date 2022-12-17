@@ -14,17 +14,17 @@ use crate::{Store, remote::stream::StreamMessage, ClientStreamError};
 #[derive(Debug)]
 pub struct Client {
     pub client_id: ClientId,
-    pub host: String,
+    remote_port: u16,
 
     ws_tx: SplitSink<WebSocket, Message>,
     // ws_rx: SplitStream<WebSocket>,
-    _store: Arc<Store>,
+    store: Arc<Store>,
     ct: CancellationToken,
     disabled: bool,
 }
 
 impl Client {
-    pub fn new(store: Arc<Store>, client_id: ClientId, host: String, ws: WebSocket) -> Self {
+    pub fn new(store: Arc<Store>, client_id: ClientId, remote_port: u16, ws: WebSocket) -> Self {
         let (sink, mut stream) = ws.split();
         let token = CancellationToken::new();
 
@@ -98,7 +98,7 @@ impl Client {
             store_.disable_client(client_id).await;
         }.instrument(tracing::info_span!("client_read_loop")));
 
-        Self { client_id, host, ws_tx: sink, _store: store, ct: token, disabled: false }
+        Self { client_id, remote_port, ws_tx: sink, store, ct: token, disabled: false }
     }
 
     // pub async fn send_to_stream(&self, stream_id: StreamId, message: StreamMessage) -> Result<(), Box<dyn std::error::Error>> {
@@ -117,16 +117,18 @@ impl Client {
 
         if let Err(e) =  self.ws_tx.send(Message::binary(data)).await {
             tracing::debug!(cid = %self.client_id, error = ?e, "client disconnected: aborting");
-            self.disable();
+            self.disable().await;
             return Err(ClientStreamError::ClientError(format!("failed to communicate with client {:?}", e)))
         }
         Ok(())
     }
 
-    pub fn disable(&mut self) {
+    pub async fn disable(&mut self) {
         tracing::info!(cid = %self.client_id, "client was disabled");
         self.ct.cancel();
         self.disabled = true;
+
+        self.store.disable_remote_by_client(self.client_id).await;
     }
 
     pub fn disabled(&self) -> bool {
@@ -135,6 +137,10 @@ impl Client {
 
     pub fn cancellation_token(&self) -> CancellationToken {
         self.ct.clone()
+    }
+
+    pub fn remote_port(&self) -> u16 {
+        self.remote_port
     }
 
 }

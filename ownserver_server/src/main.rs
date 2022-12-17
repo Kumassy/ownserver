@@ -8,7 +8,6 @@ use metrics::{describe_counter, describe_gauge};
 use metrics_exporter_prometheus::PrometheusBuilder;
 use tracing_subscriber::prelude::*;
 use std::{sync::Arc, fs};
-use tokio::sync::Mutex;
 use once_cell::sync::OnceCell;
 use structopt::StructOpt;
 use opentelemetry::{sdk::{trace::{self, XrayIdGenerator}, Resource}, KeyValue};
@@ -35,6 +34,9 @@ struct Opt {
 
     #[structopt(long, default_value = "/var/log/ownserver/proxy_server.log")]
     log_file: String,
+
+    #[structopt(long, default_value = "15")]
+    periodic_cleanup_interval: u64,
 }
 
 impl From<Opt> for Config {
@@ -45,6 +47,7 @@ impl From<Opt> for Config {
             host,
             remote_port_start,
             remote_port_end,
+            periodic_cleanup_interval,
             ..
         } = opt;
 
@@ -54,6 +57,7 @@ impl From<Opt> for Config {
             host,
             remote_port_start,
             remote_port_end,
+            periodic_cleanup_interval,
         }
     }
 }
@@ -116,30 +120,22 @@ async fn main() {
     tracing::debug!("{:?}", CONFIG.get().expect("failed to read config"));
     let Config {remote_port_start, remote_port_end  , ..}  = CONFIG.get().expect("failed to read config");
 
-    let alloc = Arc::new(Mutex::new(PortAllocator::new(*remote_port_start..*remote_port_end)));
-    let store = Arc::new(Store::default());
+    let store = Arc::new(Store::new(*remote_port_start..*remote_port_end));
 
-    let handle = run(
+    let mut set = run(
         &CONFIG,
         store,
-        alloc,
     ).await;
     
-    let handle = match handle {
-        Ok(handle) => handle,
-        Err(_) => {
-            tracing::error!("failed to read config");
-            return;
-        }
-    };
     
-    let server = handle.await;
-    match server {
-        Err(join_error) => {
-            tracing::error!("join error {:?} for proxy_server", join_error);
-        }
-        Ok(_) => {
-            tracing::info!("proxy_server successfully terminated");
+    while let Some(res) = set.join_next().await {
+        match res {
+            Err(join_error) => {
+                tracing::error!("join error {:?} for proxy_server", join_error);
+            }
+            Ok(_) => {
+                tracing::info!("proxy_server successfully terminated");
+            }
         }
     }
 

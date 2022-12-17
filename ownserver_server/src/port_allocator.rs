@@ -2,7 +2,7 @@ use rand::prelude::*;
 use rand::Rng;
 use std::collections::HashSet;
 use std::iter::ExactSizeIterator;
-use std::ops::RangeBounds;
+use std::ops::Range;
 
 use thiserror::Error;
 
@@ -18,16 +18,20 @@ pub enum PortAllocatorError {
     PortAlreadyReleased,
 }
 
-pub struct PortAllocator<R> {
+#[derive(Debug)]
+pub struct PortAllocator {
     available_ports: HashSet<u16>,
-    range: R,
+    range: Range<u16>,
 }
 
-impl<R> PortAllocator<R>
-where
-    R: RangeBounds<u16> + Clone + Iterator<Item = u16> + ExactSizeIterator,
-{
-    pub fn new(range: R) -> Self {
+impl Default for PortAllocator {
+    fn default() -> Self {
+        PortAllocator::new(10000..20000)
+    }
+}
+
+impl PortAllocator {
+    pub fn new(range: Range<u16>) -> Self {
         let mut set = HashSet::with_capacity(range.len());
         for p in range.clone() {
             set.insert(p);
@@ -70,9 +74,9 @@ mod allocate_port_tests {
     #[test]
     fn allocate_port_at_random() {
         let mut rng = thread_rng();
-        let mut alloc = PortAllocator::new(1000..=2000);
+        let mut alloc = PortAllocator::new(1000..2000);
         let port = alloc.allocate_port(&mut rng).unwrap();
-        assert!((1000..=2000).contains(&port));
+        assert!((1000..2000).contains(&port));
     }
 
     #[test]
@@ -107,14 +111,14 @@ mod release_port_tests {
 
     #[test]
     fn return_error_when_port_out_of_range() {
-        let mut alloc = PortAllocator::new(1000..=2000);
+        let mut alloc = PortAllocator::new(1000..2000);
         let port = alloc.release_port(5000);
         assert_eq!(port.err().unwrap(), PortAllocatorError::PortOutOfRange);
     }
 
     #[test]
     fn return_error_when_port_not_allocated() {
-        let mut alloc = PortAllocator::new(1000..=2000);
+        let mut alloc = PortAllocator::new(1000..2000);
         let port = alloc.release_port(1010);
         assert_eq!(port.err().unwrap(), PortAllocatorError::PortAlreadyReleased);
     }

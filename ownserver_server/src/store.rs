@@ -1,11 +1,12 @@
-use std::{net::SocketAddr, collections::HashMap};
+use std::{net::SocketAddr, collections::{HashMap}, ops::Range};
 
 use dashmap::DashMap;
 use ownserver_lib::{StreamId, ClientId, ControlPacket};
 use metrics::gauge;
-use tokio::sync::RwLock;
+use rand::Rng;
+use tokio::sync::{RwLock, Mutex};
 
-use crate::{remote::stream::{RemoteStream, StreamMessage}, Client, ClientStreamError};
+use crate::{remote::stream::{RemoteStream, StreamMessage}, Client, ClientStreamError, port_allocator::{PortAllocator, PortAllocatorError}};
 
 
 #[derive(Debug, Default)]
@@ -13,10 +14,21 @@ pub struct Store {
     streams: RwLock<HashMap<StreamId, RemoteStream>>,
     clients: RwLock<HashMap<ClientId, Client>>,
     addrs_map: DashMap<SocketAddr, StreamId>,
-    hosts_map: DashMap<String, ClientId>,
+    port_map: DashMap<u16, ClientId>,
+    alloc: Mutex<PortAllocator>,
 }
 
 impl Store {
+    pub fn new(range: Range<u16>) -> Self {
+        Self {
+            streams: Default::default(),
+            clients: Default::default(),
+            addrs_map: Default::default(),
+            port_map: Default::default(),
+            alloc: Mutex::new(PortAllocator::new(range)),
+        }
+    }
+
     pub async fn send_to_client(&self, client_id: ClientId, packet: ControlPacket) -> Result<(), ClientStreamError> {
         match self.clients.write().await.get_mut(&client_id) {
             Some(client) => {
@@ -45,19 +57,26 @@ impl Store {
         }
     }
 
+    pub async fn disable_remote_by_client(&self, client_id: ClientId) {
+        for (_, stream) in self.streams.write().await.iter_mut() {
+            if stream.client_id() == client_id {
+                stream.disable()
+            }
+        }
+    }
     pub async fn disable_client(&self, client_id: ClientId) {
         if let Some(client) = self.clients.write().await.get_mut(&client_id) {
-            client.disable();
+            client.disable().await;
         }
     }
 
     pub async fn add_client(&self, client: Client) {
         let client_id = client.client_id;
-        let host = client.host.clone();
+        let remote_port = client.remote_port();
         self.clients.write().await.insert(client_id, client);
-        self.hosts_map.insert(host, client_id);
+        self.port_map.insert(remote_port, client_id);
 
-        let v = self.clients.read().await.len() as f64;
+        let v = self.len_clients().await as f64;
         gauge!("ownserver_server.store.clients", v);
     }
 
@@ -65,13 +84,32 @@ impl Store {
         let stream_id = remote.stream_id();
         self.streams.write().await.insert(stream_id, remote);
         self.addrs_map.insert(peer_addr, stream_id);
-        let v = self.streams.read().await.len() as f64;
+
+        let v = self.len_streams().await as f64;
         gauge!("ownserver_server.store.streams", v);
     }
 
     pub async fn cleanup(&self) {
+        tracing::info!("Store::cleanup");
         self.streams.write().await.retain(|_, v| !v.disabled());
+
+        let mut ports_to_remove = Vec::new();
+        for (_, client ) in self.clients.read().await.iter() {
+            if client.disabled() {
+                ports_to_remove.push(client.remote_port())
+            }
+        }
         self.clients.write().await.retain(|_, v| !v.disabled());
+        for port in ports_to_remove {
+            if let Err(e) = self.alloc.lock().await.release_port(port) {
+                tracing::warn!(port = %port, "failed to release port {:?}", e);
+            }
+        }
+
+        let v = self.len_clients().await as f64;
+        gauge!("ownserver_server.store.clients", v);
+        let v = self.len_streams().await as f64;
+        gauge!("ownserver_server.store.streams", v);
     }
 
     pub async fn find_stream_id_by_addr(&self, addr: &SocketAddr) -> Option<StreamId> {
@@ -91,5 +129,18 @@ impl Store {
 
     pub async fn get_stream_ids(&self) -> Vec<StreamId> {
         self.streams.read().await.iter().map(|(_, v)| v.stream_id()).collect()
+    }
+
+    pub async fn len_streams(&self) -> usize {
+        self.streams.read().await.len()
+    }
+
+    pub async fn len_clients(&self) -> usize {
+        self.clients.read().await.len()
+    }
+
+
+    pub async fn allocate_port(&self, rng: &mut impl Rng) -> Result<u16, PortAllocatorError> {
+        self.alloc.lock().await.allocate_port(rng)
     }
 }

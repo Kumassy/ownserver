@@ -6,7 +6,6 @@ use ownserver::{
     Store as ClientStore,
 };
 use ownserver_server::{
-    port_allocator::PortAllocator,
     proxy_server,
     Config,
 };
@@ -16,7 +15,6 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::oneshot::{self, Receiver};
-use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use once_cell::sync::OnceCell;
 use tokio::net::UdpSocket;
@@ -60,6 +58,8 @@ mod e2e_tcp_test {
 
     async fn launch_proxy_server(
         control_port: u16,
+        remote_port_start: u16,
+        remote_port_end: u16
     ) -> Result<Arc<Store>, Box<dyn std::error::Error>> {
 
         let config = CONFIG.get_or_init(||
@@ -67,22 +67,21 @@ mod e2e_tcp_test {
                 control_port,
                 token_secret: "supersecret".to_string(),
                 host: "127.0.0.1".to_string(),
-                remote_port_start: 4500,
-                remote_port_end: 4599,
+                remote_port_start,
+                remote_port_end,
+                periodic_cleanup_interval: 2 << 30,
             }
         );
 
-        let alloc = Arc::new(Mutex::new(PortAllocator::new(config.remote_port_start..config.remote_port_end)));
-        let store = Arc::new(Store::default());
+        let store = Arc::new(Store::new(config.remote_port_start..config.remote_port_end));
 
         let store_ = store.clone();
         tokio::spawn(async move {
             proxy_server::run(
                 &CONFIG,
                 store_,
-                alloc,
             )
-            .await.unwrap();
+            .await.join_next().await;
         });
 
         Ok(store)
@@ -144,6 +143,9 @@ mod e2e_tcp_test {
 
     const CONTROL_PORT: u16 = 5000;
     const LOCAL_PORT: u16 = 3000;
+    const REMOTE_PORT_START: u16 = 4500;
+    const REMOTE_PORT_END: u16 = 4599;
+
 
     #[tokio::test]
     #[serial]
@@ -151,7 +153,7 @@ mod e2e_tcp_test {
         let cancellation_token = CancellationToken::new();
 
         launch_token_server().await;
-        let _store = launch_proxy_server(CONTROL_PORT).await?;
+        let _store = launch_proxy_server(CONTROL_PORT, REMOTE_PORT_START, REMOTE_PORT_END).await?;
         wait!();
 
         launch_local_server(LOCAL_PORT).await;
@@ -175,7 +177,7 @@ mod e2e_tcp_test {
         let cancellation_token = CancellationToken::new();
 
         launch_token_server().await;
-        let _store = launch_proxy_server(CONTROL_PORT).await?;
+        let _store = launch_proxy_server(CONTROL_PORT, REMOTE_PORT_START, REMOTE_PORT_END).await?;
         wait!();
 
         launch_local_server(LOCAL_PORT).await;
@@ -208,7 +210,7 @@ mod e2e_tcp_test {
         let cancellation_token = CancellationToken::new();
 
         launch_token_server().await;
-        let store = launch_proxy_server(CONTROL_PORT).await?;
+        let store = launch_proxy_server(CONTROL_PORT, REMOTE_PORT_START, REMOTE_PORT_END).await?;
         wait!();
 
         let client_info =
@@ -247,7 +249,7 @@ mod e2e_tcp_test {
         let remote_port: u16 = 8080;
 
         launch_token_server().await;
-        let _store = launch_proxy_server(CONTROL_PORT).await?;
+        let _store = launch_proxy_server(CONTROL_PORT, REMOTE_PORT_START, REMOTE_PORT_END).await?;
         wait!();
 
         let remote = TcpStream::connect(format!("127.0.0.1:{}", remote_port)).await;
@@ -262,7 +264,7 @@ mod e2e_tcp_test {
         let cancellation_token = CancellationToken::new();
 
         launch_token_server().await;
-        let _store = launch_proxy_server(CONTROL_PORT).await?;
+        let _store = launch_proxy_server(CONTROL_PORT, REMOTE_PORT_START, REMOTE_PORT_END).await?;
         wait!();
 
         launch_local_server(LOCAL_PORT).await;
@@ -295,7 +297,7 @@ mod e2e_tcp_test {
         let cancellation_token = CancellationToken::new();
 
         launch_token_server().await;
-        let _store = launch_proxy_server(CONTROL_PORT).await?;
+        let _store = launch_proxy_server(CONTROL_PORT, REMOTE_PORT_START, REMOTE_PORT_END).await?;
         wait!();
 
         launch_local_server(LOCAL_PORT).await;
@@ -318,6 +320,57 @@ mod e2e_tcp_test {
 
         remote.write_all(b"foobar".as_ref()).await?;
         // assert_socket_bytes_matches!(remote, b"");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn remove_disabled_client_streams() -> Result<(), Box<dyn std::error::Error>> {
+        pretty_env_logger::init();
+        let cancellation_token = CancellationToken::new();
+
+        launch_token_server().await;
+        let store = launch_proxy_server(CONTROL_PORT, REMOTE_PORT_START, REMOTE_PORT_START + 1).await?;
+        wait!();
+
+        launch_local_server(LOCAL_PORT).await;
+        let client_info =
+            launch_proxy_client(CONTROL_PORT, LOCAL_PORT, cancellation_token.clone()).await?;
+        let remote_addr = client_info.await?.remote_addr;
+        wait!();
+
+        let mut remote = TcpStream::connect(remote_addr)
+            .await
+            .expect("Failed to connect to remote port");
+        wait!();
+
+        remote.write_all(b"foobar".as_ref()).await?;
+        assert_socket_bytes_matches!(remote, b"hello, foobar");
+
+        // now 1 client, 1 stream
+        assert_eq!(store.len_clients().await, 1);
+        assert_eq!(store.len_streams().await, 1);
+
+        cancellation_token.cancel();
+        wait!();
+
+        // client and stream remains in store
+        assert_eq!(store.len_clients().await, 1);
+        assert_eq!(store.len_streams().await, 1);
+
+        // need to call cleanup
+        store.cleanup().await;
+        wait!();
+        assert_eq!(store.len_clients().await, 0);
+        assert_eq!(store.len_streams().await, 0);
+
+
+        // reuse remote port
+        let client_info =
+            launch_proxy_client(CONTROL_PORT, LOCAL_PORT, cancellation_token.clone()).await?;
+        let _ = client_info.await?.remote_addr;
+        wait!();
 
         Ok(())
     }
@@ -370,19 +423,18 @@ mod e2e_udp_test {
                 host: "127.0.0.1".to_string(),
                 remote_port_start: 4600,
                 remote_port_end: 4699,
+                periodic_cleanup_interval: 2 << 30,
             }
         );
-        let alloc = Arc::new(Mutex::new(PortAllocator::new(config.remote_port_start..config.remote_port_end)));
-        let store = Arc::new(Store::default());
+        let store = Arc::new(Store::new(config.remote_port_start..config.remote_port_end));
 
         let store_ = store.clone();
         tokio::spawn(async move {
             proxy_server::run(
                 &CONFIG,
                 store_,
-                alloc,
             )
-            .await.unwrap();
+            .await.join_next().await;
         });
         Ok(store)
     }

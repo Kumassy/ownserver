@@ -4,14 +4,10 @@ use serial_test::serial;
 use futures::{SinkExt, StreamExt};
 use ownserver::proxy_client::{send_client_hello, verify_server_hello, ClientInfo};
 use ownserver_lib::ControlPacket;
-use ownserver_server::{
-    port_allocator::PortAllocator,
-};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
-use tokio::sync::Mutex;
 use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
 use url::Url;
 use once_cell::sync::OnceCell;
@@ -70,20 +66,19 @@ mod server_tcp_test {
                 host: "127.0.0.1".to_string(),
                 remote_port_start: 4000,
                 remote_port_end: 4099,
+                periodic_cleanup_interval: 2 << 30,
             }
         );
 
-        let alloc = Arc::new(Mutex::new(PortAllocator::new(config.remote_port_start..config.remote_port_end)));
-        let store = Arc::new(Store::default());
+        let store = Arc::new(Store::new(config.remote_port_start..config.remote_port_end));
 
         let store_ = store.clone();
         tokio::spawn(async move {
             run(
                 &CONFIG,
                 store_,
-                alloc,
             )
-            .await.unwrap();
+            .await.join_next().await;
         });
 
         // setup proxy client
@@ -298,19 +293,18 @@ mod server_udp_test {
                 host: "127.0.0.1".to_string(),
                 remote_port_start: 4100,
                 remote_port_end: 4199,
+                periodic_cleanup_interval: 2 << 30,
             }
         );
-        let alloc = Arc::new(Mutex::new(PortAllocator::new(config.remote_port_start..config.remote_port_end)));
-        let store = Arc::new(Store::default());
+        let store = Arc::new(Store::new(config.remote_port_start..config.remote_port_end));
 
         let store_ = store.clone();
         tokio::spawn(async move {
             run(
                 &CONFIG,
                 store_,
-                alloc,
             )
-            .await.unwrap();
+            .await.join_next().await;
         });
 
         // setup proxy client
