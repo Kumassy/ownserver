@@ -67,6 +67,7 @@ mod server_tcp_test {
                 remote_port_start: 4000,
                 remote_port_end: 4099,
                 periodic_cleanup_interval: 2 << 30,
+                periodic_ping_interval: 2 << 30,
             }
         );
 
@@ -294,6 +295,7 @@ mod server_udp_test {
                 remote_port_start: 4100,
                 remote_port_end: 4199,
                 periodic_cleanup_interval: 2 << 30,
+                periodic_ping_interval: 2 << 30,
             }
         );
         let store = Arc::new(Store::new(config.remote_port_start..config.remote_port_end));
