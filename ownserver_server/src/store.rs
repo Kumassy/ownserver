@@ -41,7 +41,8 @@ impl Store {
     }
 
     pub async fn broadcast_to_clients(&self, packet: ControlPacket) {
-        for (&client_id, _) in self.clients.read().await.iter() {
+        let client_ids = self.clients.read().await.keys().cloned().collect::<Vec<_>>();
+        for client_id in client_ids {
             if let Err(e) = self.send_to_client(client_id, packet.clone()).await {
                 tracing::warn!(cid = %client_id, "failed to send packet {:?}", e);
             }

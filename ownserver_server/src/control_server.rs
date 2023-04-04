@@ -74,6 +74,7 @@ pub fn spawn<A: Into<SocketAddr> + std::fmt::Debug>(
         loop {
             sleep(Duration::from_secs(periodic_ping_interval)).await;
             store.broadcast_to_clients(ControlPacket::Ping).await;
+            tracing::debug!("broadcasted ping");
         }
     });
     
