@@ -70,6 +70,7 @@ mod e2e_tcp_test {
                 remote_port_start,
                 remote_port_end,
                 periodic_cleanup_interval: 2 << 30,
+                periodic_ping_interval: 2 << 30,
             }
         );
 
@@ -424,6 +425,7 @@ mod e2e_udp_test {
                 remote_port_start: 4600,
                 remote_port_end: 4699,
                 periodic_cleanup_interval: 2 << 30,
+                periodic_ping_interval: 2 << 30,
             }
         );
         let store = Arc::new(Store::new(config.remote_port_start..config.remote_port_end));

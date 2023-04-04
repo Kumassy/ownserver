@@ -31,6 +31,7 @@ pub fn spawn<A: Into<SocketAddr> + std::fmt::Debug>(
     addr: A,
 ) -> JoinSet<()> {
     let periodic_cleanup_interval = config.get().expect("failed to read config").periodic_cleanup_interval;
+    let periodic_ping_interval = config.get().expect("failed to read config").periodic_ping_interval;
 
     let health_check = warp::get().and(warp::path("health_check")).map(|| {
         tracing::debug!("Health Check #2 triggered");
@@ -61,12 +62,21 @@ pub fn spawn<A: Into<SocketAddr> + std::fmt::Debug>(
     // TODO tls https://docs.rs/warp/0.3.1/warp/struct.Server.html#method.tls
     set.spawn(warp::serve(routes).run(addr.into()));
 
+    let store_ = store.clone();
     set.spawn(async move {
         loop {
             sleep(Duration::from_secs(periodic_cleanup_interval)).await;
-            store.cleanup().await;
+            store_.cleanup().await;
         }
     });
+
+    set.spawn(async move {
+        loop {
+            sleep(Duration::from_secs(periodic_ping_interval)).await;
+            store.broadcast_to_clients(ControlPacket::Ping).await;
+        }
+    });
+    
     set
 }
 
@@ -333,6 +343,7 @@ mod verify_client_handshake_test {
                 remote_port_start: 10010,
                 remote_port_end: 10011,
                 periodic_cleanup_interval: 15,
+                periodic_ping_interval: 15,
             }
         );
         &CONFIG

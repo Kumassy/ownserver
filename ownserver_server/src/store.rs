@@ -40,6 +40,14 @@ impl Store {
         }
     }
 
+    pub async fn broadcast_to_clients(&self, packet: ControlPacket) {
+        for (&client_id, _) in self.clients.read().await.iter() {
+            if let Err(e) = self.send_to_client(client_id, packet.clone()).await {
+                tracing::warn!(cid = %client_id, "failed to send packet {:?}", e);
+            }
+        }
+    }
+
     pub async fn send_to_remote(&self, stream_id: StreamId, message: StreamMessage) -> Result<(), ClientStreamError> {
         match self.streams.write().await.get_mut(&stream_id) {
             Some(stream) => {

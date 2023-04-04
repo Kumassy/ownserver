@@ -37,6 +37,9 @@ struct Opt {
 
     #[structopt(long, default_value = "15")]
     periodic_cleanup_interval: u64,
+
+    #[structopt(long, default_value = "15")]
+    periodic_ping_interval: u64,
 }
 
 impl From<Opt> for Config {
@@ -48,6 +51,7 @@ impl From<Opt> for Config {
             remote_port_start,
             remote_port_end,
             periodic_cleanup_interval,
+            periodic_ping_interval,
             ..
         } = opt;
 
@@ -58,6 +62,7 @@ impl From<Opt> for Config {
             remote_port_start,
             remote_port_end,
             periodic_cleanup_interval,
+            periodic_ping_interval,
         }
     }
 }
