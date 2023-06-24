@@ -5,7 +5,7 @@ use log::*;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::task::JoinHandle;
+use tokio::task::JoinSet;
 use tokio_tungstenite::{
     connect_async,
     tungstenite::{Error as WsError, Message},
@@ -28,7 +28,7 @@ pub async fn run(
     token_server: &str,
     payload: Payload,
     cancellation_token: CancellationToken,
-) -> Result<(ClientInfo, JoinHandle<Result<(), Error>>)> {
+) -> Result<(ClientInfo, JoinSet<Result<(), Error>>)> {
     println!("Connecting to auth server: {}", token_server);
     let (token, host) = fetch_token(token_server).await?;
     info!("got token: {}, host: {}", token, host);
@@ -53,10 +53,11 @@ pub async fn run(
     // tunnel channel
     let (tunnel_tx, mut tunnel_rx) = unbounded::<ControlPacket>();
 
+    let mut set = JoinSet::new();
     let client_id = client_info.client_id;
     let ct = cancellation_token.child_token();
     // continuously write to websocket tunnel
-    let handle_client_to_control: JoinHandle<()> = tokio::spawn(async move {
+    set.spawn(async move {
         loop {
             tokio::select! {
                 v = tunnel_rx.next() => {
@@ -64,30 +65,30 @@ pub async fn run(
                         Some(data) => data,
                         None => {
                             warn!("cid={} control flow didn't send anything!", client_id);
-                            return;
+                            return Ok(());
                         }
                     };
                     let data = match rmp_serde::to_vec(&packet) {
                         Ok(data) => data,
                         Err(e) => {
                             warn!("cid={} failed to encode message: {:?}", client_id, e);
-                            return;
+                            return Ok(());
                         }
                     };
                     if let Err(e) = ws_sink.send(Message::binary(data)).await {
                         warn!("cid={} failed to write message to tunnel websocket: {:?}", client_id, e);
-                        return;
+                        return Ok(());
                     }
                 },
                 _ = ct.cancelled() => {
-                    return;
+                    return Ok(());
                 }
             }
         }
     });
 
     let ct = cancellation_token.child_token();
-    let handle_control_to_client: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
+    set.spawn(async move {
         // continuously read from websocket tunnel
         loop {
             tokio::select! {
@@ -128,21 +129,12 @@ pub async fn run(
         }
     });
 
-    let handle = tokio::spawn(async move {
-        match tokio::join!(handle_client_to_control, handle_control_to_client) {
-            (Ok(_), Ok(Ok(_))) => Ok(()),
-            (Ok(_), Ok(Err(e))) => Err(e),
-            (Err(join_error), _) => Err(join_error.into()),
-            (_, Err(join_error)) => Err(join_error.into()),
-        }
-    });
-
     let message = format!("Your server {}://localhost:{} is now available at {}://{}", payload, local_port, payload, client_info.remote_addr);
     println!("+{}+", "-".repeat(message.len() + 2));
     println!("| {} |", message);
     println!("+{}+", "-".repeat(message.len() + 2));
 
-    Ok((client_info, handle))
+    Ok((client_info, set))
 }
 
 pub async fn send_client_hello<T>(websocket: &mut T, token: String, payload: Payload) -> Result<(), T::Error>

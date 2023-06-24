@@ -97,13 +97,15 @@ mod e2e_tcp_test {
         let (tx, rx) = oneshot::channel();
 
         tokio::spawn(async move {
-            let (client_info, handle) =
+            let (client_info, mut set) =
                 proxy_client::run(client_store, control_port, local_port, "http://127.0.0.1:8888/v0/request_token", Payload::Other, cancellation_token)
                     .await
                     .expect("failed to launch proxy_client");
             tx.send(client_info).unwrap();
 
-            handle.await.unwrap().unwrap();
+            while let Some(res) = set.join_next().await {
+                let _ = res.unwrap();
+            }
         });
 
         Ok(rx)
@@ -450,13 +452,15 @@ mod e2e_udp_test {
         let (tx, rx) = oneshot::channel();
 
         tokio::spawn(async move {
-            let (client_info, handle) =
+            let (client_info, mut set) =
                 proxy_client::run(client_store, control_port, local_port, "http://127.0.0.1:8888/v0/request_token", Payload::UDP, cancellation_token)
                     .await
                     .expect("failed to launch proxy_client");
             tx.send(client_info).unwrap();
 
-            handle.await.unwrap().unwrap();
+            while let Some(res) = set.join_next().await {
+                let _ = res.unwrap();
+            }
         });
 
         Ok(rx)
