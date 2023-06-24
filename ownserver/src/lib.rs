@@ -12,7 +12,7 @@ pub mod error;
 pub mod local;
 pub mod localudp;
 pub mod proxy_client;
-
+pub mod api;
 
 pub type LocalStream = UnboundedSender<StreamMessage>;
 #[derive(Debug, Default)]
@@ -43,5 +43,9 @@ impl Store {
 
     pub fn len_stream(&self) -> usize {
         self.streams.len()
+    }
+
+    pub fn list_streams(&self) -> Vec<StreamId> {
+        self.streams.iter().map(|x| *x.key()).collect()
     }
 }
