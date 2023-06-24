@@ -105,6 +105,19 @@ ownserver  -- --payload tcp --local-port 25565
 
 share your public URL!
 
+### Use the client API to inspect endpoints and streams
+You can query endpoints and streams info using the client API.  
+You need to specify local port to use the API: 
+
+```
+% ownserver --payload tcp --local-port 3000 --api-port 9000
+
+% curl -s localhost:9000/endpoints
+[{"id":"client_be38a93b-b7a9-46da-9d9d-51df95cad828","local_port":3000,"remote_addr":"shard-5346.ownserver.kumassy.com:13574"}]
+% curl -s localhost:9000/streams
+[{"id":"stream_24a3b5bb-336d-4b4e-baf3-7ef61bc1b78c"}]
+```
+
 ## How it works
 
 ![](/docs/img/overview.svg)
