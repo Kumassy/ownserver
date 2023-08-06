@@ -1,8 +1,10 @@
 use anyhow::{anyhow, Result};
+use bytes::BytesMut;
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use futures::{Sink, SinkExt, Stream, StreamExt};
 use log::*;
 use serde::{Deserialize, Serialize};
+use tokio_util::codec::{Encoder, Decoder};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::task::JoinSet;
@@ -18,7 +20,7 @@ use crate::{local, Store};
 use crate::localudp;
 use crate::{StreamMessage};
 use ownserver_lib::{
-    ClientHello, ClientId, ControlPacket, Payload, ServerHello, CLIENT_HELLO_VERSION,
+    ClientHello, ClientId, ControlPacket, Payload, ServerHello, CLIENT_HELLO_VERSION, ControlPacketCodec,
 };
 
 pub async fn run(
@@ -68,17 +70,18 @@ pub async fn run(
                             return Ok(());
                         }
                     };
-                    let data = match rmp_serde::to_vec(&packet) {
-                        Ok(data) => data,
-                        Err(e) => {
-                            warn!("cid={} failed to encode message: {:?}", client_id, e);
-                            return Ok(());
-                        }
-                    };
-                    if let Err(e) = ws_sink.send(Message::binary(data)).await {
+
+                    let mut codec = ControlPacketCodec::new();
+                    let mut bytes = BytesMut::new();
+                    if let Err(e) = codec.encode(packet, &mut bytes) {
+                        warn!("cid={} failed to encode message: {:?}", client_id, e);
+                        return Ok(());
+                    }
+                    if let Err(e) = ws_sink.send(Message::binary(bytes.to_vec())).await {
                         warn!("cid={} failed to write message to tunnel websocket: {:?}", client_id, e);
                         return Ok(());
                     }
+
                 },
                 _ = ct.cancelled() => {
                     return Ok(());
@@ -224,7 +227,10 @@ pub async fn process_control_flow_message(
     payload: Vec<u8>,
     local_port: u16,
 ) -> Result<ControlPacket, Box<dyn std::error::Error>> {
-    let control_packet: ControlPacket = rmp_serde::from_slice(&payload)?;
+    let mut bytes = BytesMut::from(&payload[..]);
+    let control_packet = ControlPacketCodec::new().decode(&mut bytes)?
+        .ok_or("failed to parse partial packet")?;
+        // TODO: should handle None case
 
     match control_packet {
         ControlPacket::Init(stream_id) => {

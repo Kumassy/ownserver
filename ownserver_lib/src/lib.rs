@@ -1,4 +1,8 @@
+use std::io;
+
+use bytes::BytesMut;
 use serde::{Deserialize, Serialize};
+use tokio_util::codec::{Encoder, Decoder};
 use uuid::Uuid;
 
 pub const CLIENT_HELLO_VERSION: u16 = 1;
@@ -104,6 +108,8 @@ pub enum ServerHello {
 
 #[cfg(test)]
 mod control_packet_test {
+    use bytes::BytesMut;
+
     use super::*;
 
     #[test]
@@ -111,10 +117,43 @@ mod control_packet_test {
         let stream_id = StreamId::default();
         let expected_packet = ControlPacket::Init(stream_id);
 
-        let encoded = rmp_serde::to_vec(&expected_packet).unwrap();
-        let deserialized_packet = rmp_serde::from_slice(&encoded).unwrap();
+        let mut encoded = BytesMut::new();
+        ControlPacketCodec::new().encode(expected_packet, &mut encoded)?;
 
+        let deserialized_packet = ControlPacketCodec::new().decode(&mut encoded)?.unwrap();
         assert_eq!(ControlPacket::Init(stream_id), deserialized_packet);
         Ok(())
+    }
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Default)]
+pub struct ControlPacketCodec {
+}
+impl ControlPacketCodec {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+impl Encoder<ControlPacket> for ControlPacketCodec {
+    type Error = io::Error;
+
+    fn encode(&mut self, item: ControlPacket, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        let encoded = rmp_serde::to_vec(&item).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        dst.extend_from_slice(&encoded);
+        Ok(())
+    }
+}
+
+impl Decoder for ControlPacketCodec {
+    type Item = ControlPacket;
+    type Error = io::Error;
+
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        if !src.is_empty() {
+            let decoded = rmp_serde::from_slice(src).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            Ok(Some(decoded))
+        } else {
+            Ok(None)
+        }
     }
 }
