@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
+use bytes::BytesMut;
 use futures::{stream::SplitSink, StreamExt, SinkExt};
-use ownserver_lib::{ClientId, ControlPacket};
-use tokio_util::sync::CancellationToken;
+use ownserver_lib::{ClientId, ControlPacket, ControlPacketCodec};
+use tokio_util::{sync::CancellationToken, codec::{Encoder, Decoder}};
 use tracing::Instrument;
 use warp::{
     ws::{Message, WebSocket},
@@ -53,13 +54,21 @@ impl Client {
                             }
                         };
                 
-                        let packet: ControlPacket = match rmp_serde::from_slice(&message) {
-                            Ok(packet) => packet,
+                        let mut bytes = BytesMut::from(&message[..]);
+                        let packet = match ControlPacketCodec::new().decode(&mut bytes) {
+                            Ok(Some(packet)) => packet,
+                            Ok(None) => {
+                                // TODO: should handle None case
+                                tracing::warn!(cid = %client_id, "failed to parse partial client message");
+                                continue;
+                            }
                             Err(e) => {
                                 tracing::warn!(cid = %client_id, error = ?e, "failed to parse client message");
                                 continue;
                             }
                         };
+
+
                 
                         tracing::trace!(cid = %client_id, ?packet, "got control packet from client");
 
@@ -107,15 +116,14 @@ impl Client {
     // }
 
     pub async fn send_to_client(&mut self, packet: ControlPacket) -> Result<(), ClientStreamError> {
-        let data = match rmp_serde::to_vec(&packet) {
-            Ok(data) => data,
-            Err(error) => {
-                tracing::warn!(cid = %self.client_id, error = ?error, "failed to encode message");
-                return Err(ClientStreamError::ClientError(format!("packet is invalid {}", error)))
-            }
-        };
+        let mut codec = ControlPacketCodec::new();
+        let mut bytes = BytesMut::new();
+        if let Err(e) = codec.encode(packet, &mut bytes) {
+            tracing::warn!(cid = %self.client_id, error = ?e, "failed to encode message");
+            return Err(ClientStreamError::ClientError(format!("packet is invalid {}", e)))
+        }
 
-        if let Err(e) =  self.ws_tx.send(Message::binary(data)).await {
+        if let Err(e) =  self.ws_tx.send(Message::binary(bytes.to_vec())).await {
             tracing::debug!(cid = %self.client_id, error = ?e, "client disconnected: aborting");
             self.disable().await;
             return Err(ClientStreamError::ClientError(format!("failed to communicate with client {:?}", e)))

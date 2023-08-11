@@ -587,7 +587,7 @@ dependencies = [
  "indexmap",
  "slab",
  "tokio",
- "tokio-util 0.7.3",
+ "tokio-util 0.7.8",
  "tracing",
 ]
 
@@ -1247,6 +1247,7 @@ name = "ownserver"
 version = "0.6.0"
 dependencies = [
  "anyhow",
+ "bytes",
  "dashmap",
  "futures",
  "log",
@@ -1260,7 +1261,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-tungstenite 0.17.2",
- "tokio-util 0.7.3",
+ "tokio-util 0.7.8",
  "url",
  "warp",
 ]
@@ -1289,10 +1290,12 @@ name = "ownserver_lib"
 version = "0.6.0"
 dependencies = [
  "base64 0.13.0",
+ "bytes",
  "rand",
  "rmp-serde",
  "serde",
  "sha2",
+ "tokio-util 0.7.8",
  "uuid",
 ]
 
@@ -1302,6 +1305,7 @@ version = "0.6.0"
 dependencies = [
  "anyhow",
  "base64 0.13.0",
+ "bytes",
  "chrono",
  "console-subscriber",
  "dashmap",
@@ -1326,7 +1330,7 @@ dependencies = [
  "tokio",
  "tokio-test",
  "tokio-tungstenite 0.17.2",
- "tokio-util 0.7.3",
+ "tokio-util 0.7.8",
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber 0.3.11",
@@ -1340,6 +1344,7 @@ version = "0.6.0"
 dependencies = [
  "anyhow",
  "base64 0.13.0",
+ "bytes",
  "chrono",
  "dashmap",
  "futures",
@@ -1358,7 +1363,7 @@ dependencies = [
  "tokio",
  "tokio-test",
  "tokio-tungstenite 0.17.2",
- "tokio-util 0.7.3",
+ "tokio-util 0.7.8",
  "tracing",
  "tracing-subscriber 0.3.11",
  "url",
@@ -2273,9 +2278,9 @@ dependencies = [
 
 [[package]]
 name = "tokio-util"
-version = "0.7.3"
+version = "0.7.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cc463cd8deddc3770d20f9852143d50bf6094e640b485cb2e189a2099085ff45"
+checksum = "806fe8c2c87eccc8b3267cbae29ed3ab2d0bd37fca70ab622e46aaa9375ddb7d"
 dependencies = [
  "bytes",
  "futures-core",
@@ -2309,7 +2314,7 @@ dependencies = [
  "prost-derive",
  "tokio",
  "tokio-stream",
- "tokio-util 0.7.3",
+ "tokio-util 0.7.8",
  "tower",
  "tower-layer",
  "tower-service",
@@ -2331,7 +2336,7 @@ dependencies = [
  "rand",
  "slab",
  "tokio",
- "tokio-util 0.7.3",
+ "tokio-util 0.7.8",
  "tower-layer",
  "tower-service",
  "tracing",

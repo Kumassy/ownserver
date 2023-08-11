@@ -4,6 +4,7 @@ use serial_test::serial;
 use futures::{SinkExt, StreamExt};
 use ownserver::proxy_client::{send_client_hello, verify_server_hello, ClientInfo};
 use ownserver_lib::ControlPacket;
+use ownserver_lib::ControlPacketCodec;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -15,6 +16,8 @@ use ownserver_server::Config;
 use ownserver_auth::make_jwt;
 use chrono::Duration as CDuration;
 use tokio::net::UdpSocket;
+use tokio_util::{codec::{Encoder, Decoder}};
+use bytes::BytesMut;
 
 #[cfg(test)]
 mod server_tcp_test {
@@ -24,7 +27,8 @@ mod server_tcp_test {
     macro_rules! assert_control_packet_matches {
         ($expr:expr, $expected:expr) => {
             let payload = $expr.next().await.unwrap()?.into_data();
-            let control_packet: ControlPacket = rmp_serde::from_slice(&payload)?;
+            let mut bytes = BytesMut::from(&payload[..]);
+            let control_packet = ControlPacketCodec::new().decode(&mut bytes)?.unwrap();
             assert_eq!(control_packet, $expected);
         };
     }
@@ -140,10 +144,12 @@ mod server_tcp_test {
         wait!();
         let stream_id = store.get_stream_ids().await[0];
 
+        let mut codec = ControlPacketCodec::new();
+        let mut bytes = BytesMut::new();
+        codec.encode(ControlPacket::Data(stream_id, b"foobarbaz".to_vec()), &mut bytes)?;
+
         raw_client_ws_sink
-            .send(Message::binary(
-                rmp_serde::to_vec(&ControlPacket::Data(stream_id, b"foobarbaz".to_vec())).unwrap()
-            ))
+            .send(Message::binary(bytes.to_vec()))
             .await?;
 
         assert_socket_bytes_matches!(remote, b"foobarbaz");
@@ -225,15 +231,18 @@ mod server_tcp_test {
 
         assert_ne!(stream_id1, stream_id2);
 
+        let mut codec = ControlPacketCodec::new();
+        let mut bytes = BytesMut::new();
+        codec.encode(ControlPacket::Data(stream_id1, b"some message 1".to_vec()), &mut bytes)?;
         raw_client_ws_sink
-            .send(Message::binary(
-                rmp_serde::to_vec(&ControlPacket::Data(stream_id1, b"some message 1".to_vec())).unwrap()
-            ))
+            .send(Message::binary(bytes.to_vec()))
             .await?;
+
+        let mut codec = ControlPacketCodec::new();
+        let mut bytes = BytesMut::new();
+        codec.encode(ControlPacket::Data(stream_id2, b"some message 2".to_vec()), &mut bytes)?;
         raw_client_ws_sink
-            .send(Message::binary(
-                rmp_serde::to_vec(&ControlPacket::Data(stream_id2, b"some message 2".to_vec())).unwrap()
-            ))
+            .send(Message::binary(bytes.to_vec()))
             .await?;
 
         assert_socket_bytes_matches!(remote1, b"some message 1");
@@ -253,7 +262,8 @@ mod server_udp_test {
     macro_rules! assert_control_packet_matches {
         ($expr:expr, $expected:expr) => {
             let payload = $expr.next().await.unwrap()?.into_data();
-            let control_packet: ControlPacket = rmp_serde::from_slice(&payload)?;
+            let mut bytes = BytesMut::from(&payload[..]);
+            let control_packet = ControlPacketCodec::new().decode(&mut bytes)?.unwrap();
             assert_eq!(control_packet, $expected);
         };
     }
@@ -368,10 +378,11 @@ mod server_udp_test {
         wait!();
         let stream_id = store.get_stream_ids().await[0];
 
+        let mut codec = ControlPacketCodec::new();
+        let mut bytes = BytesMut::new();
+        codec.encode(ControlPacket::UdpData(stream_id, b"foobarbaz".to_vec()), &mut bytes)?;
         raw_client_ws_sink
-            .send(Message::binary(
-                rmp_serde::to_vec(&ControlPacket::UdpData(stream_id, b"foobarbaz".to_vec())).unwrap()
-            ))
+            .send(Message::binary(bytes.to_vec()))
             .await?;
 
         assert_socket_bytes_matches!(remote, b"foobarbaz");
@@ -422,7 +433,6 @@ mod server_udp_test {
     #[tokio::test]
     #[serial]
     async fn forward_client_traffic_to_multiple_remote() -> Result<(), Box<dyn std::error::Error>> {
-        pretty_env_logger::init();
         let (websoket, store, client_info) = launch_proxy_server(CONTROL_PORT).await?;
         let (mut raw_client_ws_sink, mut _raw_client_ws_stream) = websoket.split();
 
@@ -449,15 +459,18 @@ mod server_udp_test {
             .find(|sid| sid != &stream_id1)
             .unwrap();
 
+        let mut codec = ControlPacketCodec::new();
+        let mut bytes = BytesMut::new();
+        codec.encode(ControlPacket::UdpData(stream_id1, b"some message 1".to_vec()), &mut bytes)?;
         raw_client_ws_sink
-            .send(Message::binary(
-                rmp_serde::to_vec(&ControlPacket::UdpData(stream_id1, b"some message 1".to_vec())).unwrap()
-            ))
+            .send(Message::binary(bytes.to_vec()))
             .await?;
+
+        let mut codec = ControlPacketCodec::new();
+        let mut bytes = BytesMut::new();
+        codec.encode(ControlPacket::UdpData(stream_id2, b"some message 2".to_vec()), &mut bytes)?;
         raw_client_ws_sink
-            .send(Message::binary(
-                rmp_serde::to_vec(&ControlPacket::UdpData(stream_id2, b"some message 2".to_vec())).unwrap()
-            ))
+            .send(Message::binary(bytes.to_vec()))
             .await?;
 
         assert_socket_bytes_matches!(remote1, b"some message 1");

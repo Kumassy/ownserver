@@ -330,7 +330,6 @@ mod e2e_tcp_test {
     #[tokio::test]
     #[serial]
     async fn remove_disabled_client_streams() -> Result<(), Box<dyn std::error::Error>> {
-        pretty_env_logger::init();
         let cancellation_token = CancellationToken::new();
 
         launch_token_server().await;
