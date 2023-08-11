@@ -1,5 +1,6 @@
 use metrics::{increment_counter};
-use std::io;
+use ownserver_lib::{EndpointId, ControlPacketV2};
+use std::io::{self, ErrorKind};
 use std::sync::Arc;
 use tokio::{net::{TcpListener, TcpStream, ToSocketAddrs}, io::{WriteHalf, AsyncReadExt, AsyncWriteExt}};
 use tracing::Instrument;
@@ -13,13 +14,14 @@ use super::stream::StreamMessage;
 #[tracing::instrument(skip(store, cancellation_token))]
 pub async fn spawn_remote(
     store: Arc<Store>,
-    listen_addr: impl ToSocketAddrs + std::fmt::Debug + Clone,
     client_id: ClientId,
+    endpoint_id: EndpointId,
     cancellation_token: CancellationToken,
 ) -> io::Result<()> {
     // create our accept any server
+    let listen_addr = store.get_remote_addr_by_endpoint_id(endpoint_id).ok_or(io::Error::from(ErrorKind::Other))?;
     let listener = TcpListener::bind(listen_addr.clone()).await?;
-    tracing::info!(cid = %client_id, "remote process listening on {:?}", listen_addr);
+    tracing::info!(cid = %client_id, eid = %endpoint_id, "remote process listening on {:?}", listen_addr);
 
     let ct = cancellation_token.clone();
 
@@ -30,13 +32,13 @@ pub async fn spawn_remote(
                     match socket {
                         Ok((socket, _)) => socket,
                         _ => {
-                            tracing::debug!(cid = %client_id, "failed to accept socket");
+                            tracing::debug!(cid = %client_id, eid = %endpoint_id, "failed to accept socket");
                             continue;
                         }
                     }
                 },
                 _ = ct.cancelled() => {
-                    tracing::info!(cid = %client_id, "tcp listener is cancelled.");
+                    tracing::info!(cid = %client_id, eid = %endpoint_id, "tcp listener is cancelled.");
                     return;
                 },
             };
@@ -45,7 +47,7 @@ pub async fn spawn_remote(
 
             tokio::spawn(
                 async move {
-                    accept_connection(store_, socket, client_id).await;
+                    accept_connection(store_, socket, client_id, endpoint_id).await;
                 }
                 .instrument(tracing::info_span!("remote_connect")),
             );
@@ -61,6 +63,7 @@ pub async fn accept_connection(
     store: Arc<Store>,
     socket: TcpStream,
     client_id: ClientId,
+    endpoint_id: EndpointId,
 ) {
     tracing::info!(cid = %client_id, "new remote connection");
 
@@ -75,7 +78,7 @@ pub async fn accept_connection(
     tracing::info!(cid = %client_id, "remote ip is {}", peer_addr);
 
 
-    let remote = RemoteTcp::new(store.clone(), socket, client_id);
+    let remote = RemoteTcp::new(store.clone(), socket, client_id, endpoint_id);
     if remote.send_init_to_client().await.is_ok() {
         tracing::info!(cid = %client_id, sid = %remote.stream_id, "add new remote stream");
         store.add_remote(RemoteStream::RemoteTcp(remote), peer_addr).await;
@@ -88,6 +91,7 @@ pub async fn accept_connection(
 pub struct RemoteTcp {
     pub stream_id: StreamId,
     pub client_id: ClientId,
+    pub endpoint_id: EndpointId,
     socket_tx: WriteHalf<TcpStream>,
     ct: CancellationToken,
     store: Arc<Store>,
@@ -95,10 +99,10 @@ pub struct RemoteTcp {
 }
 
 impl RemoteTcp {
-    pub fn new(store: Arc<Store>, socket: TcpStream, client_id: ClientId) -> Self {
+    pub fn new(store: Arc<Store>, socket: TcpStream, client_id: ClientId, endpoint_id: EndpointId) -> Self {
         let (mut stream, sink) = tokio::io::split(socket);
         let stream_id = StreamId::new();
-        let ct = CancellationToken::new();
+        let ct: CancellationToken = CancellationToken::new();
 
         let mut buf = [0; 4096];
         let ct_ = ct.clone();
@@ -130,7 +134,7 @@ impl RemoteTcp {
 
 
                     let _ = store_ 
-                        .send_to_client(client_id, ControlPacket::End(stream_id))
+                        .send_to_client(client_id, ControlPacketV2::End(stream_id))
                         .await
                         .map_err(|e| {
                             tracing::warn!(cid = %client_id, sid = %stream_id, "failed to send end signal: {:?}", e);
@@ -140,7 +144,7 @@ impl RemoteTcp {
                 }
 
                 let data = &buf[..n];
-                let packet = ControlPacket::Data(stream_id, data.to_vec());
+                let packet = ControlPacketV2::Data(stream_id, data.to_vec());
 
                 match store_.send_to_client(client_id, packet).await {
                     Ok(_) => {
@@ -159,7 +163,7 @@ impl RemoteTcp {
             store_.disable_remote(stream_id).await;
         }.instrument(tracing::info_span!("remote_tcp_read_loop")));
 
-        Self { stream_id, client_id, socket_tx: sink, store, ct, disabled: false }
+        Self { stream_id, client_id, endpoint_id, socket_tx: sink, store, ct, disabled: false }
     }
 
     pub async fn send_to_remote(&mut self, stream_id: StreamId, message: StreamMessage) -> Result<(), ClientStreamError> {
@@ -194,7 +198,7 @@ impl RemoteTcp {
         Ok(())
     }
 
-    pub async fn send_to_client(&self, packet: ControlPacket) -> Result<(), ClientStreamError> {
+    pub async fn send_to_client(&self, packet: ControlPacketV2) -> Result<(), ClientStreamError> {
         let client_id = self.client_id;
         self.store.send_to_client(client_id, packet).await?;
         Ok(())
@@ -202,7 +206,7 @@ impl RemoteTcp {
 
     pub async fn send_init_to_client(&self) -> Result<(), ClientStreamError> {
         let client_id = self.client_id;
-        let packet = ControlPacket::Init(self.stream_id);
+        let packet = ControlPacketV2::Init(self.stream_id, self.endpoint_id);
         self.store.send_to_client(client_id, packet).await?;
         Ok(())
     }

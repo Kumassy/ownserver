@@ -1,4 +1,4 @@
-use ownserver_lib::{StreamId, ClientId, ControlPacket};
+use ownserver_lib::{StreamId, ClientId, ControlPacket, ControlPacketV2};
 use crate::ClientStreamError;
 
 use super::{tcp::RemoteTcp, udp::RemoteUdp};
@@ -22,7 +22,7 @@ impl RemoteStream {
         }
     }
 
-    pub async fn send_to_client(&self, packet: ControlPacket) -> Result<(), ClientStreamError> {
+    pub async fn send_to_client(&self, packet: ControlPacketV2) -> Result<(), ClientStreamError> {
         match self {
             RemoteStream::RemoteTcp(tcp) => {
                 tcp.send_to_client(packet).await
