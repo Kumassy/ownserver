@@ -68,6 +68,42 @@ pub struct ClientHello {
     pub payload: Payload,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[serde(transparent)]
+pub struct EndpointId(Uuid);
+impl std::fmt::Display for EndpointId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "endpoint_{}", self.0)
+    }
+}
+impl EndpointId {
+    pub fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+pub enum Protocol {
+    TCP = 6,
+    UDP = 17,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct EndpointClaim {
+    pub protocol: Protocol,
+    pub local_port: u16,
+    pub remote_port: u16,
+}
+
+pub type EndpointClaims = Vec<EndpointClaim>;
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ClientHelloV2 {
+    pub version: u16,
+    pub token: String,
+    pub endpoint_claims: EndpointClaims,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ControlPacket {
     Init(StreamId),
@@ -98,6 +134,30 @@ pub enum ServerHello {
         client_id: ClientId,
         /// remote addr in fqdn: foo.bar.local:43312
         remote_addr: String,
+    },
+    BadRequest,
+    ServiceTemporaryUnavailable,
+    IllegalHost,
+    InternalServerError,
+    VersionMismatch,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Endpoint {
+    pub id: EndpointId,
+    pub protocol: Protocol,
+    pub local_port: u16,
+    pub remote_port: u16
+}
+
+pub type Endpoints = Vec<Endpoint>;
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "snake_case")]
+pub enum ServerHelloV2 {
+    Success {
+        client_id: ClientId,
+        endpoints: Endpoints,
     },
     BadRequest,
     ServiceTemporaryUnavailable,
