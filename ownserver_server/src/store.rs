@@ -1,7 +1,7 @@
 use std::{net::SocketAddr, collections::{HashMap}, ops::Range};
 
 use dashmap::DashMap;
-use ownserver_lib::{StreamId, ClientId, ControlPacket};
+use ownserver_lib::{StreamId, ClientId, ControlPacket, EndpointClaims, Endpoints};
 use metrics::gauge;
 use rand::Rng;
 use tokio::sync::{RwLock, Mutex};
@@ -151,5 +151,8 @@ impl Store {
 
     pub async fn allocate_port(&self, rng: &mut impl Rng) -> Result<u16, PortAllocatorError> {
         self.alloc.lock().await.allocate_port(rng)
+    }
+    pub async fn allocate_ports(&self, rng: &mut impl Rng, client_claims: EndpointClaims) -> Result<Endpoints, PortAllocatorError> {
+        self.alloc.lock().await.allocate_ports(rng, client_claims)
     }
 }
