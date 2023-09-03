@@ -17,7 +17,6 @@ use url::Url;
 
 use crate::error::Error;
 use crate::{local, Store};
-use crate::localudp;
 use crate::{StreamMessage};
 use ownserver_lib::{
     ClientId, CLIENT_HELLO_VERSION, ControlPacketV2, ControlPacketV2Codec, ClientHelloV2, EndpointClaims, Endpoints, ServerHelloV2, Protocol,
@@ -260,7 +259,7 @@ pub async fn process_control_flow_message(
 
             match endpoint.protocol {
                 Protocol::TCP => {
-                    local::setup_new_stream(
+                    local::tcp::setup_new_stream(
                         store.clone(),
                         tunnel_tx.clone(),
                         stream_id,
@@ -270,7 +269,7 @@ pub async fn process_control_flow_message(
                     println!("new tcp stream arrived: sid={}, eid={}", stream_id, endpoint_id);
                 }
                 Protocol::UDP => {
-                    localudp::setup_new_stream(
+                    local::udp::setup_new_stream(
                         store.clone(),
                         tunnel_tx.clone(),
                         stream_id,
