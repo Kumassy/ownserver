@@ -71,8 +71,13 @@ async fn process_udp_stream(
                 tracing::info!(cid = %client_id, "remote ip is {}", peer_addr);
                 let remote = RemoteUdp::new(store.clone(), udp_socket.clone(), peer_addr, client_id, endpoint_id);
                 let stream_id = remote.stream_id;
-                tracing::info!(cid = %client_id, sid = %remote.stream_id, "add new remote stream");
-                store.add_remote(RemoteStream::RemoteUdp(remote), peer_addr).await;
+                if remote.send_init_to_client().await.is_ok() {
+                    tracing::info!(cid = %client_id, sid = %remote.stream_id, "add new remote stream");
+                    store.add_remote(RemoteStream::RemoteUdp(remote), peer_addr).await;
+                } else {
+                    tracing::warn!(cid = %client_id, sid = %remote.stream_id, "failed to send init packet to client");
+                    return;
+                }
                 stream_id
             }
         };

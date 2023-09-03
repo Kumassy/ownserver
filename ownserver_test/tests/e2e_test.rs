@@ -22,6 +22,8 @@ use tokio::net::UdpSocket;
 
 #[cfg(test)]
 mod e2e_tcp_test {
+    use ownserver_lib::{EndpointClaim, Protocol};
+
     use super::*;
 
     static CONFIG: OnceCell<Config> = OnceCell::new();
@@ -96,9 +98,14 @@ mod e2e_tcp_test {
         let client_store: Arc<ClientStore> = Default::default();
         let (tx, rx) = oneshot::channel();
 
+        let endpoint_claims = vec![EndpointClaim {
+            protocol: Protocol::TCP,
+            local_port,
+            remote_port: 0,
+        }];
         tokio::spawn(async move {
             let (client_info, mut set) =
-                proxy_client::run(client_store, control_port, local_port, "http://127.0.0.1:8888/v0/request_token", Payload::Other, cancellation_token)
+                proxy_client::run(client_store, control_port, "http://127.0.0.1:8888/v0/request_token", cancellation_token, endpoint_claims)
                     .await
                     .expect("failed to launch proxy_client");
             tx.send(client_info).unwrap();
@@ -161,8 +168,8 @@ mod e2e_tcp_test {
 
         launch_local_server(LOCAL_PORT).await;
         let client_info =
-            launch_proxy_client(CONTROL_PORT, LOCAL_PORT, cancellation_token).await?;
-        let remote_addr = client_info.await?.remote_addr;
+            launch_proxy_client(CONTROL_PORT, LOCAL_PORT, cancellation_token).await?.await?;
+        let remote_addr = format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port);
         wait!();
 
         let mut remote = TcpStream::connect(remote_addr)
@@ -185,8 +192,8 @@ mod e2e_tcp_test {
 
         launch_local_server(LOCAL_PORT).await;
         let client_info =
-            launch_proxy_client(CONTROL_PORT, LOCAL_PORT, cancellation_token).await?;
-        let remote_addr = client_info.await?.remote_addr;
+            launch_proxy_client(CONTROL_PORT, LOCAL_PORT, cancellation_token).await?.await?;
+        let remote_addr = format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port);
         wait!();
 
         let mut remote = TcpStream::connect(remote_addr.clone())
@@ -217,8 +224,8 @@ mod e2e_tcp_test {
         wait!();
 
         let client_info =
-            launch_proxy_client(CONTROL_PORT, LOCAL_PORT, cancellation_token).await?;
-        let remote_addr = client_info.await?.remote_addr;
+            launch_proxy_client(CONTROL_PORT, LOCAL_PORT, cancellation_token).await?.await?;
+        let remote_addr = format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port);
         wait!();
 
         let mut remote = TcpStream::connect(remote_addr)
@@ -272,8 +279,8 @@ mod e2e_tcp_test {
 
         launch_local_server(LOCAL_PORT).await;
         let client_info =
-            launch_proxy_client(CONTROL_PORT, LOCAL_PORT, cancellation_token.clone()).await?;
-        let remote_addr = client_info.await?.remote_addr;
+            launch_proxy_client(CONTROL_PORT, LOCAL_PORT, cancellation_token.clone()).await?.await?;
+        let remote_addr = format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port);
         wait!();
         
         // cancel client
@@ -305,8 +312,8 @@ mod e2e_tcp_test {
 
         launch_local_server(LOCAL_PORT).await;
         let client_info =
-            launch_proxy_client(CONTROL_PORT, LOCAL_PORT, cancellation_token.clone()).await?;
-        let remote_addr = client_info.await?.remote_addr;
+            launch_proxy_client(CONTROL_PORT, LOCAL_PORT, cancellation_token.clone()).await?.await?;
+        let remote_addr = format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port);
         wait!();
 
         let mut remote = TcpStream::connect(remote_addr)
@@ -338,8 +345,8 @@ mod e2e_tcp_test {
 
         launch_local_server(LOCAL_PORT).await;
         let client_info =
-            launch_proxy_client(CONTROL_PORT, LOCAL_PORT, cancellation_token.clone()).await?;
-        let remote_addr = client_info.await?.remote_addr;
+            launch_proxy_client(CONTROL_PORT, LOCAL_PORT, cancellation_token.clone()).await?.await?;
+        let remote_addr = format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port);
         wait!();
 
         let mut remote = TcpStream::connect(remote_addr)
@@ -370,8 +377,7 @@ mod e2e_tcp_test {
 
         // reuse remote port
         let client_info =
-            launch_proxy_client(CONTROL_PORT, LOCAL_PORT, cancellation_token.clone()).await?;
-        let _ = client_info.await?.remote_addr;
+            launch_proxy_client(CONTROL_PORT, LOCAL_PORT, cancellation_token.clone()).await?.await?;
         wait!();
 
         Ok(())
@@ -382,6 +388,8 @@ mod e2e_tcp_test {
 
 #[cfg(test)]
 mod e2e_udp_test {
+    use ownserver_lib::{EndpointClaim, Protocol};
+
     use super::*;
 
 
@@ -450,9 +458,14 @@ mod e2e_udp_test {
         let client_store: Arc<ClientStore> = Default::default();
         let (tx, rx) = oneshot::channel();
 
+        let endpoint_claims = vec![EndpointClaim {
+            protocol: Protocol::UDP,
+            local_port,
+            remote_port: 0,
+        }];
         tokio::spawn(async move {
             let (client_info, mut set) =
-                proxy_client::run(client_store, control_port, local_port, "http://127.0.0.1:8888/v0/request_token", Payload::UDP, cancellation_token)
+                proxy_client::run(client_store, control_port, "http://127.0.0.1:8888/v0/request_token", cancellation_token, endpoint_claims)
                     .await
                     .expect("failed to launch proxy_client");
             tx.send(client_info).unwrap();
@@ -508,8 +521,8 @@ mod e2e_udp_test {
 
         launch_local_server(LOCAL_PORT).await;
         let client_info =
-            launch_proxy_client(CONTROL_PORT, LOCAL_PORT, cancellation_token).await?;
-        let remote_addr = client_info.await?.remote_addr;
+            launch_proxy_client(CONTROL_PORT, LOCAL_PORT, cancellation_token).await?.await?;
+        let remote_addr = format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port);
         wait!();
 
         let remote = UdpSocket::bind("127.0.0.1:0").await.unwrap();
@@ -533,8 +546,8 @@ mod e2e_udp_test {
 
         launch_local_server(LOCAL_PORT).await;
         let client_info =
-            launch_proxy_client(CONTROL_PORT, LOCAL_PORT, cancellation_token).await?;
-        let remote_addr = client_info.await?.remote_addr;
+            launch_proxy_client(CONTROL_PORT, LOCAL_PORT, cancellation_token).await?.await?;
+        let remote_addr = format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port);
         wait!();
 
         let remote1 = UdpSocket::bind("127.0.0.1:0").await.unwrap();
