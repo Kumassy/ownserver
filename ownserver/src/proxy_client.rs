@@ -20,16 +20,15 @@ use crate::{local, Store};
 use crate::localudp;
 use crate::{StreamMessage};
 use ownserver_lib::{
-    ClientHello, ClientId, ControlPacket, Payload, ServerHello, CLIENT_HELLO_VERSION, ControlPacketCodec,
+    ClientId, CLIENT_HELLO_VERSION, ControlPacketV2, ControlPacketV2Codec, ClientHelloV2, EndpointClaims, Endpoints, ServerHelloV2, Protocol,
 };
 
 pub async fn run(
     store: Arc<Store>,
     control_port: u16,
-    local_port: u16,
     token_server: &str,
-    payload: Payload,
     cancellation_token: CancellationToken,
+    endpoint_claims: EndpointClaims,
 ) -> Result<(ClientInfo, JoinSet<Result<(), Error>>)> {
     println!("Connecting to auth server: {}", token_server);
     let (token, host) = fetch_token(token_server).await?;
@@ -41,19 +40,27 @@ pub async fn run(
     let (mut websocket, _) = connect_async(url).await.map_err(|_| Error::ServerDown)?;
     info!("WebSocket handshake has been successfully completed");
 
-    send_client_hello(&mut websocket, token, payload).await?;
+    send_client_hello(&mut websocket, token, endpoint_claims).await?;
     let client_info = verify_server_hello(&mut websocket).await?;
     info!(
         "cid={} got client_info from server: {:?}",
         client_info.client_id, client_info
     );
     println!("Your Client ID: {}", client_info.client_id);
+    println!("Endpoint Info:");
+    for endpoint in client_info.endpoints.iter() {
+        let message = format!("{}://localhost:{} <--> {}://{}:{}", endpoint.protocol, endpoint.local_port, endpoint.protocol, client_info.host, endpoint.remote_port);
+        println!("+{}+", "-".repeat(message.len() + 2));
+        println!("| {} |", message);
+        println!("+{}+", "-".repeat(message.len() + 2));
+    }
+    store.register_endpoints(client_info.endpoints.clone());
 
     // split reading and writing
     let (mut ws_sink, mut ws_stream) = websocket.split();
 
     // tunnel channel
-    let (tunnel_tx, mut tunnel_rx) = unbounded::<ControlPacket>();
+    let (mut tunnel_tx, mut tunnel_rx) = unbounded::<ControlPacketV2>();
 
     let mut set = JoinSet::new();
     let client_id = client_info.client_id;
@@ -71,7 +78,7 @@ pub async fn run(
                         }
                     };
 
-                    let mut codec = ControlPacketCodec::new();
+                    let mut codec = ControlPacketV2Codec::new();
                     let mut bytes = BytesMut::new();
                     if let Err(e) = codec.encode(packet, &mut bytes) {
                         warn!("cid={} failed to encode message: {:?}", client_id, e);
@@ -104,9 +111,8 @@ pub async fn run(
                         Some(Ok(message)) => {
                             let packet = process_control_flow_message(
                                 store.clone(),
-                                tunnel_tx.clone(),
+                                &mut tunnel_tx,
                                 message.into_data(),
-                                local_port,
                             )
                             .await
                             .map_err(|e| {
@@ -132,22 +138,18 @@ pub async fn run(
         }
     });
 
-    let message = format!("Your server {}://localhost:{} is now available at {}://{}", payload, local_port, payload, client_info.remote_addr);
-    println!("+{}+", "-".repeat(message.len() + 2));
-    println!("| {} |", message);
-    println!("+{}+", "-".repeat(message.len() + 2));
 
     Ok((client_info, set))
 }
 
-pub async fn send_client_hello<T>(websocket: &mut T, token: String, payload: Payload) -> Result<(), T::Error>
+pub async fn send_client_hello<T>(websocket: &mut T, token: String, endpoint_claims: EndpointClaims) -> Result<(), T::Error>
 where
     T: Unpin + Sink<Message>,
 {
-    let hello = ClientHello {
+    let hello = ClientHelloV2 {
         version: CLIENT_HELLO_VERSION,
         token,
-        payload,
+        endpoint_claims,
     };
     debug!("Sent client hello: {:?}", hello);
     let hello_data = serde_json::to_vec(&hello).unwrap_or_default();
@@ -160,7 +162,8 @@ where
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClientInfo {
     pub client_id: ClientId,
-    pub remote_addr: String,
+    pub host: String,
+    pub endpoints: Endpoints,
 }
 
 pub async fn verify_server_hello<T>(websocket: &mut T) -> Result<ClientInfo, Error>
@@ -172,44 +175,44 @@ where
         .await
         .ok_or(Error::NoResponseFromServer)??
         .into_data();
-    let server_hello = serde_json::from_slice::<ServerHello>(&server_hello_data).map_err(|e| {
+    let server_hello = serde_json::from_slice::<ServerHelloV2>(&server_hello_data).map_err(|e| {
         error!("Couldn't parse server_hello from {:?}", e);
         Error::ServerReplyInvalid
     })?;
     debug!("Got server hello: {:?}", server_hello);
 
-    let (client_id, remote_addr) = match server_hello {
-        ServerHello::Success {
+    let (client_id, host, endpoints) = match server_hello {
+        ServerHelloV2::Success {
             client_id,
-            remote_addr,
-            ..
+            endpoints,
+            host,
         } => {
             info!("cid={} Server accepted our connection.", client_id);
-            (client_id, remote_addr)
+            (client_id, host, endpoints)
         }
-        ServerHello::BadRequest => {
+        ServerHelloV2::BadRequest => {
             error!("Server send an error: {:?}", Error::BadRequest);
             return Err(Error::BadRequest);
         }
-        ServerHello::ServiceTemporaryUnavailable => {
+        ServerHelloV2::ServiceTemporaryUnavailable => {
             error!(
                 "Server send an error: {:?}",
                 Error::ServiceTemporaryUnavailable
             );
             return Err(Error::ServiceTemporaryUnavailable);
         }
-        ServerHello::IllegalHost => {
+        ServerHelloV2::IllegalHost => {
             error!("Server send an error: {:?}", Error::IllegalHost);
             return Err(Error::IllegalHost);
         }
-        ServerHello::VersionMismatch => {
+        ServerHelloV2::VersionMismatch => {
             error!(
                 "Server send an error: {:?}",
                 Error::ClientHandshakeVersionMismatch
             );
             return Err(Error::ClientHandshakeVersionMismatch);
         }
-        ServerHello::InternalServerError => {
+        ServerHelloV2::InternalServerError => {
             error!("Server send an error: {:?}", Error::InternalServerError);
             return Err(Error::InternalServerError);
         }
@@ -217,47 +220,73 @@ where
 
     Ok(ClientInfo {
         client_id,
-        remote_addr,
+        host,
+        endpoints,
     })
 }
 
 pub async fn process_control_flow_message(
     store: Arc<Store>,
-    mut tunnel_tx: UnboundedSender<ControlPacket>,
+    tunnel_tx: &mut UnboundedSender<ControlPacketV2>,
     payload: Vec<u8>,
-    local_port: u16,
-) -> Result<ControlPacket, Box<dyn std::error::Error>> {
+) -> Result<ControlPacketV2, Box<dyn std::error::Error>> {
     let mut bytes = BytesMut::from(&payload[..]);
-    let control_packet = ControlPacketCodec::new().decode(&mut bytes)?
+    let control_packet = ControlPacketV2Codec::new().decode(&mut bytes)?
         .ok_or("failed to parse partial packet")?;
         // TODO: should handle None case
 
     match control_packet {
-        ControlPacket::Init(stream_id) => {
-            debug!("sid={} init stream", stream_id);
+        ControlPacketV2::Init(stream_id, endpoint_id) => {
+            debug!("sid={} eid={} init stream", stream_id, endpoint_id);
 
-            if !store.has_stream(&stream_id) {
-                local::setup_new_stream(
-                    store.clone(),
-                    local_port,
-                    tunnel_tx.clone(),
-                    stream_id,
-                )
-                .await;
-                println!("new tcp stream arrived: {}", stream_id);
-            } else {
+            let endpoint = match store.get_endpoint_by_endpoint_id(endpoint_id) {
+                Some(e) => e,
+                None => {
+                    warn!(
+                        "sid={} eid={} endpoint is not registered",
+                        stream_id, endpoint_id
+                    );
+                    return Err(format!("eid={} is not registered", endpoint_id).into())
+                }
+            };
+
+            if store.has_stream(&stream_id) {
                 warn!(
                     "sid={} already exist at init process",
                     stream_id
                 );
+                return Err(format!("sid={} is already exist", stream_id).into())
+            }
+
+            match endpoint.protocol {
+                Protocol::TCP => {
+                    local::setup_new_stream(
+                        store.clone(),
+                        tunnel_tx.clone(),
+                        stream_id,
+                        endpoint_id,
+                    )
+                    .await?;
+                    println!("new tcp stream arrived: sid={}, eid={}", stream_id, endpoint_id);
+                }
+                Protocol::UDP => {
+                    localudp::setup_new_stream(
+                        store.clone(),
+                        tunnel_tx.clone(),
+                        stream_id,
+                        endpoint_id,
+                    )
+                    .await?;
+                    println!("new udp stream arrived: sid={}, eid={}", stream_id, endpoint_id);
+                }
             }
         }
-        ControlPacket::Ping => {
+        ControlPacketV2::Ping => {
             debug!("got ping");
-            let _ = tunnel_tx.send(ControlPacket::Ping).await;
+            let _ = tunnel_tx.send(ControlPacketV2::Ping).await;
         }
-        ControlPacket::Refused(_) => return Err("unexpected control packet".into()),
-        ControlPacket::End(stream_id) => {
+        ControlPacketV2::Refused(_) => return Err("unexpected control packet".into()),
+        ControlPacketV2::End(stream_id) => {
             debug!("sid={} end stream", stream_id);
             // proxy server try to close control stream and local stream
 
@@ -275,45 +304,23 @@ pub async fn process_control_flow_message(
                 }
             });
         }
-        ControlPacket::Data(stream_id, ref data) => {
+        ControlPacketV2::Data(stream_id, ref data) => {
             debug!("sid={} new data: {}", stream_id, data.len());
 
             match store.get_mut_stream(&stream_id) {
                 Some(mut tx) => {
                     tx.send(StreamMessage::Data(data.clone())).await?;
-                    debug!("sid={} forwarded to local tcp", stream_id);
+                    debug!("sid={} forwarded to local socket", stream_id);
                 }
                 None => {
                     error!(
                         "sid={} got data but no stream to send it to.",
                         stream_id
                     );
-                    let _ = tunnel_tx
-                        .send(ControlPacket::Refused(stream_id))
+                    tunnel_tx
+                        .send(ControlPacketV2::Refused(stream_id))
                         .await?;
                 }
-            }
-        }
-        ControlPacket::UdpData(stream_id, ref data) => {
-            debug!("sid={} new data: {}", stream_id, data.len());
-            // find the right stream
-            if !store.has_stream(&stream_id) {
-                localudp::setup_new_stream(
-                    store.clone(),
-                    local_port,
-                    tunnel_tx.clone(),
-                    stream_id,
-                )
-                .await;
-                println!("new udp stream arrived: {}", stream_id);
-            }
-
-            // forward data to it
-            if let Some(mut tx) = store.get_mut_stream(&stream_id) {
-                tx.send(StreamMessage::Data(data.clone())).await?;
-                debug!("sid={} forwarded to local tcp", stream_id);
-            } else {
-                warn!("active_stream is not yet registered {}", stream_id);
             }
         }
     };
@@ -393,19 +400,23 @@ mod fetch_token_test {
 mod client_verify_server_hello_test {
     use super::*;
     use futures::{channel::mpsc, SinkExt};
-    use ownserver_lib::{ClientId, ServerHello};
-    use tokio_tungstenite::{
-        tungstenite::{Error as WsError, Message},
-    };
+    use ownserver_lib::{ClientId, ServerHelloV2, EndpointId, Endpoint};
 
     #[tokio::test]
     async fn it_accept_server_hello() -> Result<(), Box<dyn std::error::Error>> {
         let (mut tx, mut rx) = mpsc::unbounded();
 
         let cid = ClientId::new();
-        let hello = serde_json::to_vec(&ServerHello::Success {
+        let eid = EndpointId::new();
+        let hello = serde_json::to_vec(&ServerHelloV2::Success {
             client_id: cid,
-            remote_addr: "foo.bar.local:256".to_string(),
+            host: "foo.bar.local".to_string(),
+            endpoints: vec![Endpoint {
+                id: eid,
+                protocol: Protocol::TCP,
+                local_port: 1234,
+                remote_port: 1234,
+            }],
         })
         .unwrap_or_default();
         tx.send(Ok(Message::binary(hello))).await?;
@@ -415,10 +426,17 @@ mod client_verify_server_hello_test {
             .expect("unexpected server hello error");
         let ClientInfo {
             client_id,
-            remote_addr,
+            host,
+            endpoints,
         } = client_info;
-        assert_eq!(cid, client_id);
-        assert_eq!("foo.bar.local:256".to_string(), remote_addr);
+        assert_eq!(client_id, cid);
+        assert_eq!(host, "foo.bar.local".to_string());
+        assert_eq!(endpoints, vec![Endpoint {
+            id: eid,
+            protocol: Protocol::TCP,
+            local_port: 1234,
+            remote_port: 1234,
+        }]);
 
         Ok(())
     }

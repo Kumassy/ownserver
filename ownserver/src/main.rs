@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use anyhow::Result;
 use log::*;
-use ownserver_lib::Payload;
+use ownserver_lib::{Payload, Endpoint, EndpointClaims, EndpointClaim, Protocol};
 use tokio_util::sync::CancellationToken;
 use structopt::StructOpt;
 
@@ -29,18 +29,24 @@ async fn main() -> Result<()> {
     let opt = Opt::from_args();
     debug!("{:?}", opt);
 
-    let payload = match opt.payload.as_str() {
-        "udp" => Payload::UDP,
-        _ => Payload::Other,
+    let protocol = match opt.payload.as_str() {
+        "udp" => Protocol::UDP,
+        _ => Protocol::TCP,
     };
-    debug!("{:?}", payload);
+    debug!("{:?}", protocol);
 
     let store: Arc<Store> = Default::default();
     let cancellation_token = CancellationToken::new();
 
+    let endpoint_claims = vec![EndpointClaim {
+        protocol,
+        local_port: opt.local_port,
+        remote_port: 0,
+    }];
+        
     let store_ = store.clone();
     let (client_info, mut set) =
-        run(store_, opt.control_port, opt.local_port, &opt.token_server, payload, cancellation_token).await?;
+        run(store_, opt.control_port, &opt.token_server, cancellation_token, endpoint_claims).await?;
     info!("client is running under configuration: {:?}", client_info);
 
     if let Some(api_port) = opt.api_port {

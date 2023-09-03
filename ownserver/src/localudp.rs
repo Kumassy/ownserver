@@ -1,3 +1,4 @@
+use std::io::{self, ErrorKind};
 use std::sync::Arc;
 
 use futures::channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
@@ -7,29 +8,30 @@ use tokio::net::UdpSocket;
 
 use crate::{StreamMessage, Store};
 use log::*;
-use ownserver_lib::{ControlPacket, StreamId};
+use ownserver_lib::{ControlPacket, StreamId, EndpointId, ControlPacketV2};
 
 /// Establish a new local stream and start processing messages to it
 pub async fn setup_new_stream(
     store: Arc<Store>,
-    local_port: u16,
-    tunnel_tx: UnboundedSender<ControlPacket>,
+    tunnel_tx: UnboundedSender<ControlPacketV2>,
     stream_id: StreamId,
-) {
-    info!("sid={} setting up local udp stream", &stream_id);
+    endpoint_id: EndpointId,
+) -> io::Result<()>{
+    info!("sid={} eid={} setting up local udp stream", stream_id, endpoint_id);
+    let local_addr = store.get_local_addr_by_endpoint_id(endpoint_id).ok_or(io::Error::from(ErrorKind::Other))?;
 
     let local_udp = match UdpSocket::bind("127.0.0.1:0").await {
         Ok(s) => s,
         Err(e) => {
-            warn!("sid={} failed to bind socket: {:?}", &stream_id, e);
-            return;
+            warn!("sid={} eid={} failed to bind socket: {:?}", stream_id, endpoint_id, e);
+            return Err(e);
         } 
     };
     debug!("local udp addr: {:?}", local_udp.local_addr());
 
-    if let Err(e) = local_udp.connect(format!("localhost:{}", local_port)).await {
+    if let Err(e) = local_udp.connect(local_addr).await {
         warn!("sid={} failed to bind socket: {:?}", &stream_id, e);
-        return;
+        return Err(e);
     }
 
     let local_udp = Arc::new(local_udp);
@@ -52,12 +54,14 @@ pub async fn setup_new_stream(
         forward_to_local_udp(stream_id, local_udp, rx).await;
         info!("sid={} end forward to local", &stream_id);
     });
+
+    Ok(())
 }
 
 pub async fn process_local_udp(
     // mut stream: ReadHalf<TcpStream>,
     stream: Arc<UdpSocket>,
-    mut tunnel: UnboundedSender<ControlPacket>,
+    mut tunnel: UnboundedSender<ControlPacketV2>,
     stream_id: StreamId,
 ) {
     let mut buf = [0; 4 * 1024];
@@ -84,7 +88,7 @@ pub async fn process_local_udp(
             data.len(),
         );
 
-        let packet = ControlPacket::UdpData(stream_id, data.clone());
+        let packet = ControlPacketV2::Data(stream_id, data.clone());
         if let Err(e) = tunnel.send(packet).await {
             error!("sid={} failed to tunnel packet from local tcp to tunnel: {:?}", &stream_id, e);
             return;
