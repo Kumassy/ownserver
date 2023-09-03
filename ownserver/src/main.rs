@@ -1,58 +1,80 @@
-use std::sync::Arc;
+use std::{sync::Arc, ops::RangeInclusive};
 use anyhow::Result;
 use log::*;
-use ownserver_lib::{Payload, Endpoint, EndpointClaims, EndpointClaim, Protocol};
+use ownserver_lib::{EndpointClaim, Protocol};
 use tokio_util::sync::CancellationToken;
-use structopt::StructOpt;
+use clap::Parser;
 
 use ownserver::{proxy_client::run, api, Store};
 
-#[derive(StructOpt, Debug)]
-#[structopt(name = "ownserver")]
-struct Opt {
-    #[structopt(long, default_value = "3000", help = "Port of your local game server listens e.g.) 25565 for Minecraft")]
-    local_port: u16,
-    #[structopt(long, default_value = "tcp", help = "tcp or udp")]
-    payload: String,
-    #[structopt(long, help = "Advanced settings. You can inspect client's internal state at localhost:<api_port>.")]
-    api_port: Option<u16>,
+#[derive(Parser, Debug)]
+#[command(name = "ownserver")]
+#[command(author, version, about, long_about = None)] 
+struct Cli {
+    #[arg(long, required = true, help = "Port and protocol of your local game server e.g.) `25565/tcp` for Minecraft", value_parser = parse_endpoint)]
+    endpoint: Vec<EndpointClaim>,
 
-    #[structopt(long, default_value = "5000", help = "Advanced settings")]
+    #[arg(long, help = "Advanced settings. You can inspect client's internal state at localhost:<api_port>.")]
+    api_port: Option<u16>,
+    #[arg(long, default_value_t = 5000, help = "Advanced settings")]
     control_port: u16,
-    #[structopt(long, default_value = "https://auth.ownserver.kumassy.com/v1/request_token", help = "Advanced settings")]
+    #[arg(long, default_value = "https://auth.ownserver.kumassy.com/v1/request_token", help = "Advanced settings")]
     token_server: String,
+}
+
+const PORT_RANGE: RangeInclusive<usize> = 1..=65535;
+
+fn parse_endpoint(s: &str) -> Result<EndpointClaim, String> {
+    let mut parts = s.split('/');
+
+    let port: usize = parts
+        .next()
+        .ok_or(format!("`{s}` isn't a valid endpoint"))?
+        .parse()
+        .map_err(|_| format!("`{s}` isn't a valid endpoint"))?;
+
+    if !PORT_RANGE.contains(&port) {
+        return Err(format!(
+            "port not in range {}-{}",
+            PORT_RANGE.start(),
+            PORT_RANGE.end()
+        ));
+    } 
+    let port = port as u16;
+
+    let protocol = match parts.next() {
+        Some("tcp") => Protocol::TCP,
+        Some("udp") => Protocol::UDP,
+        _ => return Err(format!("`{s}` isn't a valid protocol")),
+    };
+
+    Ok(EndpointClaim {
+        protocol,
+        local_port: port,
+        remote_port: 0,
+    })
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     pretty_env_logger::init();
-    let opt = Opt::from_args();
-    debug!("{:?}", opt);
 
-    let protocol = match opt.payload.as_str() {
-        "udp" => Protocol::UDP,
-        _ => Protocol::TCP,
-    };
-    debug!("{:?}", protocol);
+    let cli = Cli::parse();
+    debug!("{:?}", cli);
 
     let store: Arc<Store> = Default::default();
     let cancellation_token = CancellationToken::new();
 
-    let endpoint_claims = vec![EndpointClaim {
-        protocol,
-        local_port: opt.local_port,
-        remote_port: 0,
-    }];
-        
+
     let store_ = store.clone();
     let (client_info, mut set) =
-        run(store_, opt.control_port, &opt.token_server, cancellation_token, endpoint_claims).await?;
+        run(store_, cli.control_port, &cli.token_server, cancellation_token, cli.endpoint).await?;
     info!("client is running under configuration: {:?}", client_info);
 
-    if let Some(api_port) = opt.api_port {
+    if let Some(api_port) = cli.api_port {
         info!("client side api is available at localhost:{}", api_port);
         set.spawn(async move {
-            api::spawn_api(store, api_port, opt.local_port, client_info).await;
+            api::spawn_api(store, api_port).await;
             Ok(())
         });
     }
