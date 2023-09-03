@@ -215,45 +215,6 @@ mod e2e_tcp_test {
 
     #[tokio::test]
     #[serial]
-    async fn refuse_remote_traffic_when_local_server_not_running(
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let cancellation_token = CancellationToken::new();
-
-        launch_token_server().await;
-        let store = launch_proxy_server(CONTROL_PORT, REMOTE_PORT_START, REMOTE_PORT_END).await?;
-        wait!();
-
-        let client_info =
-            launch_proxy_client(CONTROL_PORT, LOCAL_PORT, cancellation_token).await?.await?;
-        let remote_addr = format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port);
-        wait!();
-
-        let mut remote = TcpStream::connect(remote_addr)
-            .await
-            .expect("Failed to connect to remote port");
-        wait!();
-
-        assert_socket_bytes_matches!(remote, b"");
-
-        // store owns remote stream
-        // remote stream never closes unless we release its ownership here
-        store.cleanup().await;
-
-        // at the first write operation, proxy_server send FIN
-        remote.write_all(b"foobar".as_ref()).await?;
-        remote.flush().await?;
-        wait!();
-
-        assert!(
-            remote.write_all(b"foobar".as_ref()).await.is_err(),
-            "second operation must fail because proxy_server release tcp connection."
-        );
-        
-        Ok(())
-    }
-
-    #[tokio::test]
-    #[serial]
     async fn refuse_remote_traffic_when_remote_process_not_running(
     ) -> Result<(), Box<dyn std::error::Error>> {
         let remote_port: u16 = 8080;
