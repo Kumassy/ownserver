@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use tokio_util::codec::{Encoder, Decoder};
 use uuid::Uuid;
 
-pub const CLIENT_HELLO_VERSION: u16 = 1;
+pub const CLIENT_HELLO_VERSION: u16 = 2;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[serde(transparent)]
