@@ -5,9 +5,7 @@ use futures::{stream::SplitSink, StreamExt, SinkExt};
 use ownserver_lib::{ClientId, Endpoints, ControlPacketV2Codec, ControlPacketV2};
 use tokio_util::{sync::CancellationToken, codec::{Encoder, Decoder}};
 use tracing::Instrument;
-use warp::{
-    ws::{Message, WebSocket},
-};
+use warp::ws::{Message, WebSocket};
 
 use crate::{Store, remote::stream::StreamMessage, ClientStreamError};
 

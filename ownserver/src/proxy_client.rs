@@ -17,7 +17,7 @@ use url::Url;
 
 use crate::error::Error;
 use crate::{local, Store};
-use crate::{StreamMessage};
+use crate::StreamMessage;
 use ownserver_lib::{
     ClientId, CLIENT_HELLO_VERSION, ControlPacketV2, ControlPacketV2Codec, ClientHelloV2, EndpointClaims, Endpoints, ServerHelloV2, Protocol,
 };
@@ -449,8 +449,7 @@ mod client_verify_server_hello_test {
 
         let server_hello = verify_server_hello(&mut rx)
             .await
-            .err()
-            .expect("server hello is unexpectedly correct");
+            .expect_err("server hello is unexpectedly correct");
         assert!(matches!(server_hello, Error::NoResponseFromServer));
 
         Ok(())
@@ -466,8 +465,7 @@ mod client_verify_server_hello_test {
 
         let server_hello = verify_server_hello(&mut rx)
             .await
-            .err()
-            .expect("server hello is unexpectedly correct");
+            .expect_err("server hello is unexpectedly correct");
         assert!(matches!(server_hello, Error::ServerReplyInvalid));
 
         Ok(())
@@ -481,8 +479,7 @@ mod client_verify_server_hello_test {
 
         let server_hello = verify_server_hello(&mut rx)
             .await
-            .err()
-            .expect("server hello is unexpectedly correct");
+            .expect_err("server hello is unexpectedly correct");
         assert!(matches!(server_hello, Error::WebSocketError(_)));
 
         Ok(())

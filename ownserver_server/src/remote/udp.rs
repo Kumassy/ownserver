@@ -1,7 +1,7 @@
 use std::{io::{self, ErrorKind}, net::SocketAddr};
 use metrics::increment_counter;
 use ownserver_lib::{ControlPacketV2, EndpointId};
-use tokio::net::{ToSocketAddrs, UdpSocket};
+use tokio::net::UdpSocket;
 use tracing::Instrument;
 use tokio_util::sync::CancellationToken;
 use std::sync::Arc;

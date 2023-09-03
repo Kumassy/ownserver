@@ -98,7 +98,7 @@ impl PortAllocator {
             }
         }
 
-        let endpoints = client_claims.into_iter().zip(ports.into_iter()).map(|(claim, port)| {
+        let endpoints = client_claims.into_iter().zip(ports).map(|(claim, port)| {
             Endpoint {
                 id: EndpointId::new(),
                 protocol: claim.protocol,

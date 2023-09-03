@@ -13,7 +13,7 @@ use ownserver_server::Config;
 use ownserver_auth::make_jwt;
 use chrono::Duration as CDuration;
 use tokio::net::UdpSocket;
-use tokio_util::{codec::{Encoder, Decoder}};
+use tokio_util::codec::{Encoder, Decoder};
 use bytes::BytesMut;
 
 #[cfg(test)]

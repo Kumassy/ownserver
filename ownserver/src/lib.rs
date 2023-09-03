@@ -1,7 +1,7 @@
 use dashmap::DashMap;
 use dashmap::mapref::one::{Ref, RefMut};
 use futures::channel::mpsc::UnboundedSender;
-use ownserver_lib::{StreamId, EndpointId, Endpoint, ClientId, Endpoints};
+use ownserver_lib::{StreamId, EndpointId, Endpoint, Endpoints};
 use tokio::net::ToSocketAddrs;
 
 #[derive(Debug, Clone)]

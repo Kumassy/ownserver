@@ -1,4 +1,4 @@
-use futures::{channel::mpsc::SendError};
+use futures::channel::mpsc::SendError;
 use ownserver_lib::{ClientId, StreamId};
 use thiserror::Error;
 

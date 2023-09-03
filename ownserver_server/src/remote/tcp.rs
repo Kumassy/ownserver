@@ -1,8 +1,8 @@
-use metrics::{increment_counter};
+use metrics::increment_counter;
 use ownserver_lib::{EndpointId, ControlPacketV2};
 use std::io::{self, ErrorKind};
 use std::sync::Arc;
-use tokio::{net::{TcpListener, TcpStream, ToSocketAddrs}, io::{WriteHalf, AsyncReadExt, AsyncWriteExt}};
+use tokio::{net::{TcpListener, TcpStream}, io::{WriteHalf, AsyncReadExt, AsyncWriteExt}};
 use tracing::Instrument;
 use tokio_util::sync::CancellationToken;
 

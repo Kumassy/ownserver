@@ -336,7 +336,7 @@ mod e2e_tcp_test {
 
 
         // reuse remote port
-        let client_info =
+        let _client_info =
             launch_proxy_client(CONTROL_PORT, LOCAL_PORT, cancellation_token.clone()).await?.await?;
         wait!();
 
