@@ -4,7 +4,6 @@ use thiserror::Error;
 
 pub mod client;
 pub use client::Client;
-// pub mod control_server;
 pub mod control_server_v2;
 pub mod remote;
 pub mod proxy_server;

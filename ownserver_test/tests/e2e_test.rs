@@ -1,4 +1,3 @@
-use ownserver_lib::Payload;
 use ownserver_server::Store;
 use serial_test::serial;
 use ownserver::{

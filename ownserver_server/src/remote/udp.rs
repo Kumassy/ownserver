@@ -7,7 +7,7 @@ use tokio_util::sync::CancellationToken;
 use std::sync::Arc;
 
 use crate::{Store, remote::stream::RemoteStream, ClientStreamError};
-pub use ownserver_lib::{ClientId, ControlPacket, StreamId};
+pub use ownserver_lib::{ClientId, StreamId};
 
 use super::stream::StreamMessage;
 

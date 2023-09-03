@@ -10,7 +10,7 @@ use tokio::net::TcpStream;
 
 use crate::{StreamMessage, Store};
 use log::*;
-use ownserver_lib::{ControlPacket, StreamId, EndpointId, ControlPacketV2};
+use ownserver_lib::{StreamId, EndpointId, ControlPacketV2};
 
 /// Establish a new local stream and start processing messages to it
 pub async fn setup_new_stream(

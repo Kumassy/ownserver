@@ -1,7 +1,7 @@
 use std::{net::{SocketAddr}, collections::{HashMap}, ops::Range};
 
 use dashmap::DashMap;
-use ownserver_lib::{StreamId, ClientId, ControlPacket, EndpointClaims, Endpoints, ControlPacketV2, EndpointId, Endpoint};
+use ownserver_lib::{StreamId, ClientId, EndpointClaims, Endpoints, ControlPacketV2, EndpointId, Endpoint};
 use metrics::gauge;
 use rand::Rng;
 use tokio::{sync::{RwLock, Mutex}, net::ToSocketAddrs};

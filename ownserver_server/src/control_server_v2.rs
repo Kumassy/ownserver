@@ -22,7 +22,7 @@ use thiserror::Error;
 
 use crate::{Store, Client};
 use crate::remote;
-use crate::{Config, ProxyServerError};
+use crate::Config;
 
 #[tracing::instrument(skip(config, store))]
 pub fn spawn<A: Into<SocketAddr> + std::fmt::Debug>(
@@ -299,7 +299,7 @@ mod verify_client_handshake_test {
     use super::*;
     use ownserver_auth::make_jwt;
     use chrono::Duration;
-    use ownserver_lib::{Payload, Protocol};
+    use ownserver_lib::Protocol;
 
     static CONFIG: OnceCell<Config> = OnceCell::new();
     static EMPTY_CONFIG: OnceCell<Config> = OnceCell::new();

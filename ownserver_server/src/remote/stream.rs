@@ -1,4 +1,4 @@
-use ownserver_lib::{StreamId, ClientId, ControlPacket, ControlPacketV2};
+use ownserver_lib::{StreamId, ClientId, ControlPacketV2};
 use crate::ClientStreamError;
 
 use super::{tcp::RemoteTcp, udp::RemoteUdp};

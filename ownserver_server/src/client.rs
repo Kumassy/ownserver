@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use bytes::BytesMut;
 use futures::{stream::SplitSink, StreamExt, SinkExt};
-use ownserver_lib::{ClientId, ControlPacket, ControlPacketCodec, Endpoints, ControlPacketV2Codec, ControlPacketV2};
+use ownserver_lib::{ClientId, Endpoints, ControlPacketV2Codec, ControlPacketV2};
 use tokio_util::{sync::CancellationToken, codec::{Encoder, Decoder}};
 use tracing::Instrument;
 use warp::{

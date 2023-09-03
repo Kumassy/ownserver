@@ -7,7 +7,7 @@ use tracing::Instrument;
 use tokio_util::sync::CancellationToken;
 
 use crate::{ClientStreamError, Store, remote::stream::RemoteStream};
-pub use ownserver_lib::{ClientId, ControlPacket, StreamId};
+pub use ownserver_lib::{ClientId, StreamId};
 
 use super::stream::StreamMessage;
 

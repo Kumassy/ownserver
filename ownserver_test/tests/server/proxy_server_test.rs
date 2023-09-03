@@ -1,4 +1,3 @@
-use ownserver_lib::Payload;
 use ownserver_server::{proxy_server::run, Store};
 use serial_test::serial;
 use futures::{SinkExt, StreamExt};
