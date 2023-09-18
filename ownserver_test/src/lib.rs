@@ -7,7 +7,7 @@ use ownserver_server::{
     Config,
     Store,
 };
-use ownserver_lib::{EndpointClaim, Protocol};
+use ownserver_lib::{EndpointClaim, EndpointClaims, Protocol};
 use ownserver::{
     proxy_client::{self, ClientInfo},
     Store as ClientStore,
@@ -135,20 +135,23 @@ pub async fn launch_proxy_server(
 
 
 pub mod tcp {
+
     use super::*;
-    
-    pub async fn launch_proxy_client(
-        control_port: u16,
-        local_port: u16,
-    ) -> Result<ProxyClient, Box<dyn std::error::Error>> {
-        let client_store: Arc<ClientStore> = Default::default();
-        let cancellation_token = CancellationToken::new();
-    
-        let endpoint_claims = vec![EndpointClaim {
+
+    pub fn get_endpoint_claims_single(local_port: u16) -> EndpointClaims {
+        vec![EndpointClaim {
             protocol: Protocol::TCP,
             local_port,
             remote_port: 0,
-        }];
+        }]
+    }
+    
+    pub async fn launch_proxy_client(
+        control_port: u16,
+        endpoint_claims: EndpointClaims,
+    ) -> Result<ProxyClient, Box<dyn std::error::Error>> {
+        let client_store: Arc<ClientStore> = Default::default();
+        let cancellation_token = CancellationToken::new();
     
         let (client_info, mut set) =
                 proxy_client::run(client_store, control_port, "http://127.0.0.1:8888/v0/request_token", cancellation_token.clone(), endpoint_claims)
@@ -204,7 +207,7 @@ pub mod tcp {
     }
 
 
-    pub async fn launch_all<T>(test_func: impl FnOnce(TokenServer, ProxyServer, LocalServer, ProxyClient) -> T)
+    pub async fn with_proxy<T>(endpoint_claims: EndpointClaims, test_func: impl FnOnce(TokenServer, ProxyServer, ProxyClient) -> T)
         where
         T: Future<Output = Result<(), Box<dyn std::error::Error>>> + Send,
     {
@@ -212,30 +215,42 @@ pub mod tcp {
         wait!();
 
         let proxy_server = launch_proxy_server(CONTROL_PORT, REMOTE_PORT_START, REMOTE_PORT_END).await.expect("failed to launch proxy server");
-        let local_server = launch_local_server(LOCAL_PORT).await;
-
         wait!();
-        let proxy_client = launch_proxy_client(CONTROL_PORT, LOCAL_PORT).await.expect("failed to launch proxy client");
 
-        test_func(token_server, proxy_server, local_server, proxy_client).await.expect("failed to call test_func");
+        let proxy_client = launch_proxy_client(CONTROL_PORT, endpoint_claims).await.expect("failed to launch proxy client");
+
+        test_func(token_server, proxy_server, proxy_client).await.expect("failed to call test_func");
+    }
+
+    pub async fn with_local_server<T>(local_port: u16, test_func: impl FnOnce(LocalServer) -> T)
+        where
+        T: Future<Output = Result<(), Box<dyn std::error::Error>>> + Send,
+    {
+        let local_server = launch_local_server(local_port).await;
+        wait!();
+
+        test_func(local_server).await.expect("failed to call test_func");
     }
 }
 
 pub mod udp {
     use super::*;
 
+    pub fn get_endpoint_claims_single(local_port: u16) -> EndpointClaims {
+        vec![EndpointClaim {
+            protocol: Protocol::UDP,
+            local_port,
+            remote_port: 0,
+        }]
+    }
+
     pub async fn launch_proxy_client(
         control_port: u16,
-        local_port: u16,
+        endpoint_claims: EndpointClaims,
     ) -> Result<ProxyClient, Box<dyn std::error::Error>> {
         let client_store: Arc<ClientStore> = Default::default();
         let cancellation_token = CancellationToken::new();
     
-        let endpoint_claims = vec![EndpointClaim {
-            protocol: Protocol::UDP,
-            local_port,
-            remote_port: 0,
-        }];
         let (client_info, mut set) =
             proxy_client::run(client_store, control_port, "http://127.0.0.1:8888/v0/request_token", cancellation_token.clone(), endpoint_claims)
                 .await
@@ -286,7 +301,7 @@ pub mod udp {
     }
 
 
-    pub async fn launch_all<T>(test_func: impl FnOnce(TokenServer, ProxyServer, LocalServer, ProxyClient) -> T)
+    pub async fn with_proxy<T>(endpoint_claims: EndpointClaims, test_func: impl FnOnce(TokenServer, ProxyServer, ProxyClient) -> T)
         where
         T: Future<Output = Result<(), Box<dyn std::error::Error>>> + Send,
     {
@@ -294,12 +309,21 @@ pub mod udp {
         wait!();
 
         let proxy_server = launch_proxy_server(CONTROL_PORT, REMOTE_PORT_START, REMOTE_PORT_END).await.expect("failed to launch proxy server");
-        let local_server = launch_local_server(LOCAL_PORT).await;
-
         wait!();
-        let proxy_client = launch_proxy_client(CONTROL_PORT, LOCAL_PORT).await.expect("failed to launch proxy client");
 
-        test_func(token_server, proxy_server, local_server, proxy_client).await.expect("failed to call test_func");
+        let proxy_client = launch_proxy_client(CONTROL_PORT, endpoint_claims).await.expect("failed to launch proxy client");
+
+        test_func(token_server, proxy_server, proxy_client).await.expect("failed to call test_func");
+    }
+
+    pub async fn with_local_server<T>(local_port: u16, test_func: impl FnOnce(LocalServer) -> T)
+        where
+        T: Future<Output = Result<(), Box<dyn std::error::Error>>> + Send,
+    {
+        let local_server = launch_local_server(local_port).await;
+        wait!();
+
+        test_func(local_server).await.expect("failed to call test_func");
     }
 }
 
