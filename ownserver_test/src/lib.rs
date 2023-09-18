@@ -206,6 +206,40 @@ pub mod tcp {
         LocalServer {}
     }
 
+    pub async fn launch_local_server_echoback(local_port: u16) -> LocalServer {
+        let local_server = async move {
+            let listener = TcpListener::bind(format!("127.0.0.1:{}", local_port))
+                .await
+                .unwrap();
+    
+            loop {
+                let (mut socket, _) = listener.accept().await.expect("No connections to accept");
+    
+                tokio::spawn(async move {
+                    loop {
+                        let mut buf = [0; 4 * 1024];
+                        let n = socket
+                            .read(&mut buf)
+                            .await
+                            .expect("failed to read data from socket");
+                        if n == 0 {
+                            return;
+                        }
+    
+                        socket
+                            .write_all(&buf[..n])
+                            .await
+                            .expect("failed to write packet data to local tcp socket");
+                    }
+                });
+            }
+        };
+        tokio::spawn(local_server);
+    
+        wait!();
+        LocalServer {}
+    }
+
 
     pub async fn with_proxy<T>(endpoint_claims: EndpointClaims, test_func: impl FnOnce(TokenServer, ProxyServer, ProxyClient) -> T)
         where
@@ -227,6 +261,16 @@ pub mod tcp {
         T: Future<Output = Result<(), Box<dyn std::error::Error>>> + Send,
     {
         let local_server = launch_local_server(local_port).await;
+        wait!();
+
+        test_func(local_server).await.expect("failed to call test_func");
+    }
+
+    pub async fn with_local_server_echoback<T>(local_port: u16, test_func: impl FnOnce(LocalServer) -> T)
+        where
+        T: Future<Output = Result<(), Box<dyn std::error::Error>>> + Send,
+    {
+        let local_server = launch_local_server_echoback(local_port).await;
         wait!();
 
         test_func(local_server).await.expect("failed to call test_func");

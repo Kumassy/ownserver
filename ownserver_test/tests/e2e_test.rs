@@ -8,7 +8,7 @@ use ownserver_lib::{EndpointClaim, Protocol};
 #[cfg(test)]
 mod e2e_tcp_test {
     use super::*;
-    use ownserver_test::{tcp::{with_proxy, with_local_server, get_endpoint_claims_single}, assert_tcp_socket_bytes_matches, LOCAL_PORT};
+    use ownserver_test::{tcp::{with_proxy, with_local_server, get_endpoint_claims_single, with_local_server_echoback}, assert_tcp_socket_bytes_matches, LOCAL_PORT};
 
 
     #[tokio::test]
@@ -274,6 +274,53 @@ mod e2e_tcp_test {
                     assert_tcp_socket_bytes_matches!(&mut remote11, b"hello, e1: fugapiyo");
                     Ok(())
                 }).await;
+                Ok(())
+            }).await;
+            Ok(())
+        }).await;
+
+        Ok(())
+    }
+
+
+    #[tokio::test]
+    #[serial]
+    async fn forward_remote_huge_traffic_to_local(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let endpoint_claims = get_endpoint_claims_single(LOCAL_PORT);
+        with_proxy(endpoint_claims, |_token_server, _proxy_server, proxy_client| async move {
+            let client_info = proxy_client.client_info;
+            let remote_addr = format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port);
+            wait!();
+
+            with_local_server_echoback(LOCAL_PORT, |_local_server| async move {
+                let payload: [u8; 16384] = {
+                    let mut unique_bytes = [0; 16384];
+                    for (i, byte) in unique_bytes.iter_mut().enumerate() {
+                        *byte = i as u8;
+                    }
+                    unique_bytes
+                };
+
+                let mut remote = TcpStream::connect(remote_addr)
+                    .await?;
+                remote.write_all(&payload).await?;
+
+
+                let mut total_bytes_read = 0;
+                let mut received = Vec::new();
+                while total_bytes_read < 16384 {
+                    let mut buf = [0; 1024];
+                    let n = remote.read(&mut buf).await?;
+                    total_bytes_read += n;
+                    received.extend_from_slice(&buf[..n]);
+
+                    if n == 0 {
+                        break
+                    }
+                }
+                assert_eq!(total_bytes_read, 16384);  
+                assert_eq!(received, payload);  
                 Ok(())
             }).await;
             Ok(())
