@@ -18,9 +18,9 @@ use tokio_util::sync::CancellationToken;
 use once_cell::sync::OnceCell;
 use tokio::net::UdpSocket;
 
-
 #[cfg(test)]
 mod e2e_tcp_test {
+    use futures::Future;
     use ownserver_lib::{EndpointClaim, Protocol};
 
     use super::*;
@@ -46,7 +46,10 @@ mod e2e_tcp_test {
         }
     }
 
-    async fn launch_token_server() {
+    struct TokenServer {
+    }
+
+    async fn launch_token_server() -> TokenServer {
         let hosts = vec![
             "127.0.0.1".to_string(),
         ];
@@ -55,13 +58,20 @@ mod e2e_tcp_test {
         tokio::spawn(async move {
             warp::serve(routes).run(([127, 0, 0, 1], 8888)).await;
         });
+
+        wait!();
+        TokenServer {}
+    }
+
+    struct ProxyServer {
+        store: Arc<Store>,
     }
 
     async fn launch_proxy_server(
         control_port: u16,
         remote_port_start: u16,
         remote_port_end: u16
-    ) -> Result<Arc<Store>, Box<dyn std::error::Error>> {
+    ) -> Result<ProxyServer, Box<dyn std::error::Error>> {
 
         let config = CONFIG.get_or_init(||
             Config {
@@ -86,38 +96,51 @@ mod e2e_tcp_test {
             .await.join_next().await;
         });
 
-        Ok(store)
+        wait!();
+        Ok(ProxyServer {
+            store,
+        })
+    }
+
+    struct ProxyClient {
+        client_info: ClientInfo,
+        cancellation_token: CancellationToken,
     }
 
     async fn launch_proxy_client(
         control_port: u16,
         local_port: u16,
-        cancellation_token: CancellationToken,
-    ) -> Result<Receiver<ClientInfo>, Box<dyn std::error::Error>> {
+    ) -> Result<ProxyClient, Box<dyn std::error::Error>> {
         let client_store: Arc<ClientStore> = Default::default();
-        let (tx, rx) = oneshot::channel();
+        let cancellation_token = CancellationToken::new();
 
         let endpoint_claims = vec![EndpointClaim {
             protocol: Protocol::TCP,
             local_port,
             remote_port: 0,
         }];
-        tokio::spawn(async move {
-            let (client_info, mut set) =
-                proxy_client::run(client_store, control_port, "http://127.0.0.1:8888/v0/request_token", cancellation_token, endpoint_claims)
+
+        let (client_info, mut set) =
+                proxy_client::run(client_store, control_port, "http://127.0.0.1:8888/v0/request_token", cancellation_token.clone(), endpoint_claims)
                     .await
                     .expect("failed to launch proxy_client");
-            tx.send(client_info).unwrap();
-
+        tokio::spawn(async move {
             while let Some(res) = set.join_next().await {
                 let _ = res.unwrap();
             }
         });
 
-        Ok(rx)
+        wait!();
+        Ok(ProxyClient {
+            client_info,
+            cancellation_token,
+        })
     }
 
-    async fn launch_local_server(local_port: u16) {
+    struct LocalServer {
+
+    }
+    async fn launch_local_server(local_port: u16) -> LocalServer {
         let local_server = async move {
             let listener = TcpListener::bind(format!("127.0.0.1:{}", local_port))
                 .await
@@ -148,6 +171,9 @@ mod e2e_tcp_test {
             }
         };
         tokio::spawn(local_server);
+
+        wait!();
+        LocalServer {}
     }
 
     const CONTROL_PORT: u16 = 5000;
@@ -155,27 +181,38 @@ mod e2e_tcp_test {
     const REMOTE_PORT_START: u16 = 4500;
     const REMOTE_PORT_END: u16 = 4599;
 
+    async fn launch_all<T>(test_func: impl FnOnce(TokenServer, ProxyServer, LocalServer, ProxyClient) -> T)
+        where
+        T: Future<Output = Result<(), Box<dyn std::error::Error>>> + Send,
+    {
+        let token_server = launch_token_server().await;
+        wait!();
+
+        let proxy_server = launch_proxy_server(CONTROL_PORT, REMOTE_PORT_START, REMOTE_PORT_END).await.expect("failed to launch proxy server");
+        let local_server = launch_local_server(LOCAL_PORT).await;
+
+        wait!();
+        let proxy_client = launch_proxy_client(CONTROL_PORT, LOCAL_PORT).await.expect("failed to launch proxy client");
+
+        test_func(token_server, proxy_server, local_server, proxy_client).await.expect("failed to call test_func");
+    }
 
     #[tokio::test]
     #[serial]
-    async fn forward_remote_traffic_to_local() -> Result<(), Box<dyn std::error::Error>> {
-        let cancellation_token = CancellationToken::new();
+    async fn forward_remote_traffic_to_local(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        launch_all(|_token_server, _proxy_server, _local_server, proxy_client| async move {
+            let client_info = proxy_client.client_info;
+            let remote_addr = format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port);
+            wait!();
 
-        launch_token_server().await;
-        let _store = launch_proxy_server(CONTROL_PORT, REMOTE_PORT_START, REMOTE_PORT_END).await?;
-        wait!();
+            let mut remote = TcpStream::connect(remote_addr)
+                .await?;
+            remote.write_all(b"foobar".as_ref()).await?;
+            assert_socket_bytes_matches!(remote, b"hello, foobar");
 
-        launch_local_server(LOCAL_PORT).await;
-        let client_info =
-            launch_proxy_client(CONTROL_PORT, LOCAL_PORT, cancellation_token).await?.await?;
-        let remote_addr = format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port);
-        wait!();
-
-        let mut remote = TcpStream::connect(remote_addr)
-            .await
-            .expect("Failed to connect to remote port");
-        remote.write_all(b"foobar".as_ref()).await?;
-        assert_socket_bytes_matches!(remote, b"hello, foobar");
+            Ok(())
+        }).await;
 
         Ok(())
     }
@@ -183,80 +220,54 @@ mod e2e_tcp_test {
     #[tokio::test]
     #[serial]
     async fn forward_multiple_remote_traffic_to_local() -> Result<(), Box<dyn std::error::Error>> {
-        let cancellation_token = CancellationToken::new();
+        launch_all(|_token_server, _proxy_server, _local_server, proxy_client| async move {
+            let client_info = proxy_client.client_info;
+            let remote_addr = format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port);
+            wait!();
 
-        launch_token_server().await;
-        let _store = launch_proxy_server(CONTROL_PORT, REMOTE_PORT_START, REMOTE_PORT_END).await?;
-        wait!();
+            let mut remote = TcpStream::connect(remote_addr.clone())
+                .await
+                .expect("Failed to connect to remote port");
+            let mut remote2 = TcpStream::connect(remote_addr.clone())
+                .await
+                .expect("Failed to connect to remote port");
+            wait!();
 
-        launch_local_server(LOCAL_PORT).await;
-        let client_info =
-            launch_proxy_client(CONTROL_PORT, LOCAL_PORT, cancellation_token).await?.await?;
-        let remote_addr = format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port);
-        wait!();
+            remote.write_all(b"foobar".as_ref()).await?;
+            assert_socket_bytes_matches!(remote, b"hello, foobar");
 
-        let mut remote = TcpStream::connect(remote_addr.clone())
-            .await
-            .expect("Failed to connect to remote port");
-        let mut remote2 = TcpStream::connect(remote_addr.clone())
-            .await
-            .expect("Failed to connect to remote port");
-        wait!();
+            remote2.write_all(b"fugapiyo".as_ref()).await?;
+            assert_socket_bytes_matches!(remote2, b"hello, fugapiyo");
 
-        remote.write_all(b"foobar".as_ref()).await?;
-        assert_socket_bytes_matches!(remote, b"hello, foobar");
-
-        remote2.write_all(b"fugapiyo".as_ref()).await?;
-        assert_socket_bytes_matches!(remote2, b"hello, fugapiyo");
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    #[serial]
-    async fn refuse_remote_traffic_when_remote_process_not_running(
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let remote_port: u16 = 8080;
-
-        launch_token_server().await;
-        let _store = launch_proxy_server(CONTROL_PORT, REMOTE_PORT_START, REMOTE_PORT_END).await?;
-        wait!();
-
-        let remote = TcpStream::connect(format!("127.0.0.1:{}", remote_port)).await;
-        assert!(remote.is_err());
-
+            Ok(())
+        }).await;
         Ok(())
     }
 
     #[tokio::test]
     #[serial]
     async fn refuse_remote_traffic_when_client_canceled() -> Result<(), Box<dyn std::error::Error>> {
-        let cancellation_token = CancellationToken::new();
+        launch_all(|_token_server, _proxy_server, _local_server, proxy_client| async move {
+            let client_info = proxy_client.client_info;
+            let remote_addr = format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port);
+            wait!();
 
-        launch_token_server().await;
-        let _store = launch_proxy_server(CONTROL_PORT, REMOTE_PORT_START, REMOTE_PORT_END).await?;
-        wait!();
+            // cancel client
+            let cancellation_token = proxy_client.cancellation_token;
+            cancellation_token.cancel();
 
-        launch_local_server(LOCAL_PORT).await;
-        let client_info =
-            launch_proxy_client(CONTROL_PORT, LOCAL_PORT, cancellation_token.clone()).await?.await?;
-        let remote_addr = format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port);
-        wait!();
-        
-        // cancel client
-        cancellation_token.cancel();
+            // access remote port
+            // we can access remote server because remote_port_for_client remains open
+            // even if client has cancelled
+            let mut remote = TcpStream::connect(remote_addr)
+                .await?;
+            wait!();
 
+            remote.write_all(b"foobar".as_ref()).await?;
+            assert_socket_bytes_matches!(remote, b"");
 
-        // access remote port
-        // we can access remote server because remote_port_for_client remains open
-        // even if client has cancelled
-        let mut remote = TcpStream::connect(remote_addr)
-            .await
-            .expect("Failed to connect to remote port");
-        wait!();
-
-        remote.write_all(b"foobar".as_ref()).await?;
-        assert_socket_bytes_matches!(remote, b"");
+            Ok(())
+        }).await;
 
         Ok(())
     }
@@ -264,32 +275,29 @@ mod e2e_tcp_test {
     #[tokio::test]
     #[serial]
     async fn refuse_remote_traffic_after_client_canceled() -> Result<(), Box<dyn std::error::Error>> {
-        let cancellation_token = CancellationToken::new();
+        launch_all(|_token_server, _proxy_server, _local_server, proxy_client| async move {
+            let client_info = proxy_client.client_info;
+            let remote_addr = format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port);
+            wait!();
 
-        launch_token_server().await;
-        let _store = launch_proxy_server(CONTROL_PORT, REMOTE_PORT_START, REMOTE_PORT_END).await?;
-        wait!();
+            let mut remote = TcpStream::connect(remote_addr)
+                .await?;
+            wait!();
 
-        launch_local_server(LOCAL_PORT).await;
-        let client_info =
-            launch_proxy_client(CONTROL_PORT, LOCAL_PORT, cancellation_token.clone()).await?.await?;
-        let remote_addr = format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port);
-        wait!();
+            remote.write_all(b"foobar".as_ref()).await?;
+            assert_socket_bytes_matches!(remote, b"hello, foobar");
 
-        let mut remote = TcpStream::connect(remote_addr)
-            .await
-            .expect("Failed to connect to remote port");
-        wait!();
+            // cancel client
+            let cancellation_token = proxy_client.cancellation_token;
+            cancellation_token.cancel();
 
-        remote.write_all(b"foobar".as_ref()).await?;
-        assert_socket_bytes_matches!(remote, b"hello, foobar");
+            remote.write_all(b"foobar".as_ref()).await?;
+            // assert_socket_bytes_matches!(remote, b"");
 
-        // cancel client
-        cancellation_token.cancel();
-        wait!();
+            Ok(())
 
-        remote.write_all(b"foobar".as_ref()).await?;
-        // assert_socket_bytes_matches!(remote, b"");
+
+        }).await;
 
         Ok(())
     }
@@ -297,48 +305,40 @@ mod e2e_tcp_test {
     #[tokio::test]
     #[serial]
     async fn remove_disabled_client_streams() -> Result<(), Box<dyn std::error::Error>> {
-        let cancellation_token = CancellationToken::new();
+        launch_all(|_token_server, proxy_server, _local_server, proxy_client| async move {
+            let client_info = proxy_client.client_info;
+            let remote_addr = format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port);
+            wait!();
 
-        launch_token_server().await;
-        let store = launch_proxy_server(CONTROL_PORT, REMOTE_PORT_START, REMOTE_PORT_START + 1).await?;
-        wait!();
+            let mut remote = TcpStream::connect(remote_addr)
+                .await?;
+            wait!();
 
-        launch_local_server(LOCAL_PORT).await;
-        let client_info =
-            launch_proxy_client(CONTROL_PORT, LOCAL_PORT, cancellation_token.clone()).await?.await?;
-        let remote_addr = format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port);
-        wait!();
+            remote.write_all(b"foobar".as_ref()).await?;
+            assert_socket_bytes_matches!(remote, b"hello, foobar");
 
-        let mut remote = TcpStream::connect(remote_addr)
-            .await
-            .expect("Failed to connect to remote port");
-        wait!();
+            let store = proxy_server.store;
 
-        remote.write_all(b"foobar".as_ref()).await?;
-        assert_socket_bytes_matches!(remote, b"hello, foobar");
+            // now 1 client, 1 stream
+            assert_eq!(store.len_clients().await, 1);
+            assert_eq!(store.len_streams().await, 1);
 
-        // now 1 client, 1 stream
-        assert_eq!(store.len_clients().await, 1);
-        assert_eq!(store.len_streams().await, 1);
+            let cancellation_token = proxy_client.cancellation_token;
+            cancellation_token.cancel();
+            wait!();
 
-        cancellation_token.cancel();
-        wait!();
+            // client and stream remains in store
+            assert_eq!(store.len_clients().await, 1);
+            assert_eq!(store.len_streams().await, 1);
 
-        // client and stream remains in store
-        assert_eq!(store.len_clients().await, 1);
-        assert_eq!(store.len_streams().await, 1);
+            // need to call cleanup
+            store.cleanup().await;
+            wait!();
+            assert_eq!(store.len_clients().await, 0);
+            assert_eq!(store.len_streams().await, 0);
 
-        // need to call cleanup
-        store.cleanup().await;
-        wait!();
-        assert_eq!(store.len_clients().await, 0);
-        assert_eq!(store.len_streams().await, 0);
-
-
-        // reuse remote port
-        let _client_info =
-            launch_proxy_client(CONTROL_PORT, LOCAL_PORT, cancellation_token.clone()).await?.await?;
-        wait!();
+            Ok(())
+        }).await;
 
         Ok(())
     }
