@@ -5,6 +5,7 @@ use ownserver_lib::EndpointId;
 use ownserver_lib::Endpoints;
 use rand::prelude::*;
 use rand::Rng;
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::iter::ExactSizeIterator;
 use std::ops::Range;
@@ -57,15 +58,24 @@ impl PortAllocator {
         }
     }
 
+    fn aggregate_claims_by_local_port(&self, claims: EndpointClaims) -> HashMap<u16, EndpointClaims> {
+        let mut map = HashMap::new();
+        for claim in claims.into_iter() {
+            map.entry(claim.local_port).or_insert_with(Vec::new).push(claim);
+        }
+        map
+    }
+
     fn validate_endpoint_claims(&self, claims: &EndpointClaims) -> Result<(), PortAllocatorError> {
-        if claims.len() > self.available_ports.len() {
+        let aggregated_claims = self.aggregate_claims_by_local_port(claims.clone());
+        if aggregated_claims.keys().len() > self.available_ports.len() {
             return Err(PortAllocatorError::AllocationFailed);
         }
 
         // check local port is unique
         let mut local_ports = HashSet::with_capacity(claims.len());
-        for EndpointClaim { local_port, .. } in claims.iter() {
-            if !local_ports.insert(*local_port) {
+        for EndpointClaim { local_port, protocol, .. } in claims.iter() {
+            if !local_ports.insert((*local_port, *protocol)) {
                 return Err(PortAllocatorError::AllocationFailed);
             }
         }
@@ -82,7 +92,8 @@ impl PortAllocator {
     pub fn allocate_ports(&mut self, rng: &mut impl Rng, client_claims: EndpointClaims) -> Result<Endpoints, PortAllocatorError> {
         self.validate_endpoint_claims(&client_claims)?;
 
-        let num_ports = client_claims.len();
+        let aggregated_claims = self.aggregate_claims_by_local_port(client_claims.clone());
+        let num_ports = aggregated_claims.keys().len();
         let mut ports = Vec::with_capacity(num_ports);
         for _ in 0..num_ports {
             if let Some(n) = self.available_ports.iter().choose(rng).copied() {
@@ -98,13 +109,15 @@ impl PortAllocator {
             }
         }
 
-        let endpoints = client_claims.into_iter().zip(ports).map(|(claim, port)| {
-            Endpoint {
-                id: EndpointId::new(),
-                protocol: claim.protocol,
-                local_port: claim.local_port,
-                remote_port: port,
-            }
+        let endpoints = aggregated_claims.into_iter().zip(ports).flat_map(|((_local_port, claims), remote_port)| {
+            claims.into_iter().map(move |claim| {
+                Endpoint {
+                    id: EndpointId::new(),
+                    protocol: claim.protocol,
+                    local_port: claim.local_port,
+                    remote_port,
+                }
+            })
         }).collect();
 
         Ok(endpoints)
@@ -195,6 +208,69 @@ mod release_port_tests {
     }
 }
 
+
+#[cfg(test)]
+mod aggregate_claims_by_local_port {
+    use super::*;
+    use ownserver_lib::Protocol;
+
+    #[test]
+    fn returns_hashmap_when_local_port_is_unique() {
+        let alloc = PortAllocator::new(1000..2000);
+        let claims = vec![
+            EndpointClaim { protocol: Protocol::TCP, local_port: 1000, remote_port: 0 },
+            EndpointClaim { protocol: Protocol::TCP, local_port: 1001, remote_port: 0 },
+            EndpointClaim { protocol: Protocol::UDP, local_port: 1002, remote_port: 0 },
+        ];
+        let mut expected = HashMap::new();
+        expected.insert(1001, vec![EndpointClaim { protocol: Protocol::TCP, local_port: 1001, remote_port: 0 }]);
+        expected.insert(1002, vec![EndpointClaim { protocol: Protocol::UDP, local_port: 1002, remote_port: 0 }]);
+        expected.insert(1000, vec![EndpointClaim { protocol: Protocol::TCP, local_port: 1000, remote_port: 0 }]);
+
+        let aggregated_claims: HashMap<u16, Vec<EndpointClaim>> = alloc.aggregate_claims_by_local_port(claims);
+
+        assert_eq!(aggregated_claims, expected);
+    }
+
+    #[test]
+    fn returns_aggregated_hashmap_when_local_port_is_overlaped() {
+        let alloc = PortAllocator::new(1000..2000);
+        let claims = vec![
+            EndpointClaim { protocol: Protocol::TCP, local_port: 1000, remote_port: 0 },
+            EndpointClaim { protocol: Protocol::UDP, local_port: 1000, remote_port: 0 },
+        ];
+        let mut expected = HashMap::new();
+        expected.insert(1000, vec![
+            EndpointClaim { protocol: Protocol::TCP, local_port: 1000, remote_port: 0 },
+            EndpointClaim { protocol: Protocol::UDP, local_port: 1000, remote_port: 0 },
+        ]);
+
+        let aggregated_claims: HashMap<u16, Vec<EndpointClaim>> = alloc.aggregate_claims_by_local_port(claims);
+
+        assert_eq!(aggregated_claims, expected);
+    }
+
+    #[test]
+    fn keeps_duplicated_claim() {
+        let alloc = PortAllocator::new(1000..2000);
+        let claims = vec![
+            EndpointClaim { protocol: Protocol::TCP, local_port: 1000, remote_port: 0 },
+            EndpointClaim { protocol: Protocol::TCP, local_port: 1000, remote_port: 0 },
+            EndpointClaim { protocol: Protocol::TCP, local_port: 1000, remote_port: 0 },
+        ];
+        let mut expected = HashMap::new();
+        expected.insert(1000, vec![
+            EndpointClaim { protocol: Protocol::TCP, local_port: 1000, remote_port: 0 },
+            EndpointClaim { protocol: Protocol::TCP, local_port: 1000, remote_port: 0 },
+            EndpointClaim { protocol: Protocol::TCP, local_port: 1000, remote_port: 0 },
+        ]);
+
+        let aggregated_claims: HashMap<u16, Vec<EndpointClaim>> = alloc.aggregate_claims_by_local_port(claims);
+
+        assert_eq!(aggregated_claims, expected);
+    }
+}
+
 #[cfg(test)]
 mod validate_endpoint_claims_tests {
     use super::*;
@@ -243,6 +319,17 @@ mod validate_endpoint_claims_tests {
         let result = alloc.validate_endpoint_claims(&claims);
         assert!(result.is_ok());
     }
+
+    #[test]
+    fn return_ok_when_local_port_and_protocol_is_unique() {
+        let alloc = PortAllocator::new(1000..2000);
+        let claims = vec![
+            EndpointClaim { protocol: Protocol::TCP, local_port: 1000, remote_port: 0 },
+            EndpointClaim { protocol: Protocol::UDP, local_port: 1000, remote_port: 0 },
+        ];
+        let result = alloc.validate_endpoint_claims(&claims);
+        assert!(result.is_ok());
+    }
 }
 
 #[cfg(test)]
@@ -253,19 +340,42 @@ mod allocate_ports_test {
     #[test]
     fn allocate_ports() -> Result<(), PortAllocatorError> {
         let mut rng = thread_rng();
-        let mut alloc = PortAllocator::new(1000..2000);
+        let mut alloc = PortAllocator::new(1000..1002);
 
         let claims = vec![
             EndpointClaim { protocol: Protocol::TCP, local_port: 1001, remote_port: 0 },
             EndpointClaim { protocol: Protocol::TCP, local_port: 1002, remote_port: 0 },
         ];
 
-        let endpoints = alloc.allocate_ports(&mut rng, claims)?;
+        let mut endpoints = alloc.allocate_ports(&mut rng, claims)?;
+        endpoints.sort_by_key(|e| e.local_port);
 
         assert_eq!(endpoints.len(), 2);
         assert_eq!(endpoints[0].local_port, 1001);
         assert!((1000..2000).contains(&endpoints[0].remote_port));
         assert_eq!(endpoints[1].local_port, 1002);
+        assert!((1000..2000).contains(&endpoints[1].remote_port));
+
+        Ok(())
+    }
+
+    #[test]
+    fn allocate_ports_for_duplicated_local_port() -> Result<(), PortAllocatorError> {
+        let mut rng = thread_rng();
+        let mut alloc = PortAllocator::new(1000..1001);
+
+        let claims = vec![
+            EndpointClaim { protocol: Protocol::TCP, local_port: 1001, remote_port: 0 },
+            EndpointClaim { protocol: Protocol::UDP, local_port: 1001, remote_port: 0 },
+        ];
+
+        let mut endpoints = alloc.allocate_ports(&mut rng, claims)?;
+        endpoints.sort_by_key(|e| e.local_port);
+
+        assert_eq!(endpoints.len(), 2);
+        assert_eq!(endpoints[0].local_port, 1001);
+        assert!((1000..2000).contains(&endpoints[0].remote_port));
+        assert_eq!(endpoints[1].local_port, 1001);
         assert!((1000..2000).contains(&endpoints[1].remote_port));
 
         Ok(())
@@ -296,6 +406,21 @@ mod allocate_ports_test {
         let claims = vec![
             EndpointClaim { protocol: Protocol::TCP, local_port: 1001, remote_port: 0 },
             EndpointClaim { protocol: Protocol::TCP, local_port: 1002, remote_port: 0 },
+        ];
+
+        let endpoints = alloc.allocate_ports(&mut rng, claims);
+        assert_eq!(endpoints.err().unwrap(), PortAllocatorError::AllocationFailed);
+    }
+
+    #[test]
+    fn return_error_when_no_available_port_duplicated_local_port() {
+        let mut rng = thread_rng();
+        let mut alloc = PortAllocator::new(1000..1001);
+
+        let claims = vec![
+            EndpointClaim { protocol: Protocol::TCP, local_port: 1001, remote_port: 0 },
+            EndpointClaim { protocol: Protocol::TCP, local_port: 1002, remote_port: 0 },
+            EndpointClaim { protocol: Protocol::UDP, local_port: 1002, remote_port: 0 },
         ];
 
         let endpoints = alloc.allocate_ports(&mut rng, claims);
