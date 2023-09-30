@@ -66,21 +66,18 @@ impl PortAllocator {
         map
     }
 
-    fn validate_endpoint_claims(&self, claims: &EndpointClaims) -> Result<(), PortAllocatorError> {
-        let aggregated_claims = self.aggregate_claims_by_local_port(claims.clone());
+    fn validate_endpoint_claims(&self, aggregated_claims: &HashMap<u16, EndpointClaims>) -> Result<(), PortAllocatorError> {
         if aggregated_claims.keys().len() > self.available_ports.len() {
             return Err(PortAllocatorError::AllocationFailed);
         }
 
-        // check local port is unique
-        let mut local_ports = HashSet::with_capacity(claims.len());
-        for EndpointClaim { local_port, protocol, .. } in claims.iter() {
+        let mut local_ports = HashSet::with_capacity(aggregated_claims.len());
+        for EndpointClaim { local_port, protocol, remote_port, .. } in aggregated_claims.values().flatten() {
+            // check local port is unique
             if !local_ports.insert((*local_port, *protocol)) {
                 return Err(PortAllocatorError::AllocationFailed);
             }
-        }
-        // check remote port is always 0
-        for EndpointClaim { remote_port, .. } in claims.iter() {
+            // check remote port is always 0
             if *remote_port != 0 {
                 return Err(PortAllocatorError::AllocationFailed);
             }
@@ -90,9 +87,9 @@ impl PortAllocator {
     }
 
     pub fn allocate_ports(&mut self, rng: &mut impl Rng, client_claims: EndpointClaims) -> Result<Endpoints, PortAllocatorError> {
-        self.validate_endpoint_claims(&client_claims)?;
+        let aggregated_claims = self.aggregate_claims_by_local_port(client_claims);
+        self.validate_endpoint_claims(&aggregated_claims)?;
 
-        let aggregated_claims = self.aggregate_claims_by_local_port(client_claims.clone());
         let num_ports = aggregated_claims.keys().len();
         let mut ports = Vec::with_capacity(num_ports);
         for _ in 0..num_ports {
@@ -283,7 +280,9 @@ mod validate_endpoint_claims_tests {
             EndpointClaim { protocol: Protocol::TCP, local_port: 1000, remote_port: 0 },
             EndpointClaim { protocol: Protocol::TCP, local_port: 1000, remote_port: 0 },
         ];
-        let result = alloc.validate_endpoint_claims(&claims);
+        let aggregated_claims = alloc.aggregate_claims_by_local_port(claims);
+
+        let result = alloc.validate_endpoint_claims(&aggregated_claims);
         assert_eq!(result.err().unwrap(), PortAllocatorError::AllocationFailed);
     }
 
@@ -294,7 +293,9 @@ mod validate_endpoint_claims_tests {
             EndpointClaim { protocol: Protocol::TCP, local_port: 1000, remote_port: 0 },
             EndpointClaim { protocol: Protocol::TCP, local_port: 1001, remote_port: 1 },
         ];
-        let result = alloc.validate_endpoint_claims(&claims);
+        let aggregated_claims = alloc.aggregate_claims_by_local_port(claims);
+
+        let result = alloc.validate_endpoint_claims(&aggregated_claims);
         assert_eq!(result.err().unwrap(), PortAllocatorError::AllocationFailed);
     }
 
@@ -305,7 +306,9 @@ mod validate_endpoint_claims_tests {
             EndpointClaim { protocol: Protocol::TCP, local_port: 1000, remote_port: 0 },
             EndpointClaim { protocol: Protocol::TCP, local_port: 1001, remote_port: 0 },
         ];
-        let result = alloc.validate_endpoint_claims(&claims);
+        let aggregated_claims = alloc.aggregate_claims_by_local_port(claims);
+
+        let result = alloc.validate_endpoint_claims(&aggregated_claims);
         assert_eq!(result.err().unwrap(), PortAllocatorError::AllocationFailed);
     }
 
@@ -316,7 +319,9 @@ mod validate_endpoint_claims_tests {
             EndpointClaim { protocol: Protocol::TCP, local_port: 1000, remote_port: 0 },
             EndpointClaim { protocol: Protocol::TCP, local_port: 1001, remote_port: 0 },
         ];
-        let result = alloc.validate_endpoint_claims(&claims);
+        let aggregated_claims = alloc.aggregate_claims_by_local_port(claims);
+
+        let result = alloc.validate_endpoint_claims(&aggregated_claims);
         assert!(result.is_ok());
     }
 
@@ -327,7 +332,9 @@ mod validate_endpoint_claims_tests {
             EndpointClaim { protocol: Protocol::TCP, local_port: 1000, remote_port: 0 },
             EndpointClaim { protocol: Protocol::UDP, local_port: 1000, remote_port: 0 },
         ];
-        let result = alloc.validate_endpoint_claims(&claims);
+        let aggregated_claims = alloc.aggregate_claims_by_local_port(claims);
+        
+        let result = alloc.validate_endpoint_claims(&aggregated_claims);
         assert!(result.is_ok());
     }
 }
