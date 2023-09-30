@@ -384,6 +384,7 @@ mod allocate_ports_test {
         assert!((1000..2000).contains(&endpoints[0].remote_port));
         assert_eq!(endpoints[1].local_port, 1001);
         assert!((1000..2000).contains(&endpoints[1].remote_port));
+        assert_eq!(endpoints[0].remote_port, endpoints[1].remote_port);
 
         Ok(())
     }
