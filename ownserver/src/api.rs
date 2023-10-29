@@ -3,27 +3,18 @@ use std::sync::Arc;
 use futures::Future;
 use warp::Filter;
 
-use crate::{Store, proxy_client::ClientInfo};
+use crate::Store;
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-struct Endpoint {
-    id: String,
-    local_port: u16,
-    remote_addr: String,
-}
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct Stream {
     id: String,
 }
 
-pub fn spawn_api(store: Arc<Store>, api_port: u16, local_port: u16, client_info: ClientInfo) -> impl Future<Output = ()> {
+pub fn spawn_api(store: Arc<Store>, api_port: u16) -> impl Future<Output = ()> {
+    let store_ = store.clone();
     let endpoints = warp::path("endpoints").map(move || {
-        let endpoint = Endpoint {
-            id: client_info.client_id.to_string(),
-            local_port,
-            remote_addr: client_info.remote_addr.to_string(),
-        };
-        warp::reply::json(&vec![endpoint])
+        let endpoints = store_.get_endpoints();
+        warp::reply::json(&vec![endpoints])
     });
     let streams = warp::path("streams").map(move || {
         let streams = store.list_streams()

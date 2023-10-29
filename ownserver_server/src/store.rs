@@ -1,10 +1,10 @@
-use std::{net::SocketAddr, collections::{HashMap}, ops::Range};
+use std::{net::SocketAddr, collections::HashMap, ops::Range};
 
 use dashmap::DashMap;
-use ownserver_lib::{StreamId, ClientId, ControlPacket};
+use ownserver_lib::{StreamId, ClientId, EndpointClaims, Endpoints, ControlPacketV2, EndpointId, Endpoint};
 use metrics::gauge;
 use rand::Rng;
-use tokio::sync::{RwLock, Mutex};
+use tokio::{sync::{RwLock, Mutex}, net::ToSocketAddrs};
 
 use crate::{remote::stream::{RemoteStream, StreamMessage}, Client, ClientStreamError, port_allocator::{PortAllocator, PortAllocatorError}};
 
@@ -14,7 +14,7 @@ pub struct Store {
     streams: RwLock<HashMap<StreamId, RemoteStream>>,
     clients: RwLock<HashMap<ClientId, Client>>,
     addrs_map: DashMap<SocketAddr, StreamId>,
-    port_map: DashMap<u16, ClientId>,
+    endpoints_map: DashMap<EndpointId, Endpoint>,
     alloc: Mutex<PortAllocator>,
 }
 
@@ -24,12 +24,12 @@ impl Store {
             streams: Default::default(),
             clients: Default::default(),
             addrs_map: Default::default(),
-            port_map: Default::default(),
+            endpoints_map: Default::default(),
             alloc: Mutex::new(PortAllocator::new(range)),
         }
     }
 
-    pub async fn send_to_client(&self, client_id: ClientId, packet: ControlPacket) -> Result<(), ClientStreamError> {
+    pub async fn send_to_client(&self, client_id: ClientId, packet: ControlPacketV2) -> Result<(), ClientStreamError> {
         match self.clients.write().await.get_mut(&client_id) {
             Some(client) => {
                 client.send_to_client(packet).await
@@ -40,7 +40,7 @@ impl Store {
         }
     }
 
-    pub async fn broadcast_to_clients(&self, packet: ControlPacket) {
+    pub async fn broadcast_to_clients(&self, packet: ControlPacketV2) {
         let client_ids = self.clients.read().await.keys().cloned().collect::<Vec<_>>();
         for client_id in client_ids {
             if let Err(e) = self.send_to_client(client_id, packet.clone()).await {
@@ -81,9 +81,7 @@ impl Store {
 
     pub async fn add_client(&self, client: Client) {
         let client_id = client.client_id;
-        let remote_port = client.remote_port();
         self.clients.write().await.insert(client_id, client);
-        self.port_map.insert(remote_port, client_id);
 
         let v = self.len_clients().await as f64;
         gauge!("ownserver_server.store.clients", v);
@@ -99,19 +97,21 @@ impl Store {
     }
 
     pub async fn cleanup(&self) {
-        tracing::info!("Store::cleanup");
+        tracing::debug!("Store::cleanup");
         self.streams.write().await.retain(|_, v| !v.disabled());
 
-        let mut ports_to_remove = Vec::new();
+        let mut eids_to_remove = Vec::new();
         for (_, client ) in self.clients.read().await.iter() {
             if client.disabled() {
-                ports_to_remove.push(client.remote_port())
+                client.endpoints().iter().for_each(|e| {
+                    eids_to_remove.push(e.id)
+                });
             }
         }
         self.clients.write().await.retain(|_, v| !v.disabled());
-        for port in ports_to_remove {
-            if let Err(e) = self.alloc.lock().await.release_port(port) {
-                tracing::warn!(port = %port, "failed to release port {:?}", e);
+        for eid in eids_to_remove {
+            if let Err(e) = self.release_endpoint(eid).await {
+                tracing::warn!(eid = %eid, "failed to release endpoint {:?}", e);
             }
         }
 
@@ -152,4 +152,24 @@ impl Store {
     pub async fn allocate_port(&self, rng: &mut impl Rng) -> Result<u16, PortAllocatorError> {
         self.alloc.lock().await.allocate_port(rng)
     }
+
+    pub async fn allocate_endpoints(&self, rng: &mut impl Rng, client_claims: EndpointClaims) -> Result<Endpoints, PortAllocatorError> {
+        let endpoints = self.alloc.lock().await.allocate_ports(rng, client_claims)?;
+        for endpoint in endpoints.clone().into_iter() {
+            self.endpoints_map.insert(endpoint.id, endpoint);
+        }
+        Ok(endpoints)
+    }
+
+    pub async fn release_endpoint(&self, eid: EndpointId) -> Result<(), PortAllocatorError> {
+        let endpoint = self.endpoints_map.get(&eid).ok_or(PortAllocatorError::PortOutOfRange)?;
+        self.alloc.lock().await.release_port(endpoint.remote_port)
+    }
+
+    pub fn get_remote_addr_by_endpoint_id(&self, eid: EndpointId) -> Option<impl ToSocketAddrs + std::fmt::Debug + Clone> {
+        let endpoint = self.endpoints_map.get(&eid)?;
+
+        Some(format!("0.0.0.0:{}", endpoint.remote_port))
+    }
+
 }

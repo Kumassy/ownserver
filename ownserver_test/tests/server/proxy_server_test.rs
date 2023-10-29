@@ -1,10 +1,7 @@
-use ownserver_lib::Payload;
 use ownserver_server::{proxy_server::run, Store};
 use serial_test::serial;
 use futures::{SinkExt, StreamExt};
 use ownserver::proxy_client::{send_client_hello, verify_server_hello, ClientInfo};
-use ownserver_lib::ControlPacket;
-use ownserver_lib::ControlPacketCodec;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -16,11 +13,13 @@ use ownserver_server::Config;
 use ownserver_auth::make_jwt;
 use chrono::Duration as CDuration;
 use tokio::net::UdpSocket;
-use tokio_util::{codec::{Encoder, Decoder}};
+use tokio_util::codec::{Encoder, Decoder};
 use bytes::BytesMut;
 
 #[cfg(test)]
 mod server_tcp_test {
+    use ownserver_lib::{EndpointClaim, Protocol, ControlPacketV2, ControlPacketV2Codec};
+
     use super::*;
     static CONFIG: OnceCell<Config> = OnceCell::new();
 
@@ -28,7 +27,7 @@ mod server_tcp_test {
         ($expr:expr, $expected:expr) => {
             let payload = $expr.next().await.unwrap()?.into_data();
             let mut bytes = BytesMut::from(&payload[..]);
-            let control_packet = ControlPacketCodec::new().decode(&mut bytes)?.unwrap();
+            let control_packet = ControlPacketV2Codec::new().decode(&mut bytes)?.unwrap();
             assert_eq!(control_packet, $expected);
         };
     }
@@ -94,7 +93,12 @@ mod server_tcp_test {
         let url = Url::parse(&format!("ws://localhost:{}/tunnel", control_port))?;
         let (mut websocket, _) = connect_async(url).await.expect("failed to connect");
 
-        send_client_hello(&mut websocket, token, Payload::Other).await?;
+        let endpoint_claims = vec![EndpointClaim {
+            protocol: Protocol::TCP,
+            local_port: 0,
+            remote_port: 0,
+        }];
+        send_client_hello(&mut websocket, token, endpoint_claims).await?;
         let client_info = verify_server_hello(&mut websocket).await?;
 
         Ok((websocket, store, client_info))
@@ -109,7 +113,7 @@ mod server_tcp_test {
         let (websoket, store, client_info) = launch_proxy_server(CONTROL_PORT).await?;
         let (mut _raw_client_ws_sink, mut raw_client_ws_stream) = websoket.split();
 
-        let mut remote = TcpStream::connect(client_info.remote_addr)
+        let mut remote = TcpStream::connect(format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port))
             .await
             .expect("Failed to connect to remote port");
         remote
@@ -122,11 +126,11 @@ mod server_tcp_test {
 
         assert_control_packet_matches!(
             raw_client_ws_stream,
-            ControlPacket::Init(stream_id)
+            ControlPacketV2::Init(stream_id, client_info.endpoints[0].id)
         );
         assert_control_packet_matches!(
             raw_client_ws_stream,
-            ControlPacket::Data(stream_id, b"some bytes".to_vec())
+            ControlPacketV2::Data(stream_id, b"some bytes".to_vec())
         );
         Ok(())
     }
@@ -137,16 +141,16 @@ mod server_tcp_test {
         let (websoket, store, client_info) = launch_proxy_server(CONTROL_PORT).await?;
         let (mut raw_client_ws_sink, mut _raw_client_ws_stream) = websoket.split();
 
-        let mut remote = TcpStream::connect(client_info.remote_addr)
+        let mut remote = TcpStream::connect(format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port))
             .await
             .expect("Failed to connect to remote port");
 
         wait!();
         let stream_id = store.get_stream_ids().await[0];
 
-        let mut codec = ControlPacketCodec::new();
+        let mut codec = ControlPacketV2Codec::new();
         let mut bytes = BytesMut::new();
-        codec.encode(ControlPacket::Data(stream_id, b"foobarbaz".to_vec()), &mut bytes)?;
+        codec.encode(ControlPacketV2::Data(stream_id, b"foobarbaz".to_vec()), &mut bytes)?;
 
         raw_client_ws_sink
             .send(Message::binary(bytes.to_vec()))
@@ -162,13 +166,13 @@ mod server_tcp_test {
         let (websoket, store, client_info) = launch_proxy_server(CONTROL_PORT).await?;
         let (mut _raw_client_ws_sink, mut raw_client_ws_stream) = websoket.split();
 
-        let mut remote1 = TcpStream::connect(client_info.remote_addr.clone())
+        let mut remote1 = TcpStream::connect(format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port))
             .await
             .expect("Failed to connect to remote port");
         wait!();
         let stream_id1 = store.get_stream_ids().await[0];
 
-        let mut remote2 = TcpStream::connect(client_info.remote_addr.clone())
+        let mut remote2 = TcpStream::connect(format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port))
             .await
             .expect("Failed to connect to remote port");
         wait!();
@@ -191,19 +195,19 @@ mod server_tcp_test {
 
         assert_control_packet_matches!(
             raw_client_ws_stream,
-            ControlPacket::Init(stream_id1)
+            ControlPacketV2::Init(stream_id1, client_info.endpoints[0].id)
         );
         assert_control_packet_matches!(
             raw_client_ws_stream,
-            ControlPacket::Init(stream_id2)
+            ControlPacketV2::Init(stream_id2, client_info.endpoints[0].id)
         );
         assert_control_packet_matches!(
             raw_client_ws_stream,
-            ControlPacket::Data(stream_id1, b"some bytes 1".to_vec())
+            ControlPacketV2::Data(stream_id1, b"some bytes 1".to_vec())
         );
         assert_control_packet_matches!(
             raw_client_ws_stream,
-            ControlPacket::Data(stream_id2, b"some bytes 2".to_vec())
+            ControlPacketV2::Data(stream_id2, b"some bytes 2".to_vec())
         );
         Ok(())
     }
@@ -214,13 +218,13 @@ mod server_tcp_test {
         let (websoket, store, client_info) = launch_proxy_server(CONTROL_PORT).await?;
         let (mut raw_client_ws_sink, mut _raw_client_ws_stream) = websoket.split();
 
-        let mut remote1 = TcpStream::connect(client_info.remote_addr.clone())
+        let mut remote1 = TcpStream::connect(format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port))
             .await
             .expect("Failed to connect to remote port");
         wait!();
         let stream_id1 = store.get_stream_ids().await[0];
 
-        let mut remote2 = TcpStream::connect(client_info.remote_addr.clone())
+        let mut remote2 = TcpStream::connect(format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port))
             .await
             .expect("Failed to connect to remote port");
         wait!();
@@ -231,16 +235,16 @@ mod server_tcp_test {
 
         assert_ne!(stream_id1, stream_id2);
 
-        let mut codec = ControlPacketCodec::new();
+        let mut codec = ControlPacketV2Codec::new();
         let mut bytes = BytesMut::new();
-        codec.encode(ControlPacket::Data(stream_id1, b"some message 1".to_vec()), &mut bytes)?;
+        codec.encode(ControlPacketV2::Data(stream_id1, b"some message 1".to_vec()), &mut bytes)?;
         raw_client_ws_sink
             .send(Message::binary(bytes.to_vec()))
             .await?;
 
-        let mut codec = ControlPacketCodec::new();
+        let mut codec = ControlPacketV2Codec::new();
         let mut bytes = BytesMut::new();
-        codec.encode(ControlPacket::Data(stream_id2, b"some message 2".to_vec()), &mut bytes)?;
+        codec.encode(ControlPacketV2::Data(stream_id2, b"some message 2".to_vec()), &mut bytes)?;
         raw_client_ws_sink
             .send(Message::binary(bytes.to_vec()))
             .await?;
@@ -256,6 +260,8 @@ mod server_tcp_test {
 #[cfg(test)]
 mod server_udp_test {
 
+    use ownserver_lib::{EndpointClaim, Protocol, ControlPacketV2Codec, ControlPacketV2};
+
     use super::*;
     static CONFIG: OnceCell<Config> = OnceCell::new();
 
@@ -263,7 +269,7 @@ mod server_udp_test {
         ($expr:expr, $expected:expr) => {
             let payload = $expr.next().await.unwrap()?.into_data();
             let mut bytes = BytesMut::from(&payload[..]);
-            let control_packet = ControlPacketCodec::new().decode(&mut bytes)?.unwrap();
+            let control_packet = ControlPacketV2Codec::new().decode(&mut bytes)?.unwrap();
             assert_eq!(control_packet, $expected);
         };
     }
@@ -327,7 +333,12 @@ mod server_udp_test {
         let url = Url::parse(&format!("ws://localhost:{}/tunnel", control_port))?;
         let (mut websocket, _) = connect_async(url).await.expect("failed to connect");
 
-        send_client_hello(&mut websocket, token, Payload::UDP).await?;
+        let endpoint_claims = vec![EndpointClaim {
+            protocol: Protocol::UDP,
+            local_port: 0,
+            remote_port: 0,
+        }];
+        send_client_hello(&mut websocket, token, endpoint_claims).await?;
         let client_info = verify_server_hello(&mut websocket).await?;
 
         Ok((websocket, store, client_info))
@@ -342,7 +353,7 @@ mod server_udp_test {
         let (mut _raw_client_ws_sink, mut raw_client_ws_stream) = websoket.split();
 
         let remote = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-        remote.connect(client_info.remote_addr).await.unwrap();
+        remote.connect(format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port)).await.unwrap();
         wait!();
 
         remote
@@ -355,7 +366,11 @@ mod server_udp_test {
 
         assert_control_packet_matches!(
             raw_client_ws_stream,
-            ControlPacket::UdpData(stream_id, b"some bytes".to_vec())
+            ControlPacketV2::Init(stream_id, client_info.endpoints[0].id)
+        );
+        assert_control_packet_matches!(
+            raw_client_ws_stream,
+            ControlPacketV2::Data(stream_id, b"some bytes".to_vec())
         );
         Ok(())
     }
@@ -367,7 +382,7 @@ mod server_udp_test {
         let (mut raw_client_ws_sink, mut _raw_client_ws_stream) = websoket.split();
 
         let remote = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-            remote.connect(client_info.remote_addr).await.unwrap();
+            remote.connect(format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port)).await.unwrap();
 
         // send something for remote stream to be registerd to store
         remote
@@ -378,9 +393,9 @@ mod server_udp_test {
         wait!();
         let stream_id = store.get_stream_ids().await[0];
 
-        let mut codec = ControlPacketCodec::new();
+        let mut codec = ControlPacketV2Codec::new();
         let mut bytes = BytesMut::new();
-        codec.encode(ControlPacket::UdpData(stream_id, b"foobarbaz".to_vec()), &mut bytes)?;
+        codec.encode(ControlPacketV2::Data(stream_id, b"foobarbaz".to_vec()), &mut bytes)?;
         raw_client_ws_sink
             .send(Message::binary(bytes.to_vec()))
             .await?;
@@ -396,7 +411,7 @@ mod server_udp_test {
         let (mut _raw_client_ws_sink, mut raw_client_ws_stream) = websoket.split();
 
         let remote1 = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-        remote1.connect(client_info.remote_addr.clone()).await.unwrap();
+        remote1.connect(format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port)).await.unwrap();
         // send something for remote stream to be registerd to store
         remote1
             .send(b"some bytes 1")
@@ -406,7 +421,7 @@ mod server_udp_test {
         let stream_id1 = store.get_stream_ids().await[0];
 
         let remote2 = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-        remote2.connect(client_info.remote_addr.clone()).await.unwrap();
+        remote2.connect(format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port)).await.unwrap();
         // send something for remote stream to be registerd to store
         remote2
             .send(b"some bytes 2")
@@ -421,11 +436,19 @@ mod server_udp_test {
 
         assert_control_packet_matches!(
             raw_client_ws_stream,
-            ControlPacket::UdpData(stream_id1, b"some bytes 1".to_vec())
+            ControlPacketV2::Init(stream_id1, client_info.endpoints[0].id)
         );
         assert_control_packet_matches!(
             raw_client_ws_stream,
-            ControlPacket::UdpData(stream_id2, b"some bytes 2".to_vec())
+            ControlPacketV2::Data(stream_id1, b"some bytes 1".to_vec())
+        );
+        assert_control_packet_matches!(
+            raw_client_ws_stream,
+            ControlPacketV2::Init(stream_id2, client_info.endpoints[0].id)
+        );
+        assert_control_packet_matches!(
+            raw_client_ws_stream,
+            ControlPacketV2::Data(stream_id2, b"some bytes 2".to_vec())
         );
         Ok(())
     }
@@ -437,7 +460,7 @@ mod server_udp_test {
         let (mut raw_client_ws_sink, mut _raw_client_ws_stream) = websoket.split();
 
         let remote1 = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-        remote1.connect(client_info.remote_addr.clone()).await.unwrap();
+        remote1.connect(format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port)).await.unwrap();
         // send something for remote stream to be registerd to store
         remote1
             .send(b"some bytes 1")
@@ -447,7 +470,7 @@ mod server_udp_test {
         let stream_id1 = store.get_stream_ids().await[0];
 
         let remote2 = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-        remote2.connect(client_info.remote_addr.clone()).await.unwrap();
+        remote2.connect(format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port)).await.unwrap();
         // send something for remote stream to be registerd to store
         remote2
             .send(b"some bytes 2")
@@ -459,16 +482,16 @@ mod server_udp_test {
             .find(|sid| sid != &stream_id1)
             .unwrap();
 
-        let mut codec = ControlPacketCodec::new();
+        let mut codec = ControlPacketV2Codec::new();
         let mut bytes = BytesMut::new();
-        codec.encode(ControlPacket::UdpData(stream_id1, b"some message 1".to_vec()), &mut bytes)?;
+        codec.encode(ControlPacketV2::Data(stream_id1, b"some message 1".to_vec()), &mut bytes)?;
         raw_client_ws_sink
             .send(Message::binary(bytes.to_vec()))
             .await?;
 
-        let mut codec = ControlPacketCodec::new();
+        let mut codec = ControlPacketV2Codec::new();
         let mut bytes = BytesMut::new();
-        codec.encode(ControlPacket::UdpData(stream_id2, b"some message 2".to_vec()), &mut bytes)?;
+        codec.encode(ControlPacketV2::Data(stream_id2, b"some message 2".to_vec()), &mut bytes)?;
         raw_client_ws_sink
             .send(Message::binary(bytes.to_vec()))
             .await?;

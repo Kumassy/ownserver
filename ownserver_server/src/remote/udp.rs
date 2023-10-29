@@ -1,31 +1,33 @@
-use std::{io, net::SocketAddr};
+use std::{io::{self, ErrorKind}, net::SocketAddr};
 use metrics::increment_counter;
-use tokio::net::{ToSocketAddrs, UdpSocket};
+use ownserver_lib::{ControlPacketV2, EndpointId};
+use tokio::net::UdpSocket;
 use tracing::Instrument;
 use tokio_util::sync::CancellationToken;
 use std::sync::Arc;
 
 use crate::{Store, remote::stream::RemoteStream, ClientStreamError};
-pub use ownserver_lib::{ClientId, ControlPacket, StreamId};
+pub use ownserver_lib::{ClientId, StreamId};
 
 use super::stream::StreamMessage;
 
 #[tracing::instrument(skip(store, cancellation_token))]
 pub async fn spawn_remote(
     store: Arc<Store>,
-    listen_addr: impl ToSocketAddrs + std::fmt::Debug + Clone,
     client_id: ClientId,
+    endpoint_id: EndpointId,
     cancellation_token: CancellationToken,
 ) -> io::Result<()> {
+    let listen_addr = store.get_remote_addr_by_endpoint_id(endpoint_id).ok_or(io::Error::from(ErrorKind::Other))?;
     let socket = UdpSocket::bind(listen_addr.clone()).await?;
-    tracing::info!(cid = %client_id, "remote process listening on {:?}", listen_addr);
+    tracing::info!(cid = %client_id, eid = %endpoint_id, "remote process listening on {:?}", listen_addr);
     let socket = Arc::new(socket);
 
     let ct = cancellation_token.clone();
 
     tokio::spawn(
         async move {
-            process_udp_stream(ct, store, client_id, socket).await;
+            process_udp_stream(ct, store, client_id, endpoint_id, socket).await;
         }
         .instrument(tracing::info_span!("process_udp_stream")),
     );
@@ -40,6 +42,7 @@ async fn process_udp_stream(
     ct: CancellationToken,
     store: Arc<Store>,
     client_id: ClientId,
+    endpoint_id: EndpointId,
     udp_socket: Arc<UdpSocket>,
 )
 {
@@ -66,10 +69,15 @@ async fn process_udp_stream(
             Some(stream_id) => stream_id,
             None => {
                 tracing::info!(cid = %client_id, "remote ip is {}", peer_addr);
-                let remote = RemoteUdp::new(store.clone(), udp_socket.clone(), peer_addr, client_id);
+                let remote = RemoteUdp::new(store.clone(), udp_socket.clone(), peer_addr, client_id, endpoint_id);
                 let stream_id = remote.stream_id;
-                tracing::info!(cid = %client_id, sid = %remote.stream_id, "add new remote stream");
-                store.add_remote(RemoteStream::RemoteUdp(remote), peer_addr).await;
+                if remote.send_init_to_client().await.is_ok() {
+                    tracing::info!(cid = %client_id, sid = %remote.stream_id, "add new remote stream");
+                    store.add_remote(RemoteStream::RemoteUdp(remote), peer_addr).await;
+                } else {
+                    tracing::warn!(cid = %client_id, sid = %remote.stream_id, "failed to send init packet to client");
+                    return;
+                }
                 stream_id
             }
         };
@@ -80,7 +88,7 @@ async fn process_udp_stream(
         if n == 0 {
             tracing::debug!(cid = %client_id, sid = %stream_id, "remote client streams end");
             let _ = store
-                .send_to_client(client_id, ControlPacket::End(stream_id))
+                .send_to_client(client_id, ControlPacketV2::End(stream_id))
                 .await
                 .map_err(|e| {
                     tracing::warn!(cid = %client_id, sid = %stream_id, "failed to send end signal: {:?}", e);
@@ -91,7 +99,7 @@ async fn process_udp_stream(
         tracing::debug!(cid = %client_id, sid = %stream_id, "read {} bytes message from remote client", n);
 
         let data = &buf[..n];
-        let packet = ControlPacket::UdpData(stream_id, data.to_vec());
+        let packet = ControlPacketV2::Data(stream_id, data.to_vec());
 
         match store.send_to_client(client_id, packet).await {
             Ok(_) => tracing::debug!(cid = %client_id, sid = %stream_id, "sent data packet to client"),
@@ -108,6 +116,7 @@ async fn process_udp_stream(
 pub struct RemoteUdp {
     pub stream_id: StreamId,
     pub client_id: ClientId,
+    pub endpoint_id: EndpointId,
     socket: Arc<UdpSocket>,
     peer_addr: SocketAddr,
     ct: CancellationToken,
@@ -116,11 +125,11 @@ pub struct RemoteUdp {
 }
 
 impl RemoteUdp {
-    pub fn new(store: Arc<Store>, socket: Arc<UdpSocket>, peer_addr: SocketAddr, client_id: ClientId) -> Self {
+    pub fn new(store: Arc<Store>, socket: Arc<UdpSocket>, peer_addr: SocketAddr, client_id: ClientId, endpoint_id: EndpointId) -> Self {
         let stream_id = StreamId::new();
         let ct = CancellationToken::new();
 
-        Self { stream_id, client_id, socket, store, ct, peer_addr, disabled: false }
+        Self { stream_id, client_id, endpoint_id, socket, store, ct, peer_addr, disabled: false }
     }
 
     pub async fn send_to_remote(&mut self, stream_id: StreamId, message: StreamMessage) -> Result<(), ClientStreamError> {
@@ -151,7 +160,7 @@ impl RemoteUdp {
         Ok(())
     }
 
-    pub async fn send_to_client(&self, packet: ControlPacket) -> Result<(), ClientStreamError> {
+    pub async fn send_to_client(&self, packet: ControlPacketV2) -> Result<(), ClientStreamError> {
         let client_id = self.client_id;
         self.store.send_to_client(client_id, packet).await?;
         Ok(())
@@ -159,7 +168,7 @@ impl RemoteUdp {
 
     pub async fn send_init_to_client(&self) -> Result<(), ClientStreamError> {
         let client_id = self.client_id;
-        let packet = ControlPacket::Init(self.stream_id);
+        let packet = ControlPacketV2::Init(self.stream_id, self.endpoint_id);
         self.store.send_to_client(client_id, packet).await?;
         Ok(())
     }

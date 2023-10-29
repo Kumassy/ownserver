@@ -1,3 +1,4 @@
+use std::io::{self, ErrorKind};
 use std::sync::Arc;
 
 use futures::channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
@@ -9,23 +10,24 @@ use tokio::net::TcpStream;
 
 use crate::{StreamMessage, Store};
 use log::*;
-use ownserver_lib::{ControlPacket, StreamId};
+use ownserver_lib::{StreamId, EndpointId, ControlPacketV2};
 
 /// Establish a new local stream and start processing messages to it
 pub async fn setup_new_stream(
     store: Arc<Store>,
-    local_port: u16,
-    mut tunnel_tx: UnboundedSender<ControlPacket>,
+    mut tunnel_tx: UnboundedSender<ControlPacketV2>,
     stream_id: StreamId,
-) {
-    info!("sid={} setting up local stream", &stream_id);
+    endpoint_id: EndpointId,
+) -> io::Result<()> {
+    info!("sid={} eid={} setting up local tcp stream", stream_id, endpoint_id);
+    let local_addr = store.get_local_addr_by_endpoint_id(endpoint_id).ok_or(io::Error::from(ErrorKind::Other))?;
 
-    let local_tcp = match TcpStream::connect(format!("localhost:{}", local_port)).await {
+    let local_tcp = match TcpStream::connect(local_addr).await {
         Ok(s) => s,
         Err(e) => {
-            warn!("sid={} failed to connect to local service: {:?}", stream_id, e);
-            let _ = tunnel_tx.send(ControlPacket::Refused(stream_id)).await;
-            return;
+            warn!("sid={} eid={} failed to connect to local service: {:?}", stream_id, endpoint_id, e);
+            let _ = tunnel_tx.send(ControlPacketV2::Refused(stream_id)).await;
+            return Err(e);
         }
     };
     let (stream, sink) = split(local_tcp);
@@ -47,11 +49,13 @@ pub async fn setup_new_stream(
         forward_to_local_tcp(stream_id, sink, rx).await;
         info!("sid={} end forward to local", &stream_id);
     });
+
+    Ok(())
 }
 
 pub async fn process_local_tcp(
     mut stream: ReadHalf<TcpStream>,
-    mut tunnel: UnboundedSender<ControlPacket>,
+    mut tunnel: UnboundedSender<ControlPacketV2>,
     stream_id: StreamId,
 ) {
     let mut buf = [0; 4 * 1024];
@@ -77,7 +81,7 @@ pub async fn process_local_tcp(
             data.len(),
         );
 
-        let packet = ControlPacket::Data(stream_id, data.clone());
+        let packet = ControlPacketV2::Data(stream_id, data.clone());
         if let Err(e) = tunnel.send(packet).await {
             error!("sid={} failed to tunnel packet from local tcp to tunnel: {:?}", &stream_id, e);
             return;

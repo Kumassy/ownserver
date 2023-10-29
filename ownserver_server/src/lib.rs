@@ -1,10 +1,10 @@
-use futures::{channel::mpsc::SendError};
+use futures::channel::mpsc::SendError;
 use ownserver_lib::{ClientId, StreamId};
 use thiserror::Error;
 
 pub mod client;
 pub use client::Client;
-pub mod control_server;
+pub mod control_server_v2;
 pub mod remote;
 pub mod proxy_server;
 pub mod port_allocator;

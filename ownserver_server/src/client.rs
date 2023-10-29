@@ -2,12 +2,10 @@ use std::sync::Arc;
 
 use bytes::BytesMut;
 use futures::{stream::SplitSink, StreamExt, SinkExt};
-use ownserver_lib::{ClientId, ControlPacket, ControlPacketCodec};
+use ownserver_lib::{ClientId, Endpoints, ControlPacketV2Codec, ControlPacketV2};
 use tokio_util::{sync::CancellationToken, codec::{Encoder, Decoder}};
 use tracing::Instrument;
-use warp::{
-    ws::{Message, WebSocket},
-};
+use warp::ws::{Message, WebSocket};
 
 use crate::{Store, remote::stream::StreamMessage, ClientStreamError};
 
@@ -15,7 +13,7 @@ use crate::{Store, remote::stream::StreamMessage, ClientStreamError};
 #[derive(Debug)]
 pub struct Client {
     pub client_id: ClientId,
-    remote_port: u16,
+    endpoints: Endpoints,
 
     ws_tx: SplitSink<WebSocket, Message>,
     // ws_rx: SplitStream<WebSocket>,
@@ -25,7 +23,7 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn new(store: Arc<Store>, client_id: ClientId, remote_port: u16, ws: WebSocket) -> Self {
+    pub fn new(store: Arc<Store>, client_id: ClientId, endpoints: Endpoints, ws: WebSocket) -> Self {
         let (sink, mut stream) = ws.split();
         let token = CancellationToken::new();
 
@@ -55,7 +53,7 @@ impl Client {
                         };
                 
                         let mut bytes = BytesMut::from(&message[..]);
-                        let packet = match ControlPacketCodec::new().decode(&mut bytes) {
+                        let packet = match ControlPacketV2Codec::new().decode(&mut bytes) {
                             Ok(Some(packet)) => packet,
                             Ok(None) => {
                                 // TODO: should handle None case
@@ -73,25 +71,25 @@ impl Client {
                         tracing::trace!(cid = %client_id, ?packet, "got control packet from client");
 
                         let (stream_id, message) = match packet {
-                            ControlPacket::Data(stream_id, data) => {
+                            ControlPacketV2::Data(stream_id, data) => {
                                 tracing::trace!(cid = %client_id, sid = %stream_id, "forwarding to stream: {}", data.len());
                                 (stream_id, StreamMessage::Data(data))
                             }
-                            ControlPacket::Refused(stream_id) => {
+                            ControlPacketV2::Refused(stream_id) => {
                                 tracing::debug!(cid = %client_id, sid = %stream_id, "tunnel says: refused");
                                 (stream_id, StreamMessage::TunnelRefused)
                             }
-                            ControlPacket::Init(stream_id) | ControlPacket::End(stream_id) => {
-                                tracing::error!(cid = %client_id, sid = %stream_id, "invalid protocol control::init message");
-                                continue;
-                            }
-                            ControlPacket::Ping => {
+                            ControlPacketV2::Ping => {
                                 tracing::trace!(cid = %client_id, "pong");
                                 continue;
                             }
-                            ControlPacket::UdpData(stream_id, data) => {
-                                tracing::trace!(cid = %client_id, sid = %stream_id, "forwarding udp to stream: {}", data.len());
-                                (stream_id, StreamMessage::Data(data))
+                            ControlPacketV2::Init(stream_id, endpoint_id) => {
+                                tracing::error!(cid = %client_id, sid = %stream_id, eid = %endpoint_id, "invalid protocol ControlPacketV2::Init");
+                                continue;
+                            }
+                            ControlPacketV2::End(stream_id) => {
+                                tracing::error!(cid = %client_id, sid = %stream_id, "invalid protocol ControlPacketV2::End");
+                                continue;
                             }
                         };
 
@@ -107,7 +105,7 @@ impl Client {
             store_.disable_client(client_id).await;
         }.instrument(tracing::info_span!("client_read_loop")));
 
-        Self { client_id, remote_port, ws_tx: sink, store, ct: token, disabled: false }
+        Self { client_id, endpoints, ws_tx: sink, store, ct: token, disabled: false }
     }
 
     // pub async fn send_to_stream(&self, stream_id: StreamId, message: StreamMessage) -> Result<(), Box<dyn std::error::Error>> {
@@ -115,8 +113,8 @@ impl Client {
     //     Ok(())
     // }
 
-    pub async fn send_to_client(&mut self, packet: ControlPacket) -> Result<(), ClientStreamError> {
-        let mut codec = ControlPacketCodec::new();
+    pub async fn send_to_client(&mut self, packet: ControlPacketV2) -> Result<(), ClientStreamError> {
+        let mut codec = ControlPacketV2Codec::new();
         let mut bytes = BytesMut::new();
         if let Err(e) = codec.encode(packet, &mut bytes) {
             tracing::warn!(cid = %self.client_id, error = ?e, "failed to encode message");
@@ -147,8 +145,8 @@ impl Client {
         self.ct.clone()
     }
 
-    pub fn remote_port(&self) -> u16 {
-        self.remote_port
+    pub fn endpoints(&self) -> &Endpoints {
+        &self.endpoints
     }
 
 }
