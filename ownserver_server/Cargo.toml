@@ -23,9 +23,7 @@ serde_json = "1.0"
 rmp-serde = "1.1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["std", "env-filter", "json"]}
-tracing-opentelemetry = "0.17"
-opentelemetry-jaeger = { version = "0.16", features = ["rt-tokio"]}
-opentelemetry = { version = "0.17", features = ["rt-tokio"] }
+tracing-opentelemetry = "0.21"
 warp = "0.3"
 base64 = "0.13"
 dashmap = "5.3"

@@ -7,10 +7,9 @@ pub use ownserver_server::{
 use metrics::{describe_counter, describe_gauge};
 use metrics_exporter_prometheus::PrometheusBuilder;
 use tracing_subscriber::prelude::*;
-use std::{sync::Arc, fs};
+use std::sync::Arc;
 use once_cell::sync::OnceCell;
 use structopt::StructOpt;
-use opentelemetry::{sdk::{trace::{self, XrayIdGenerator}, Resource}, KeyValue};
 
 static CONFIG: OnceCell<Config> = OnceCell::new();
 
@@ -31,9 +30,6 @@ struct Opt {
 
     #[structopt(long)]
     remote_port_end: u16,
-
-    #[structopt(long, default_value = "/var/log/ownserver/proxy_server.log")]
-    log_file: String,
 
     #[structopt(long, default_value = "15")]
     periodic_cleanup_interval: u64,
@@ -73,36 +69,12 @@ async fn main() {
     // console_subscriber::init();
 
     let opt = Opt::from_args();
-    let log_file = opt.log_file.clone();
     let config = Config::from(opt);
     CONFIG.set(config).expect("failed to initialize config");
 
-    let file = fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .append(true)
-        .open(&log_file)
-        .unwrap_or_else(|_| panic!("failed to open log file {}", log_file));
-
-    let tracer = opentelemetry_jaeger::new_pipeline()
-        .with_service_name("ownserver")
-        .with_trace_config(
-            trace::config()
-                .with_id_generator(XrayIdGenerator::default())
-                .with_resource(Resource::new(vec![
-                    KeyValue {
-                        key: "hostname".into(),
-                        value: CONFIG.get().expect("failed to read config").host.clone().into()
-                    }
-                ]))
-        )
-        .install_batch(opentelemetry::runtime::Tokio)
-        .expect("Failed to initialize tracer");
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::new("INFO"))
-        .with(tracing_opentelemetry::layer().with_tracer(tracer))
         .with(tracing_subscriber::fmt::layer())
-        .with(tracing_subscriber::fmt::layer().with_ansi(false).with_writer(file))
         .try_init()
         .expect("Failed to register tracer with registry");
 
@@ -143,6 +115,4 @@ async fn main() {
             }
         }
     }
-
-    opentelemetry::global::shutdown_tracer_provider();
 }
