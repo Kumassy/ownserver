@@ -12,10 +12,10 @@ ownserver = { version = "0.6.0", path = "../ownserver" }
 tokio-tungstenite = { version = '0.17', features = ["rustls"] }
 tokio = { version = "1.21", features = ["full", "tracing"] }
 tokio-util = "0.7"
-console-subscriber = "0.1.7"
+console-subscriber = "0.2"
 futures = "0.3"
 log = "0.4"
-pretty_env_logger = "0.4"
+pretty_env_logger = "0.5"
 url = "2.2"
 anyhow = "1.0"
 serde = { version = "1.0", features = ["derive"] }
@@ -25,7 +25,6 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["std", "env-filter", "json"]}
 tracing-opentelemetry = "0.21"
 warp = "0.3"
-base64 = "0.13"
 dashmap = "5.3"
 thiserror = "1.0"
 rand = { version = "0.8", features = ["small_rng"] }
@@ -33,8 +32,8 @@ ownserver-auth = { git = "https://github.com/Kumassy/ownserver-auth.git", branch
 once_cell = "1.8"
 chrono = "0.4"
 structopt = "0.3.25"
-metrics = "0.20"
-metrics-exporter-prometheus = "0.11"
+metrics = "0.21"
+metrics-exporter-prometheus = "0.12"
 bytes = "1.0"
 
 [dev-dependencies]
