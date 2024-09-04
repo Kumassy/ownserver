@@ -1445,6 +1445,7 @@ version = "0.6.0"
 dependencies = [
  "anyhow",
  "bytes",
+ "chrono",
  "clap 4.4.2",
  "dashmap",
  "futures",

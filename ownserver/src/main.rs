@@ -20,6 +20,9 @@ struct Cli {
     control_port: u16,
     #[arg(long, default_value = "https://auth.ownserver.kumassy.com/v1/request_token", help = "Advanced settings")]
     token_server: String,
+
+    #[structopt(long, default_value = "15")]
+    periodic_ping_interval: u64,
 }
 
 const PORT_RANGE: RangeInclusive<usize> = 1..=65535;
@@ -68,7 +71,7 @@ async fn main() -> Result<()> {
 
     let store_ = store.clone();
     let (client_info, mut set) =
-        run(store_, cli.control_port, &cli.token_server, cancellation_token, cli.endpoint).await?;
+        run(store_, cli.control_port, &cli.token_server, cancellation_token, cli.endpoint, cli.periodic_ping_interval).await?;
     info!("client is running under configuration: {:?}", client_info);
 
     if let Some(api_port) = cli.api_port {

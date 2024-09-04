@@ -10,6 +10,7 @@ use tracing_subscriber::prelude::*;
 use std::sync::Arc;
 use once_cell::sync::OnceCell;
 use structopt::StructOpt;
+use metrics::Unit;
 
 static CONFIG: OnceCell<Config> = OnceCell::new();
 
@@ -82,6 +83,7 @@ async fn main() {
     builder.install().expect("failed to install recorder/exporter");
     describe_gauge!("ownserver_server.store.clients", "[gauge] The number of Clients at this time.");
     describe_gauge!("ownserver_server.store.streams", "[gauge] The number of RemoteStreams at this time.");
+    describe_gauge!("ownserver_server.stream.rtt", Unit::Milliseconds, "[gauge] RTT between server and client.");
     describe_counter!("ownserver_server.control_server.handle_new_connection", "[counter] The number of successfully accepted websocket connections so far.");
     describe_counter!("ownserver_server.control_server.try_client_handshake.success", "[counter] The number of succesfully handshake requests so far.");
     describe_counter!("ownserver_server.control_server.try_client_handshake.service_temporary_unavailable", "[counter] The number of handshake error ServiceTemporaryUnavailable so far.");
