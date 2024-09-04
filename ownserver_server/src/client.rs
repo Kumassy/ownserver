@@ -79,8 +79,14 @@ impl Client {
                                 tracing::debug!(cid = %client_id, sid = %stream_id, "tunnel says: refused");
                                 (stream_id, StreamMessage::TunnelRefused)
                             }
-                            ControlPacketV2::Ping => {
+                            ControlPacketV2::Ping(seq, datetime) => {
                                 tracing::trace!(cid = %client_id, "pong");
+                                let _ = store_.send_to_client(client_id, ControlPacketV2::Pong(seq, datetime)).await;
+                                continue;
+                            }
+                            ControlPacketV2::Pong(seq, datetime) => {
+                                tracing::trace!(cid = %client_id, "pong");
+                                // calc RTT
                                 continue;
                             }
                             ControlPacketV2::Init(stream_id, endpoint_id) => {

@@ -280,9 +280,13 @@ pub async fn process_control_flow_message(
                 }
             }
         }
-        ControlPacketV2::Ping => {
+        ControlPacketV2::Ping(seq, datetime) => {
             debug!("got ping");
-            let _ = tunnel_tx.send(ControlPacketV2::Ping).await;
+            let _ = tunnel_tx.send(ControlPacketV2::Pong(seq, datetime)).await;
+        }
+        ControlPacketV2::Pong(seq, datetime) => {
+            debug!("got pong");
+            // calculate RTT
         }
         ControlPacketV2::Refused(_) => return Err("unexpected control packet".into()),
         ControlPacketV2::End(stream_id) => {

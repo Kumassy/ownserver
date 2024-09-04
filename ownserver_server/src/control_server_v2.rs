@@ -73,7 +73,7 @@ pub fn spawn<A: Into<SocketAddr> + std::fmt::Debug>(
     set.spawn(async move {
         loop {
             sleep(Duration::from_secs(periodic_ping_interval)).await;
-            store.broadcast_to_clients(ControlPacketV2::Ping).await;
+            store.broadcast_to_clients(ControlPacketV2::Ping(0, Default::default())).await;
             tracing::debug!("broadcasted ping");
         }
     });
