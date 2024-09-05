@@ -12,6 +12,11 @@ struct Stream {
 
 pub fn spawn_api(store: Arc<Store>, api_port: u16) -> impl Future<Output = ()> {
     let store_ = store.clone();
+    let rtt = warp::path("rtt").map(move || {
+        let rtt = store_.get_rtt();
+        warp::reply::json(&rtt)
+    });
+    let store_ = store.clone();
     let endpoints = warp::path("endpoints").map(move || {
         let endpoints = store_.get_endpoints();
         warp::reply::json(&vec![endpoints])
@@ -30,6 +35,7 @@ pub fn spawn_api(store: Arc<Store>, api_port: u16) -> impl Future<Output = ()> {
     let routes = warp::get().and(
         endpoints
             .or(streams)
+            .or(rtt)
     );
     warp::serve(routes).run(([127, 0, 0, 1], api_port))
 }

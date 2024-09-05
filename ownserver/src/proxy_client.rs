@@ -310,8 +310,9 @@ pub async fn process_control_flow_message(
             debug!("got pong");
             // calculate RTT
             let current_time = Utc::now();
-            let rtt = current_time.signed_duration_since(datetime).num_milliseconds() as f64;
-            info!("RTT: {}ms", rtt);
+            let rtt = current_time.signed_duration_since(datetime).num_milliseconds();
+            store.set_rtt(rtt);
+            debug!("RTT: {}ms", rtt);
         }
         ControlPacketV2::Refused(_) => return Err("unexpected control packet".into()),
         ControlPacketV2::End(stream_id) => {
