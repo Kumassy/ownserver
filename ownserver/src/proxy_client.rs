@@ -106,7 +106,10 @@ pub async fn run(
                 _ = tokio::time::sleep(Duration::from_secs(ping_interval)) => {
                     let now = Utc::now();
                     let packet = ControlPacketV2::Ping(0, now);
-                    let _ = tunnel_tx_.send(packet).await;
+                    if let Err(e) =  tunnel_tx_.send(packet).await {
+                        error!("cid={} failed to send ping to tx buffer: {:?}", &client_id, e);
+                        return Ok(());
+                    }
                 },
                 _ = ct.cancelled() => {
                     return Ok(());
