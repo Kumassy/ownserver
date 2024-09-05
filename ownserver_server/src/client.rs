@@ -86,7 +86,7 @@ impl Client {
                                 let _ = store_.send_to_client(client_id, ControlPacketV2::Pong(seq, datetime)).await;
                                 continue;
                             }
-                            ControlPacketV2::Pong(seq, datetime) => {
+                            ControlPacketV2::Pong(_, datetime) => {
                                 tracing::trace!(cid = %client_id, "pong");
 
                                 let current_time = Utc::now();

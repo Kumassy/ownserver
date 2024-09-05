@@ -306,7 +306,7 @@ pub async fn process_control_flow_message(
             debug!("got ping");
             let _ = tunnel_tx.send(ControlPacketV2::Pong(seq, datetime)).await;
         }
-        ControlPacketV2::Pong(seq, datetime) => {
+        ControlPacketV2::Pong(_, datetime) => {
             debug!("got pong");
             // calculate RTT
             let current_time = Utc::now();
