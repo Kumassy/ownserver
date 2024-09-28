@@ -91,7 +91,7 @@ impl Client {
 
                                 let current_time = Utc::now();
                                 let rtt = current_time.signed_duration_since(datetime).num_milliseconds() as f64;
-                                gauge!("ownserver_server.stream.rtt", rtt, "stream_id" => client_id.to_string());
+                                gauge!("ownserver_server.stream.rtt", rtt, "client_id" => client_id.to_string());
                                 continue;
                             }
                             ControlPacketV2::Init(stream_id, endpoint_id) => {
