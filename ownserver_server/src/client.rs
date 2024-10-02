@@ -94,8 +94,8 @@ impl Client {
                                 gauge!("ownserver_server.stream.rtt", rtt, "client_id" => client_id.to_string());
                                 continue;
                             }
-                            ControlPacketV2::Init(stream_id, endpoint_id) => {
-                                tracing::error!(cid = %client_id, sid = %stream_id, eid = %endpoint_id, "invalid protocol ControlPacketV2::Init");
+                            ControlPacketV2::Init(stream_id, endpoint_id, remote_info) => {
+                                tracing::error!(cid = %client_id, sid = %stream_id, eid = %endpoint_id, remote_info = %remote_info, "invalid protocol ControlPacketV2::Init");
                                 continue;
                             }
                             ControlPacketV2::End(stream_id) => {

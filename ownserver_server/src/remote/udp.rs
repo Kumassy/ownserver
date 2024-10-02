@@ -1,6 +1,6 @@
 use std::{io::{self, ErrorKind}, net::SocketAddr};
 use metrics::increment_counter;
-use ownserver_lib::{ControlPacketV2, EndpointId};
+use ownserver_lib::{ControlPacketV2, EndpointId, RemoteInfo};
 use tokio::net::UdpSocket;
 use tracing::Instrument;
 use tokio_util::sync::CancellationToken;
@@ -118,7 +118,7 @@ pub struct RemoteUdp {
     pub client_id: ClientId,
     pub endpoint_id: EndpointId,
     socket: Arc<UdpSocket>,
-    peer_addr: SocketAddr,
+    remote_info: RemoteInfo,
     ct: CancellationToken,
     store: Arc<Store>,
     disabled: bool,
@@ -128,8 +128,9 @@ impl RemoteUdp {
     pub fn new(store: Arc<Store>, socket: Arc<UdpSocket>, peer_addr: SocketAddr, client_id: ClientId, endpoint_id: EndpointId) -> Self {
         let stream_id = StreamId::new();
         let ct = CancellationToken::new();
+        let remote_info = RemoteInfo::new(peer_addr);
 
-        Self { stream_id, client_id, endpoint_id, socket, store, ct, peer_addr, disabled: false }
+        Self { stream_id, client_id, endpoint_id, socket, store, ct, remote_info, disabled: false }
     }
 
     pub async fn send_to_remote(&mut self, stream_id: StreamId, message: StreamMessage) -> Result<(), ClientStreamError> {
@@ -151,7 +152,7 @@ impl RemoteUdp {
             }
         };
 
-        if let Err(e) = self.socket.send_to(&data, self.peer_addr).await {
+        if let Err(e) = self.socket.send_to(&data, self.remote_info.remote_peer_addr).await {
             tracing::warn!(sid = %self.stream_id, "could not write data to remote socket {:?}", e);
 
             self.disable();
@@ -168,7 +169,7 @@ impl RemoteUdp {
 
     pub async fn send_init_to_client(&self) -> Result<(), ClientStreamError> {
         let client_id = self.client_id;
-        let packet = ControlPacketV2::Init(self.stream_id, self.endpoint_id);
+        let packet = ControlPacketV2::Init(self.stream_id, self.endpoint_id, self.remote_info.clone());
         self.store.send_to_client(client_id, packet).await?;
         Ok(())
     }

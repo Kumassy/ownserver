@@ -257,8 +257,9 @@ pub async fn process_control_flow_message(
         // TODO: should handle None case
 
     match control_packet {
-        ControlPacketV2::Init(stream_id, endpoint_id) => {
-            debug!("sid={} eid={} init stream", stream_id, endpoint_id);
+        // TODO: use remote_info
+        ControlPacketV2::Init(stream_id, endpoint_id, ref remote_info) => {
+            debug!("sid={} eid={} remote_info={} init stream", stream_id, endpoint_id, remote_info);
 
             let endpoint = match store.get_endpoint_by_endpoint_id(endpoint_id) {
                 Some(e) => e,
