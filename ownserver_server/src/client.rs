@@ -2,12 +2,14 @@ use std::sync::Arc;
 
 use bytes::BytesMut;
 use futures::{stream::SplitSink, StreamExt, SinkExt};
+use metrics::gauge;
 use ownserver_lib::{ClientId, Endpoints, ControlPacketV2Codec, ControlPacketV2};
 use tokio_util::{sync::CancellationToken, codec::{Encoder, Decoder}};
 use tracing::Instrument;
 use warp::ws::{Message, WebSocket};
 
 use crate::{Store, remote::stream::StreamMessage, ClientStreamError};
+use chrono::Utc;
 
 
 #[derive(Debug)]
@@ -79,8 +81,17 @@ impl Client {
                                 tracing::debug!(cid = %client_id, sid = %stream_id, "tunnel says: refused");
                                 (stream_id, StreamMessage::TunnelRefused)
                             }
-                            ControlPacketV2::Ping => {
+                            ControlPacketV2::Ping(seq, datetime) => {
                                 tracing::trace!(cid = %client_id, "pong");
+                                let _ = store_.send_to_client(client_id, ControlPacketV2::Pong(seq, datetime)).await;
+                                continue;
+                            }
+                            ControlPacketV2::Pong(_, datetime) => {
+                                tracing::trace!(cid = %client_id, "pong");
+
+                                let current_time = Utc::now();
+                                let rtt = current_time.signed_duration_since(datetime).num_milliseconds() as f64;
+                                gauge!("ownserver_server.stream.rtt", rtt, "client_id" => client_id.to_string());
                                 continue;
                             }
                             ControlPacketV2::Init(stream_id, endpoint_id) => {

@@ -1,3 +1,5 @@
+use std::sync::atomic::{AtomicI64, Ordering};
+
 use dashmap::DashMap;
 use dashmap::mapref::one::{Ref, RefMut};
 use futures::channel::mpsc::UnboundedSender;
@@ -19,6 +21,7 @@ pub type LocalStream = UnboundedSender<StreamMessage>;
 pub struct Store {
     streams: DashMap<StreamId, LocalStream>,
     endpoints_map: DashMap<EndpointId, Endpoint>,
+    rtt: AtomicI64,
 }
 
 impl Store {
@@ -68,6 +71,14 @@ impl Store {
 
     pub fn get_endpoints(&self) -> Endpoints {
         self.endpoints_map.iter().map(|e| e.value().clone()).collect()
+    }
+
+    pub fn set_rtt(&self, rtt: i64) {
+        self.rtt.store(rtt, Ordering::Relaxed);
+    }
+
+    pub fn get_rtt(&self) -> i64 {
+        self.rtt.load(Ordering::Relaxed)
     }
 
 }

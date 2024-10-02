@@ -154,7 +154,7 @@ pub mod tcp {
         let cancellation_token = CancellationToken::new();
     
         let (client_info, mut set) =
-                proxy_client::run(client_store, control_port, "http://127.0.0.1:8888/v0/request_token", cancellation_token.clone(), endpoint_claims)
+                proxy_client::run(client_store, control_port, "http://127.0.0.1:8888/v0/request_token", cancellation_token.clone(), endpoint_claims, 15)
                     .await
                     .expect("failed to launch proxy_client");
         tokio::spawn(async move {
@@ -296,7 +296,7 @@ pub mod udp {
         let cancellation_token = CancellationToken::new();
     
         let (client_info, mut set) =
-            proxy_client::run(client_store, control_port, "http://127.0.0.1:8888/v0/request_token", cancellation_token.clone(), endpoint_claims)
+            proxy_client::run(client_store, control_port, "http://127.0.0.1:8888/v0/request_token", cancellation_token.clone(), endpoint_claims, 15)
                 .await
                 .expect("failed to launch proxy_client");
         tokio::spawn(async move {

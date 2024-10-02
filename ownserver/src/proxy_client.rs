@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Result};
 use bytes::BytesMut;
+use chrono::Utc;
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use futures::{Sink, SinkExt, Stream, StreamExt};
 use log::*;
@@ -28,6 +29,7 @@ pub async fn run(
     token_server: &str,
     cancellation_token: CancellationToken,
     endpoint_claims: EndpointClaims,
+    ping_interval: u64,
 ) -> Result<(ClientInfo, JoinSet<Result<(), Error>>)> {
     println!("Connecting to auth server: {}", token_server);
     let (token, host) = fetch_token(token_server).await?;
@@ -88,6 +90,26 @@ pub async fn run(
                         return Ok(());
                     }
 
+                },
+                _ = ct.cancelled() => {
+                    return Ok(());
+                }
+            }
+        }
+    });
+
+    let ct = cancellation_token.child_token();
+    let mut tunnel_tx_ = tunnel_tx.clone();
+    set.spawn(async move {
+        loop {
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_secs(ping_interval)) => {
+                    let now = Utc::now();
+                    let packet = ControlPacketV2::Ping(0, now);
+                    if let Err(e) =  tunnel_tx_.send(packet).await {
+                        error!("cid={} failed to send ping to tx buffer: {:?}", &client_id, e);
+                        return Ok(());
+                    }
                 },
                 _ = ct.cancelled() => {
                     return Ok(());
@@ -280,9 +302,17 @@ pub async fn process_control_flow_message(
                 }
             }
         }
-        ControlPacketV2::Ping => {
+        ControlPacketV2::Ping(seq, datetime) => {
             debug!("got ping");
-            let _ = tunnel_tx.send(ControlPacketV2::Ping).await;
+            let _ = tunnel_tx.send(ControlPacketV2::Pong(seq, datetime)).await;
+        }
+        ControlPacketV2::Pong(_, datetime) => {
+            debug!("got pong");
+            // calculate RTT
+            let current_time = Utc::now();
+            let rtt = current_time.signed_duration_since(datetime).num_milliseconds();
+            store.set_rtt(rtt);
+            debug!("RTT: {}ms", rtt);
         }
         ControlPacketV2::Refused(_) => return Err("unexpected control packet".into()),
         ControlPacketV2::End(stream_id) => {
