@@ -5,6 +5,7 @@ use dashmap::mapref::one::{Ref, RefMut};
 use futures::channel::mpsc::{SendError, UnboundedSender};
 use futures::SinkExt;
 use ownserver_lib::{Endpoint, EndpointId, Endpoints, RemoteInfo, StreamId};
+use serde::{Deserialize, Serialize};
 use tokio::net::ToSocketAddrs;
 
 #[derive(Debug, Clone)]
@@ -40,6 +41,12 @@ impl LocalStream {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalStreamEntry {
+    pub stream_id: StreamId,
+    pub remote_info: RemoteInfo,
+}
+
 #[derive(Debug, Default)]
 pub struct Store {
     streams: DashMap<StreamId, LocalStream>,
@@ -72,8 +79,13 @@ impl Store {
         self.streams.len()
     }
 
-    pub fn list_streams(&self) -> Vec<StreamId> {
-        self.streams.iter().map(|x| *x.key()).collect()
+    pub fn list_streams(&self) -> Vec<LocalStreamEntry> {
+        self.streams.iter().map(|x|
+            LocalStreamEntry { 
+                stream_id: *x.key(),
+                remote_info: x.value().remote_info().clone(),
+             }
+        ).collect()
     }
 
     pub fn register_endpoints(&self, endpoints: Vec<Endpoint>) {
