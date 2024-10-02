@@ -1,4 +1,4 @@
-use std::io;
+use std::{io, net::SocketAddr};
 
 use bytes::BytesMut;
 use chrono::DateTime;
@@ -88,7 +88,7 @@ pub struct ClientHelloV2 {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ControlPacketV2 {
-    Init(StreamId, EndpointId),
+    Init(StreamId, EndpointId, RemoteInfo),
     Data(StreamId, Vec<u8>),
     Refused(StreamId),
     End(StreamId),
@@ -99,7 +99,7 @@ pub enum ControlPacketV2 {
 impl std::fmt::Display for ControlPacketV2 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
          match self {
-            ControlPacketV2::Init(sid, eid) => write!(f, "ControlPacket::Init(sid={}, eid={})", sid, eid),
+            ControlPacketV2::Init(sid, eid, remote_info) => write!(f, "ControlPacket::Init(sid={}, eid={}, remote_info={})", sid, eid, remote_info),
             ControlPacketV2::Data(sid, data) => write!(f, "ControlPacket::Data(sid={}, data_len={})", sid,  data.len()),
             ControlPacketV2::Refused(sid)  => write!(f, "ControlPacket::Refused(sid={})", sid),
             ControlPacketV2::End(sid) => write!(f, "ControlPacket::End(sid={})", sid),
@@ -118,6 +118,17 @@ pub struct Endpoint {
 }
 
 pub type Endpoints = Vec<Endpoint>;
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct RemoteInfo {
+    pub remote_addr: SocketAddr,
+}
+
+impl std::fmt::Display for RemoteInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "RemoteInfo(remote_addr={}", self.remote_addr)
+    }
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "snake_case")]
