@@ -2,8 +2,9 @@ use std::sync::atomic::{AtomicI64, Ordering};
 
 use dashmap::DashMap;
 use dashmap::mapref::one::{Ref, RefMut};
-use futures::channel::mpsc::UnboundedSender;
-use ownserver_lib::{StreamId, EndpointId, Endpoint, Endpoints};
+use futures::channel::mpsc::{SendError, UnboundedSender};
+use futures::SinkExt;
+use ownserver_lib::{Endpoint, EndpointId, Endpoints, RemoteInfo, StreamId};
 use tokio::net::ToSocketAddrs;
 
 #[derive(Debug, Clone)]
@@ -16,7 +17,29 @@ pub mod local;
 pub mod proxy_client;
 pub mod api;
 
-pub type LocalStream = UnboundedSender<StreamMessage>;
+#[derive(Debug, Clone)]
+pub struct LocalStream {
+    stream: UnboundedSender<StreamMessage>,
+    remote_info: RemoteInfo,
+}
+
+impl LocalStream {
+    pub fn new(stream: UnboundedSender<StreamMessage>, remote_info: RemoteInfo) -> Self {
+        Self {
+            stream,
+            remote_info,
+        }
+    }
+
+    pub async fn send_to_local(&mut self, message: StreamMessage) -> Result<(), SendError> {
+        self.stream.send(message).await
+    }
+
+    pub fn remote_info(&self) -> &RemoteInfo {
+        &self.remote_info
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct Store {
     streams: DashMap<StreamId, LocalStream>,

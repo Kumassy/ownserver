@@ -287,6 +287,7 @@ pub async fn process_control_flow_message(
                         tunnel_tx.clone(),
                         stream_id,
                         endpoint_id,
+                        remote_info.clone(),
                     )
                     .await?;
                     println!("new tcp stream arrived: sid={}, eid={}", stream_id, endpoint_id);
@@ -297,6 +298,7 @@ pub async fn process_control_flow_message(
                         tunnel_tx.clone(),
                         stream_id,
                         endpoint_id,
+                        remote_info.clone(),
                     )
                     .await?;
                     println!("new udp stream arrived: sid={}, eid={}", stream_id, endpoint_id);
@@ -323,7 +325,7 @@ pub async fn process_control_flow_message(
             tokio::spawn(async move {
                 if let Some((stream_id, mut tx)) = store.remove_stream(&stream_id) {
                     tokio::time::sleep(Duration::from_secs(5)).await;
-                    let _ = tx.send(StreamMessage::Close).await.map_err(|e| {
+                    let _ = tx.send_to_local(StreamMessage::Close).await.map_err(|e| {
                         error!(
                             "sid={} failed to send stream close: {:?}",
                             stream_id,
@@ -339,7 +341,7 @@ pub async fn process_control_flow_message(
 
             match store.get_mut_stream(&stream_id) {
                 Some(mut tx) => {
-                    tx.send(StreamMessage::Data(data.clone())).await?;
+                    tx.send_to_local(StreamMessage::Data(data.clone())).await?;
                     debug!("sid={} forwarded to local socket", stream_id);
                 }
                 None => {
