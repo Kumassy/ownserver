@@ -1,4 +1,4 @@
-use std::io;
+use std::{io, net::SocketAddr};
 
 use bytes::BytesMut;
 use chrono::DateTime;
@@ -88,7 +88,7 @@ pub struct ClientHelloV2 {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ControlPacketV2 {
-    Init(StreamId, EndpointId),
+    Init(StreamId, EndpointId, RemoteInfo),
     Data(StreamId, Vec<u8>),
     Refused(StreamId),
     End(StreamId),
@@ -99,7 +99,7 @@ pub enum ControlPacketV2 {
 impl std::fmt::Display for ControlPacketV2 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
          match self {
-            ControlPacketV2::Init(sid, eid) => write!(f, "ControlPacket::Init(sid={}, eid={})", sid, eid),
+            ControlPacketV2::Init(sid, eid, remote_info) => write!(f, "ControlPacket::Init(sid={}, eid={}, remote_info={})", sid, eid, remote_info),
             ControlPacketV2::Data(sid, data) => write!(f, "ControlPacket::Data(sid={}, data_len={})", sid,  data.len()),
             ControlPacketV2::Refused(sid)  => write!(f, "ControlPacket::Refused(sid={})", sid),
             ControlPacketV2::End(sid) => write!(f, "ControlPacket::End(sid={})", sid),
@@ -118,6 +118,23 @@ pub struct Endpoint {
 }
 
 pub type Endpoints = Vec<Endpoint>;
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct RemoteInfo {
+    pub remote_peer_addr: SocketAddr,
+}
+
+impl RemoteInfo {
+    pub fn new(remote_peer_addr: SocketAddr) -> Self {
+        Self { remote_peer_addr }
+    }
+}
+
+impl std::fmt::Display for RemoteInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "RemoteInfo(remote_peer_addr={}", self.remote_peer_addr)
+    }
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "snake_case")]
@@ -179,13 +196,14 @@ mod control_packet_test {
     fn test_control_packet_init() -> Result<(), Box<dyn std::error::Error>> {
         let stream_id = StreamId::default();
         let endpoint_id = EndpointId::default();
-        let expected_packet = ControlPacketV2::Init(stream_id, endpoint_id);
+        let remote_info = RemoteInfo::new("127.0.0.1:8080".parse()?);
+        let expected_packet = ControlPacketV2::Init(stream_id, endpoint_id, remote_info);
 
         let mut encoded = BytesMut::new();
         ControlPacketV2Codec::new().encode(expected_packet, &mut encoded)?;
 
         let deserialized_packet = ControlPacketV2Codec::new().decode(&mut encoded)?.unwrap();
-        assert_eq!(ControlPacketV2::Init(stream_id, endpoint_id), deserialized_packet);
+        assert_eq!(ControlPacketV2::Init(stream_id, endpoint_id, RemoteInfo::new("127.0.0.1:8080".parse()?)), deserialized_packet);
         Ok(())
     }
 }

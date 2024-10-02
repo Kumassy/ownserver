@@ -257,8 +257,9 @@ pub async fn process_control_flow_message(
         // TODO: should handle None case
 
     match control_packet {
-        ControlPacketV2::Init(stream_id, endpoint_id) => {
-            debug!("sid={} eid={} init stream", stream_id, endpoint_id);
+        // TODO: use remote_info
+        ControlPacketV2::Init(stream_id, endpoint_id, ref remote_info) => {
+            debug!("sid={} eid={} remote_info={} init stream", stream_id, endpoint_id, remote_info);
 
             let endpoint = match store.get_endpoint_by_endpoint_id(endpoint_id) {
                 Some(e) => e,
@@ -286,6 +287,7 @@ pub async fn process_control_flow_message(
                         tunnel_tx.clone(),
                         stream_id,
                         endpoint_id,
+                        remote_info.clone(),
                     )
                     .await?;
                     println!("new tcp stream arrived: sid={}, eid={}", stream_id, endpoint_id);
@@ -296,6 +298,7 @@ pub async fn process_control_flow_message(
                         tunnel_tx.clone(),
                         stream_id,
                         endpoint_id,
+                        remote_info.clone(),
                     )
                     .await?;
                     println!("new udp stream arrived: sid={}, eid={}", stream_id, endpoint_id);
@@ -322,7 +325,7 @@ pub async fn process_control_flow_message(
             tokio::spawn(async move {
                 if let Some((stream_id, mut tx)) = store.remove_stream(&stream_id) {
                     tokio::time::sleep(Duration::from_secs(5)).await;
-                    let _ = tx.send(StreamMessage::Close).await.map_err(|e| {
+                    let _ = tx.send_to_local(StreamMessage::Close).await.map_err(|e| {
                         error!(
                             "sid={} failed to send stream close: {:?}",
                             stream_id,
@@ -338,7 +341,7 @@ pub async fn process_control_flow_message(
 
             match store.get_mut_stream(&stream_id) {
                 Some(mut tx) => {
-                    tx.send(StreamMessage::Data(data.clone())).await?;
+                    tx.send_to_local(StreamMessage::Data(data.clone())).await?;
                     debug!("sid={} forwarded to local socket", stream_id);
                 }
                 None => {

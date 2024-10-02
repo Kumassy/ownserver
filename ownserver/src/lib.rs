@@ -2,8 +2,10 @@ use std::sync::atomic::{AtomicI64, Ordering};
 
 use dashmap::DashMap;
 use dashmap::mapref::one::{Ref, RefMut};
-use futures::channel::mpsc::UnboundedSender;
-use ownserver_lib::{StreamId, EndpointId, Endpoint, Endpoints};
+use futures::channel::mpsc::{SendError, UnboundedSender};
+use futures::SinkExt;
+use ownserver_lib::{Endpoint, EndpointId, Endpoints, RemoteInfo, StreamId};
+use serde::{Deserialize, Serialize};
 use tokio::net::ToSocketAddrs;
 
 #[derive(Debug, Clone)]
@@ -16,7 +18,35 @@ pub mod local;
 pub mod proxy_client;
 pub mod api;
 
-pub type LocalStream = UnboundedSender<StreamMessage>;
+#[derive(Debug, Clone)]
+pub struct LocalStream {
+    stream: UnboundedSender<StreamMessage>,
+    remote_info: RemoteInfo,
+}
+
+impl LocalStream {
+    pub fn new(stream: UnboundedSender<StreamMessage>, remote_info: RemoteInfo) -> Self {
+        Self {
+            stream,
+            remote_info,
+        }
+    }
+
+    pub async fn send_to_local(&mut self, message: StreamMessage) -> Result<(), SendError> {
+        self.stream.send(message).await
+    }
+
+    pub fn remote_info(&self) -> &RemoteInfo {
+        &self.remote_info
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalStreamEntry {
+    pub stream_id: StreamId,
+    pub remote_info: RemoteInfo,
+}
+
 #[derive(Debug, Default)]
 pub struct Store {
     streams: DashMap<StreamId, LocalStream>,
@@ -49,8 +79,13 @@ impl Store {
         self.streams.len()
     }
 
-    pub fn list_streams(&self) -> Vec<StreamId> {
-        self.streams.iter().map(|x| *x.key()).collect()
+    pub fn list_streams(&self) -> Vec<LocalStreamEntry> {
+        self.streams.iter().map(|x|
+            LocalStreamEntry { 
+                stream_id: *x.key(),
+                remote_info: x.value().remote_info().clone(),
+             }
+        ).collect()
     }
 
     pub fn register_endpoints(&self, endpoints: Vec<Endpoint>) {

@@ -6,9 +6,9 @@ use futures::{SinkExt, StreamExt};
 
 use tokio::net::UdpSocket;
 
-use crate::{StreamMessage, Store};
+use crate::{LocalStream, Store, StreamMessage};
 use log::*;
-use ownserver_lib::{StreamId, EndpointId, ControlPacketV2};
+use ownserver_lib::{ControlPacketV2, EndpointId, RemoteInfo, StreamId};
 
 /// Establish a new local stream and start processing messages to it
 pub async fn setup_new_stream(
@@ -16,6 +16,7 @@ pub async fn setup_new_stream(
     tunnel_tx: UnboundedSender<ControlPacketV2>,
     stream_id: StreamId,
     endpoint_id: EndpointId,
+    remote_info: RemoteInfo,
 ) -> io::Result<()>{
     info!("sid={} eid={} setting up local udp stream", stream_id, endpoint_id);
     let local_addr = store.get_local_addr_by_endpoint_id(endpoint_id).ok_or(io::Error::from(ErrorKind::Other))?;
@@ -47,7 +48,8 @@ pub async fn setup_new_stream(
 
     // Forward remote packets to local tcp
     let (tx, rx) = unbounded();
-    store.add_stream(stream_id, tx);
+    let local_stream = LocalStream::new(tx, remote_info);
+    store.add_stream(stream_id, local_stream);
     info!("sid={} insert stream to active_streams. len={}", &stream_id, store.len_stream());
 
     tokio::spawn(async move {
