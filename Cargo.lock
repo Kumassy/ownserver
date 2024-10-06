@@ -1489,6 +1489,7 @@ version = "0.6.0"
 dependencies = [
  "bytes",
  "chrono",
+ "jsonwebtoken",
  "rand",
  "rmp-serde",
  "serde",

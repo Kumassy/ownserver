@@ -1,3 +1,5 @@
+pub mod reconnect;
+
 use std::{io, net::SocketAddr};
 
 use bytes::BytesMut;
