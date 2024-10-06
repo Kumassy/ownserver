@@ -7,7 +7,7 @@ const RECONNECT_TOKEN_VALID_DURATION: Duration = Duration::minutes(5);
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ReconnectTokenPayload {
-    client_id: ClientId,
+    pub client_id: ClientId,
 }
 
 impl From<ReconnectTokenClaims> for ReconnectTokenPayload {
