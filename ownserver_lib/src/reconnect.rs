@@ -71,7 +71,7 @@ impl ReconnectTokenPayload {
 
 #[cfg(test)]
 mod tests {
-    use std::thread::sleep;
+    use tokio::time::sleep;
 
     use super::*;
 
@@ -98,13 +98,13 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_decode_after_expired() -> Result<(), Box<dyn std::error::Error>> {
+    #[tokio::test]
+    async fn test_decode_after_expired() -> Result<(), Box<dyn std::error::Error>> {
         let secret = "foobarbaz";
         let client_id = ClientId::new();
 
         let token = ReconnectTokenPayload::new(client_id).into_token_raw(secret, Duration::seconds(3))?;
-        sleep(std::time::Duration::from_secs(5));
+        sleep(std::time::Duration::from_secs(5)).await;
 
         let decode_result = ReconnectTokenPayload::decode_token(secret, &token);
         assert!(decode_result.is_err());
