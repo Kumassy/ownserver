@@ -86,6 +86,13 @@ pub struct ClientHelloV2 {
     pub version: u16,
     pub token: String,
     pub endpoint_claims: EndpointClaims,
+    pub client_type: ClientType,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum ClientType {
+    Auth,
+    Reconnect,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
