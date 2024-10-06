@@ -2,7 +2,7 @@ use chrono::Utc;
 use futures::{
     Sink, SinkExt, Stream, StreamExt,
 };
-use ownserver_lib::{ClientHelloV2, EndpointClaim, ServerHelloV2, EndpointClaims, ControlPacketV2, Protocol};
+use ownserver_lib::{ClientHelloV2, ClientType, ControlPacketV2, EndpointClaim, EndpointClaims, Protocol, ServerHelloV2};
 pub use ownserver_lib::{ClientId, StreamId, CLIENT_HELLO_VERSION};
 use ownserver_auth::decode_jwt;
 use metrics::increment_counter;
@@ -157,22 +157,29 @@ async fn validate_client_hello(
         return Err(VerifyClientHandshakeError::VersionMismatch);
     }
 
-    let claim = decode_jwt(token_secret, &client_hello.token);
-    match claim.map(|c| &c.host == host) {
-        Ok(true) => {
-            tracing::info!("successfully validate client jwt");
+    match client_hello.client_type {
+        ClientType::Auth => {
+            let claim = decode_jwt(token_secret, &client_hello.token);
+            match claim.map(|c| &c.host == host) {
+                Ok(true) => {
+                    tracing::info!("successfully validate client jwt");
+                },
+                Ok(false) => {
+                    tracing::info!("client jwt was valid but different host");
+                    return Err(VerifyClientHandshakeError::IllegalHost);
+                },
+                Err(e) => {
+                    tracing::info!("failed to parse client jwt: {:?}", e);
+                    return Err(VerifyClientHandshakeError::InvalidJWT);
+                }
+            };
+        
+            Ok(client_hello.endpoint_claims)
         },
-        Ok(false) => {
-            tracing::info!("client jwt was valid but different host");
-            return Err(VerifyClientHandshakeError::IllegalHost);
-        },
-        Err(e) => {
-            tracing::info!("failed to parse client jwt: {:?}", e);
-            return Err(VerifyClientHandshakeError::InvalidJWT);
+        _ => {
+            unimplemented!()
         }
-    };
-
-    Ok(client_hello.endpoint_claims)
+    }
 }
 
 
