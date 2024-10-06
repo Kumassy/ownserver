@@ -20,7 +20,7 @@ use crate::error::Error;
 use crate::{local, Store};
 use crate::StreamMessage;
 use ownserver_lib::{
-    ClientId, CLIENT_HELLO_VERSION, ControlPacketV2, ControlPacketV2Codec, ClientHelloV2, EndpointClaims, Endpoints, ServerHelloV2, Protocol,
+    ClientHelloV2, ClientId, ClientType, ControlPacketV2, ControlPacketV2Codec, EndpointClaims, Endpoints, Protocol, ServerHelloV2, CLIENT_HELLO_VERSION
 };
 
 pub async fn run(
@@ -171,6 +171,7 @@ where
         version: CLIENT_HELLO_VERSION,
         token,
         endpoint_claims,
+        client_type: ClientType::Auth,
     };
     debug!("Sent client hello: {:?}", hello);
     let hello_data = serde_json::to_vec(&hello).unwrap_or_default();

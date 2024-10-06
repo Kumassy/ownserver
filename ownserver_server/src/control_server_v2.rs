@@ -302,7 +302,7 @@ mod verify_client_handshake_test {
     use super::*;
     use ownserver_auth::make_jwt;
     use chrono::Duration;
-    use ownserver_lib::Protocol;
+    use ownserver_lib::{ClientType, Protocol};
 
     static CONFIG: OnceCell<Config> = OnceCell::new();
     static EMPTY_CONFIG: OnceCell<Config> = OnceCell::new();
@@ -334,6 +334,7 @@ mod verify_client_handshake_test {
                 local_port: 25565,
                 remote_port: 0,
             }],
+            client_type: ClientType::Auth,
         })
         .unwrap_or_default();
         let client_hello_data = Message::binary(hello).into_bytes();
@@ -379,6 +380,7 @@ mod verify_client_handshake_test {
                 local_port: 25565,
                 remote_port: 0,
             }],
+            client_type: ClientType::Auth,
         })
         .unwrap_or_default();
         let client_hello_data = Message::binary(hello).into_bytes();
@@ -401,6 +403,7 @@ mod verify_client_handshake_test {
                 local_port: 25565,
                 remote_port: 0,
             }],
+            client_type: ClientType::Auth,
         })
         .unwrap_or_default();
         let client_hello_data = Message::binary(hello).into_bytes();
@@ -422,6 +425,7 @@ mod verify_client_handshake_test {
                 local_port: 25565,
                 remote_port: 0,
             }],
+            client_type: ClientType::Auth,
         })
         .unwrap_or_default();
         let client_hello_data = Message::binary(hello).into_bytes();
@@ -441,6 +445,7 @@ mod verify_client_handshake_test {
                 local_port: 25565,
                 remote_port: 0,
             }],
+            client_type: ClientType::Auth,
         })
         .unwrap_or_default();
         let client_hello_data = Message::binary(hello).into_bytes();
