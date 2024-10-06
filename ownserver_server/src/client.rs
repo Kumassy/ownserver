@@ -15,7 +15,7 @@ use chrono::Utc;
 #[derive(Debug)]
 pub struct Client {
     pub client_id: ClientId,
-    endpoints: Endpoints,
+    pub endpoints: Endpoints,
 
     ws_tx: SplitSink<WebSocket, Message>,
     // ws_rx: SplitStream<WebSocket>,

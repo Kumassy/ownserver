@@ -285,6 +285,7 @@ async fn handle_new_connection(
 
     match provisioning_action {
         ProvisioningAction::NewClient { claims } => {
+            tracing::info!("process NewClient action");
             // 3. convert client hello to server hello
             // allocate ports based on client claims
             let server_hello = process_client_claims(config, store.clone(), claims).await;
@@ -325,9 +326,25 @@ async fn handle_new_connection(
                 }
 
             }
+            increment_counter!("ownserver_server.control_server.handle_new_connection.newclient.success");
         }
         ProvisioningAction::Reconnect { client_id } => {
-            unimplemented!();
+            tracing::info!("process Reconnect action");
+            let mut old_client = match store.remove_client(client_id).await {
+                Some(client) => client,
+                None => {
+                    tracing::warn!(cid=%client_id, "try to reconnect, but client not found");
+                    increment_counter!("ownserver_server.control_server.handle_new_connection.reconnect.client_not_found");
+                    return;
+                }
+            };
+            old_client.disable().await;
+            let endpoints = old_client.endpoints;
+
+            let new_client = Client::new(store.clone(), client_id, endpoints, websocket);
+            store.add_client(new_client).await;
+            tracing::info!(cid=%client_id, "register reconnect client to store");
+            increment_counter!("ownserver_server.control_server.handle_new_connection.reconnect.success");
         },
     }
 

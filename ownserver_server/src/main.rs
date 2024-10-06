@@ -85,6 +85,11 @@ async fn main() {
     describe_gauge!("ownserver_server.store.streams", "[gauge] The number of RemoteStreams at this time.");
     describe_gauge!("ownserver_server.stream.rtt", Unit::Milliseconds, "[gauge] RTT between server and client.");
     describe_counter!("ownserver_server.control_server.handle_new_connection", "[counter] The number of successfully accepted websocket connections so far.");
+    describe_counter!("ownserver_server.control_server.handle_new_connection.read_client_hello_error", "[counter] The number of times the server failed to read request from clients.");
+    describe_counter!("ownserver_server.control_server.handle_new_connection.send_server_hello_error", "[counter] The server tried to send error to clients, but failed.");
+    describe_counter!("ownserver_server.control_server.handle_new_connection.reconnect.client_not_found", "[counter] The server received a reconnect request from clients, but the client was not found.");
+    describe_counter!("ownserver_server.control_server.handle_new_connection.newclient.success", "[counter] The number of successfully processed new client requests.");
+    describe_counter!("ownserver_server.control_server.handle_new_connection.reconnect.success", "[counter] The number of successfully processed reconnect requests.");
     describe_counter!("ownserver_server.control_server.try_client_handshake.success", "[counter] The number of succesfully handshake requests so far.");
     describe_counter!("ownserver_server.control_server.try_client_handshake.service_temporary_unavailable", "[counter] The number of handshake error ServiceTemporaryUnavailable so far.");
     describe_counter!("ownserver_server.control_server.try_client_handshake.invalid_client_hello", "[counter] The number of handshake error InvalidClientHello so far.");

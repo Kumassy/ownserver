@@ -87,6 +87,14 @@ impl Store {
         gauge!("ownserver_server.store.clients", v);
     }
 
+    pub async fn remove_client(&self, client_id: ClientId) -> Option<Client> {
+        let client = self.clients.write().await.remove(&client_id);
+
+        let v = self.len_clients().await as f64;
+        gauge!("ownserver_server.store.clients", v);
+        client
+    }
+
     pub async fn add_remote(&self, remote: RemoteStream, peer_addr: SocketAddr) {
         let stream_id = remote.stream_id();
         self.streams.write().await.insert(stream_id, remote);
