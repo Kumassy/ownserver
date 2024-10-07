@@ -13,7 +13,6 @@ use ownserver_lib::{ControlPacketV2, EndpointId, RemoteInfo, StreamId};
 /// Establish a new local stream and start processing messages to it
 pub async fn setup_new_stream(
     store: Arc<Store>,
-    tunnel_tx: UnboundedSender<ControlPacketV2>,
     stream_id: StreamId,
     endpoint_id: EndpointId,
     remote_info: RemoteInfo,
@@ -41,7 +40,7 @@ pub async fn setup_new_stream(
     let store_ = store.clone();
     let local_udp_ = local_udp.clone();
     tokio::spawn(async move {
-        let _ = process_local_udp(local_udp_, tunnel_tx, stream_id).await;
+        let _ = process_local_udp(store_.clone(), local_udp_, stream_id).await;
         store_.remove_stream(&stream_id);
         info!("sid={} remove stream to active_streams. len={}", &stream_id, store_.len_stream());
     });
@@ -61,9 +60,8 @@ pub async fn setup_new_stream(
 }
 
 pub async fn process_local_udp(
-    // mut stream: ReadHalf<TcpStream>,
+    store: Arc<Store>,
     stream: Arc<UdpSocket>,
-    mut tunnel: UnboundedSender<ControlPacketV2>,
     stream_id: StreamId,
 ) {
     let mut buf = [0; 4 * 1024];
@@ -91,7 +89,7 @@ pub async fn process_local_udp(
         );
 
         let packet = ControlPacketV2::Data(stream_id, data.clone());
-        if let Err(e) = tunnel.send(packet).await {
+        if let Err(e) = store.send_to_server(packet).await {
             error!("sid={} failed to tunnel packet from local tcp to tunnel: {:?}", &stream_id, e);
             return;
         }

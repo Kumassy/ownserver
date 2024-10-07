@@ -15,7 +15,6 @@ use ownserver_lib::{ControlPacketV2, EndpointId, RemoteInfo, StreamId};
 /// Establish a new local stream and start processing messages to it
 pub async fn setup_new_stream(
     store: Arc<Store>,
-    mut tunnel_tx: UnboundedSender<ControlPacketV2>,
     stream_id: StreamId,
     endpoint_id: EndpointId,
     remote_info: RemoteInfo,
@@ -27,7 +26,7 @@ pub async fn setup_new_stream(
         Ok(s) => s,
         Err(e) => {
             warn!("sid={} eid={} failed to connect to local service: {:?}", stream_id, endpoint_id, e);
-            let _ = tunnel_tx.send(ControlPacketV2::Refused(stream_id)).await;
+            let _ = store.send_to_server(ControlPacketV2::Refused(stream_id)).await;
             return Err(e);
         }
     };
@@ -36,7 +35,7 @@ pub async fn setup_new_stream(
     // Read local tcp bytes, send them tunnel
     let store_ = store.clone();
     tokio::spawn(async move {
-        let _ = process_local_tcp(stream, tunnel_tx, stream_id).await;
+        let _ = process_local_tcp(store_.clone(), stream, stream_id).await;
         store_.remove_stream(&stream_id);
         info!("sid={} remove stream to active_streams. len={}", &stream_id, store_.len_stream());
     });
@@ -56,8 +55,8 @@ pub async fn setup_new_stream(
 }
 
 pub async fn process_local_tcp(
+    store: Arc<Store>,
     mut stream: ReadHalf<TcpStream>,
-    mut tunnel: UnboundedSender<ControlPacketV2>,
     stream_id: StreamId,
 ) {
     let mut buf = [0; 4 * 1024];
@@ -84,7 +83,7 @@ pub async fn process_local_tcp(
         );
 
         let packet = ControlPacketV2::Data(stream_id, data.clone());
-        if let Err(e) = tunnel.send(packet).await {
+        if let Err(e) = store.send_to_server(packet).await {
             error!("sid={} failed to tunnel packet from local tcp to tunnel: {:?}", &stream_id, e);
             return;
         }

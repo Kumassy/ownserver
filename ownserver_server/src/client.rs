@@ -70,7 +70,7 @@ impl Client {
 
 
                 
-                        tracing::trace!(cid = %client_id, ?packet, "got control packet from client");
+                        tracing::debug!(cid = %client_id, ?packet, "got control packet from client");
 
                         let (stream_id, message) = match packet {
                             ControlPacketV2::Data(stream_id, data) => {
@@ -142,7 +142,7 @@ impl Client {
 
     pub async fn disable(&mut self) {
         tracing::info!(cid = %self.client_id, "client was disabled");
-        self.ct.cancel();
+        // self.ct.cancel();
         self.disabled = true;
 
         // self.store.disable_remote_by_client(self.client_id).await;

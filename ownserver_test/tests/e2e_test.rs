@@ -353,6 +353,7 @@ mod e2e_tcp_test {
 
                 // close client
                 proxy_client.cancellation_token.cancel();
+                proxy_client.store.remove_client().await;
                 wait!();
 
                 // reconnect

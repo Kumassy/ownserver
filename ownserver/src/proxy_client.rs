@@ -17,7 +17,7 @@ use tokio_util::sync::CancellationToken;
 use url::Url;
 
 use crate::error::Error;
-use crate::{local, Store};
+use crate::{local, Client, Store};
 use crate::StreamMessage;
 use ownserver_lib::{
     ClientHelloV2, ClientId, ClientType, ControlPacketV2, ControlPacketV2Codec, EndpointClaims, Endpoints, Protocol, ServerHelloV2, CLIENT_HELLO_VERSION
@@ -60,109 +60,35 @@ pub async fn run_with_token(
     }
     store.register_endpoints(client_info.endpoints.clone());
 
-    // split reading and writing
-    let (mut ws_sink, mut ws_stream) = websocket.split();
-
-    // tunnel channel
-    // TODO: Client を再作成しても channel を使い回すようにする
-    let (mut tunnel_tx, mut tunnel_rx) = unbounded::<ControlPacketV2>();
+    // // split reading and writing
+    // let (mut ws_sink, mut ws_stream) = websocket.split();
 
     let mut set = JoinSet::new();
     let client_id = client_info.client_id;
     let ct = cancellation_token.child_token();
-    // continuously write to websocket tunnel
-    set.spawn(async move {
-        loop {
-            tokio::select! {
-                v = tunnel_rx.next() => {
-                    let packet = match v {
-                        Some(data) => data,
-                        None => {
-                            warn!("cid={} control flow didn't send anything!", client_id);
-                            return Ok(());
-                        }
-                    };
 
-                    let mut codec = ControlPacketV2Codec::new();
-                    let mut bytes = BytesMut::new();
-                    if let Err(e) = codec.encode(packet, &mut bytes) {
-                        warn!("cid={} failed to encode message: {:?}", client_id, e);
-                        return Ok(());
-                    }
-                    if let Err(e) = ws_sink.send(Message::binary(bytes.to_vec())).await {
-                        warn!("cid={} failed to write message to tunnel websocket: {:?}", client_id, e);
-                        return Ok(());
-                    }
+    // TODO: implement ping
 
-                },
-                _ = ct.cancelled() => {
-                    return Ok(());
-                }
-            }
-        }
-    });
+    // set.spawn(async move {
+    //     loop {
+    //         tokio::select! {
+    //             _ = tokio::time::sleep(Duration::from_secs(ping_interval)) => {
+    //                 let now = Utc::now();
+    //                 let packet = ControlPacketV2::Ping(0, now);
+    //                 if let Err(e) =  tunnel_tx_.send(packet).await {
+    //                     error!("cid={} failed to send ping to tx buffer: {:?}", &client_id, e);
+    //                     return Ok(());
+    //                 }
+    //             },
+    //             _ = ct.cancelled() => {
+    //                 return Ok(());
+    //             }
+    //         }
+    //     }
+    // });
 
-    let ct = cancellation_token.child_token();
-    let mut tunnel_tx_ = tunnel_tx.clone();
-    set.spawn(async move {
-        loop {
-            tokio::select! {
-                _ = tokio::time::sleep(Duration::from_secs(ping_interval)) => {
-                    let now = Utc::now();
-                    let packet = ControlPacketV2::Ping(0, now);
-                    if let Err(e) =  tunnel_tx_.send(packet).await {
-                        error!("cid={} failed to send ping to tx buffer: {:?}", &client_id, e);
-                        return Ok(());
-                    }
-                },
-                _ = ct.cancelled() => {
-                    return Ok(());
-                }
-            }
-        }
-    });
-
-    let ct = cancellation_token.child_token();
-    set.spawn(async move {
-        // continuously read from websocket tunnel
-        loop {
-            tokio::select! {
-                v = ws_stream.next() => {
-                    match v {
-                        Some(Ok(message)) if message.is_close() => {
-                            debug!("cid={} got close message", client_id);
-                            return Ok(());
-                        }
-                        Some(Ok(message)) => {
-                            let packet = process_control_flow_message(
-                                store.clone(),
-                                &mut tunnel_tx,
-                                message.into_data(),
-                            )
-                            .await
-                            .map_err(|e| {
-                                error!("cid={} Malformed protocol control packet: {:?}", client_id, e);
-                                Error::MalformedMessageFromServer
-                            })?;
-                            debug!("cid={} Processed data packet: {}", client_id, packet);
-                        }
-                        Some(Err(e)) => {
-                            warn!("cid={} websocket read error: {:?}", client_id, e);
-                            return Err(Error::Timeout);
-                        }
-                        None => {
-                            warn!("cid={} websocket sent none", client_id);
-                            return Err(Error::Timeout);
-                        }
-                    }
-                },
-                _ = ct.cancelled() => {
-                    return Ok(());
-                }
-            }
-        }
-    });
-
+    let client = Client::new(&mut set, store.clone(), client_id, websocket);
+    store.add_client(client).await;
 
     Ok((client_info, set))
 
@@ -317,7 +243,6 @@ pub async fn process_control_flow_message(
                 Protocol::TCP => {
                     local::tcp::setup_new_stream(
                         store.clone(),
-                        tunnel_tx.clone(),
                         stream_id,
                         endpoint_id,
                         remote_info.clone(),
@@ -328,7 +253,6 @@ pub async fn process_control_flow_message(
                 Protocol::UDP => {
                     local::udp::setup_new_stream(
                         store.clone(),
-                        tunnel_tx.clone(),
                         stream_id,
                         endpoint_id,
                         remote_info.clone(),
