@@ -145,7 +145,7 @@ impl Client {
         self.ct.cancel();
         self.disabled = true;
 
-        self.store.disable_remote_by_client(self.client_id).await;
+        // self.store.disable_remote_by_client(self.client_id).await;
     }
 
     pub fn disabled(&self) -> bool {

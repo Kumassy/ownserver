@@ -5,7 +5,7 @@ use ownserver_lib::{EndpointClaim, Protocol};
 use tokio_util::sync::CancellationToken;
 use clap::Parser;
 
-use ownserver::{proxy_client::run, api, Store};
+use ownserver::{api, proxy_client::{run, RequestType}, Store};
 
 #[derive(Parser, Debug)]
 #[command(name = "ownserver")]
@@ -71,7 +71,11 @@ async fn main() -> Result<()> {
 
     let store_ = store.clone();
     let (client_info, mut set) =
-        run(store_, cli.control_port, &cli.token_server, cancellation_token, cli.endpoint, cli.periodic_ping_interval).await?;
+        run(store_, cli.control_port, &cli.token_server, cancellation_token, cli.periodic_ping_interval,
+            RequestType::NewClient {
+                endpoint_claims: cli.endpoint
+            }
+        ).await?;
     info!("client is running under configuration: {:?}", client_info);
 
     if let Some(api_port) = cli.api_port {

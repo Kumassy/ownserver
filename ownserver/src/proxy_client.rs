@@ -23,25 +23,28 @@ use ownserver_lib::{
     ClientHelloV2, ClientId, ClientType, ControlPacketV2, ControlPacketV2Codec, EndpointClaims, Endpoints, Protocol, ServerHelloV2, CLIENT_HELLO_VERSION
 };
 
-pub async fn run(
+pub enum RequestType {
+    NewClient {
+        endpoint_claims: EndpointClaims,
+    },
+    Reconnect,
+}
+
+pub async fn run_with_token(
     store: Arc<Store>,
     control_port: u16,
-    token_server: &str,
     cancellation_token: CancellationToken,
-    endpoint_claims: EndpointClaims,
     ping_interval: u64,
+    token: String,
+    host: String,
+    request_type: RequestType,
 ) -> Result<(ClientInfo, JoinSet<Result<(), Error>>)> {
-    println!("Connecting to auth server: {}", token_server);
-    let (token, host) = fetch_token(token_server).await?;
-    info!("got token: {}, host: {}", token, host);
-    println!("Your proxy server: {}", host);
-
     println!("Connecting to proxy server: {}:{}", host, control_port);
     let url = Url::parse(&format!("ws://{}:{}/tunnel", host, control_port))?;
     let (mut websocket, _) = connect_async(url).await.map_err(|_| Error::ServerDown)?;
     info!("WebSocket handshake has been successfully completed");
 
-    send_client_hello(&mut websocket, token, endpoint_claims).await?;
+    send_client_hello(&mut websocket, token.to_string(), request_type).await?;
     let client_info = verify_server_hello(&mut websocket).await?;
     info!(
         "cid={} got client_info from server: {:?}",
@@ -61,6 +64,7 @@ pub async fn run(
     let (mut ws_sink, mut ws_stream) = websocket.split();
 
     // tunnel channel
+    // TODO: Client を再作成しても channel を使い回すようにする
     let (mut tunnel_tx, mut tunnel_rx) = unbounded::<ControlPacketV2>();
 
     let mut set = JoinSet::new();
@@ -161,17 +165,45 @@ pub async fn run(
 
 
     Ok((client_info, set))
+
+}
+pub async fn run(
+    store: Arc<Store>,
+    control_port: u16,
+    token_server: &str,
+    cancellation_token: CancellationToken,
+    ping_interval: u64,
+    request_type: RequestType,
+) -> Result<(ClientInfo, JoinSet<Result<(), Error>>)> {
+    println!("Connecting to auth server: {}", token_server);
+    let (token, host) = fetch_token(token_server).await?;
+    info!("got token: {}, host: {}", token, host);
+    println!("Your proxy server: {}", host);
+
+    run_with_token(store, control_port, cancellation_token, ping_interval, token, host, request_type).await
 }
 
-pub async fn send_client_hello<T>(websocket: &mut T, token: String, endpoint_claims: EndpointClaims) -> Result<(), T::Error>
+pub async fn send_client_hello<T>(websocket: &mut T, token: String, request_type: RequestType) -> Result<(), T::Error>
 where
     T: Unpin + Sink<Message>,
 {
-    let hello = ClientHelloV2 {
-        version: CLIENT_HELLO_VERSION,
-        token,
-        endpoint_claims,
-        client_type: ClientType::Auth,
+    let hello = match request_type {
+        RequestType::NewClient { endpoint_claims } => {
+            ClientHelloV2 {
+                version: CLIENT_HELLO_VERSION,
+                token,
+                endpoint_claims,
+                client_type: ClientType::Auth,
+            }
+        }
+        RequestType::Reconnect => {
+            ClientHelloV2 {
+                version: CLIENT_HELLO_VERSION,
+                token,
+                endpoint_claims: vec![],
+                client_type: ClientType::Reconnect,
+            }
+        }
     };
     debug!("Sent client hello: {:?}", hello);
     let hello_data = serde_json::to_vec(&hello).unwrap_or_default();

@@ -74,6 +74,7 @@ pub struct ProxyServer {
 }
 
 pub struct ProxyClient {
+    pub store: Arc<ClientStore>,
     pub client_info: ClientInfo,
     pub cancellation_token: CancellationToken,
 }
@@ -136,6 +137,8 @@ pub async fn launch_proxy_server(
 
 pub mod tcp {
 
+    use proxy_client::RequestType;
+
     use super::*;
 
     pub fn get_endpoint_claims_single(local_port: u16) -> EndpointClaims {
@@ -148,13 +151,13 @@ pub mod tcp {
     
     pub async fn launch_proxy_client(
         control_port: u16,
-        endpoint_claims: EndpointClaims,
+        request_type: RequestType,
     ) -> Result<ProxyClient, Box<dyn std::error::Error>> {
         let client_store: Arc<ClientStore> = Default::default();
         let cancellation_token = CancellationToken::new();
     
         let (client_info, mut set) =
-                proxy_client::run(client_store, control_port, "http://127.0.0.1:8888/v0/request_token", cancellation_token.clone(), endpoint_claims, 15)
+                proxy_client::run(client_store.clone(), control_port, "http://127.0.0.1:8888/v0/request_token", cancellation_token.clone(), 15, request_type)
                     .await
                     .expect("failed to launch proxy_client");
         tokio::spawn(async move {
@@ -165,6 +168,34 @@ pub mod tcp {
     
         wait!();
         Ok(ProxyClient {
+            store: client_store,
+            client_info,
+            cancellation_token,
+        })
+    }
+
+    pub async fn launch_proxy_client_reconnect(
+        client_store: Arc<ClientStore>,
+        control_port: u16,
+        token: String,
+        host: String,
+        request_type: RequestType,
+    ) -> Result<ProxyClient, Box<dyn std::error::Error>> {
+        let cancellation_token = CancellationToken::new();
+    
+        let (client_info, mut set) =
+                proxy_client::run_with_token(client_store.clone(), control_port, cancellation_token.clone(), 15, token, host, request_type)
+                    .await
+                    .expect("failed to launch proxy_client");
+        tokio::spawn(async move {
+            while let Some(res) = set.join_next().await {
+                let _ = res.unwrap();
+            }
+        });
+    
+        wait!();
+        Ok(ProxyClient {
+            store: client_store,
             client_info,
             cancellation_token,
         })
@@ -241,7 +272,7 @@ pub mod tcp {
     }
 
 
-    pub async fn with_proxy<T>(endpoint_claims: EndpointClaims, test_func: impl FnOnce(TokenServer, ProxyServer, ProxyClient) -> T)
+    pub async fn with_proxy<T>(request_type: RequestType, test_func: impl FnOnce(TokenServer, ProxyServer, ProxyClient) -> T)
         where
         T: Future<Output = Result<(), Box<dyn std::error::Error>>> + Send,
     {
@@ -251,7 +282,7 @@ pub mod tcp {
         let proxy_server = launch_proxy_server(CONTROL_PORT, REMOTE_PORT_START, REMOTE_PORT_END).await.expect("failed to launch proxy server");
         wait!();
 
-        let proxy_client = launch_proxy_client(CONTROL_PORT, endpoint_claims).await.expect("failed to launch proxy client");
+        let proxy_client = launch_proxy_client(CONTROL_PORT, request_type).await.expect("failed to launch proxy client");
 
         test_func(token_server, proxy_server, proxy_client).await.expect("failed to call test_func");
     }
@@ -278,6 +309,8 @@ pub mod tcp {
 }
 
 pub mod udp {
+    use proxy_client::RequestType;
+
     use super::*;
 
     pub fn get_endpoint_claims_single(local_port: u16) -> EndpointClaims {
@@ -290,13 +323,13 @@ pub mod udp {
 
     pub async fn launch_proxy_client(
         control_port: u16,
-        endpoint_claims: EndpointClaims,
+        request_type: RequestType,
     ) -> Result<ProxyClient, Box<dyn std::error::Error>> {
         let client_store: Arc<ClientStore> = Default::default();
         let cancellation_token = CancellationToken::new();
     
         let (client_info, mut set) =
-            proxy_client::run(client_store, control_port, "http://127.0.0.1:8888/v0/request_token", cancellation_token.clone(), endpoint_claims, 15)
+            proxy_client::run(client_store.clone(), control_port, "http://127.0.0.1:8888/v0/request_token", cancellation_token.clone(), 15, request_type)
                 .await
                 .expect("failed to launch proxy_client");
         tokio::spawn(async move {
@@ -307,6 +340,7 @@ pub mod udp {
     
         wait!();
         Ok(ProxyClient {
+            store: client_store,
             client_info,
             cancellation_token,
         })
@@ -345,7 +379,7 @@ pub mod udp {
     }
 
 
-    pub async fn with_proxy<T>(endpoint_claims: EndpointClaims, test_func: impl FnOnce(TokenServer, ProxyServer, ProxyClient) -> T)
+    pub async fn with_proxy<T>(request_type: RequestType, test_func: impl FnOnce(TokenServer, ProxyServer, ProxyClient) -> T)
         where
         T: Future<Output = Result<(), Box<dyn std::error::Error>>> + Send,
     {
@@ -355,7 +389,7 @@ pub mod udp {
         let proxy_server = launch_proxy_server(CONTROL_PORT, REMOTE_PORT_START, REMOTE_PORT_END).await.expect("failed to launch proxy server");
         wait!();
 
-        let proxy_client = launch_proxy_client(CONTROL_PORT, endpoint_claims).await.expect("failed to launch proxy client");
+        let proxy_client = launch_proxy_client(CONTROL_PORT, request_type).await.expect("failed to launch proxy client");
 
         test_func(token_server, proxy_server, proxy_client).await.expect("failed to call test_func");
     }
