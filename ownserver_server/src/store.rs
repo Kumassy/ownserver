@@ -6,7 +6,7 @@ use metrics::gauge;
 use rand::Rng;
 use tokio::{sync::{RwLock, Mutex}, net::ToSocketAddrs};
 
-use crate::{remote::stream::{RemoteStream, StreamMessage}, Client, ClientStreamError, port_allocator::{PortAllocator, PortAllocatorError}};
+use crate::{port_allocator::{PortAllocator, PortAllocatorError}, remote::stream::{RemoteStream, StreamMessage}, Client, ClientStreamError};
 
 
 #[derive(Debug, Default)]
@@ -73,9 +73,10 @@ impl Store {
             }
         }
     }
-    pub async fn disable_client(&self, client_id: ClientId) {
+
+    pub async fn set_wait_reconnect(&self, client_id: ClientId) {
         if let Some(client) = self.clients.write().await.get_mut(&client_id) {
-            client.disable().await;
+            client.set_wait_reconnect();
         }
     }
 
@@ -110,13 +111,13 @@ impl Store {
 
         let mut eids_to_remove = Vec::new();
         for (_, client ) in self.clients.read().await.iter() {
-            if client.disabled() {
+            if client.can_cleanup() {
                 client.endpoints().iter().for_each(|e| {
                     eids_to_remove.push(e.id)
                 });
             }
         }
-        self.clients.write().await.retain(|_, v| !v.disabled());
+        self.clients.write().await.retain(|_, v| !v.can_cleanup());
         for eid in eids_to_remove {
             if let Err(e) = self.release_endpoint(eid).await {
                 tracing::warn!(eid = %eid, "failed to release endpoint {:?}", e);

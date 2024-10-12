@@ -1,5 +1,4 @@
 use chrono::Utc;
-use console_subscriber::Server;
 use futures::{
     Sink, SinkExt, Stream, StreamExt,
 };
@@ -8,7 +7,6 @@ use ownserver_lib::{ClientHelloV2, ClientType, ControlPacketV2, EndpointClaim, E
 pub use ownserver_lib::{ClientId, StreamId, CLIENT_HELLO_VERSION};
 use ownserver_auth::decode_jwt;
 use metrics::increment_counter;
-use tokio_util::sync::CancellationToken;
 use std::{convert::Infallible, time::Duration};
 use std::net::SocketAddr;
 use tokio::time::sleep;
@@ -308,18 +306,19 @@ async fn handle_new_connection(
 
             // 5. spawn remote listener
             let client = Client::new(store.clone(), client_id, endpoints.clone(), websocket);
+            let ct_child = client.clone_child_token();
             store.add_client(client).await;
             tracing::info!(cid=%client_id, "register client to store");
 
             for endpoint in endpoints {
                 match endpoint.protocol {
                     Protocol::TCP => {
-                        if let Err(e) = remote::tcp::spawn_remote(store.clone(), client_id, endpoint.id, CancellationToken::new()).await {
+                        if let Err(e) = remote::tcp::spawn_remote(store.clone(), client_id, endpoint.id, ct_child.clone()).await {
                             tracing::error!(cid = %client_id, eid = %endpoint.id, "failed to spawn remote listener {:?}", e);
                         }
                     }
                     Protocol::UDP => {
-                        if let Err(e) = remote::udp::spawn_remote(store.clone(), client_id, endpoint.id, CancellationToken::new()).await {
+                        if let Err(e) = remote::udp::spawn_remote(store.clone(), client_id, endpoint.id, ct_child.clone()).await {
                             tracing::error!(cid = %client_id, eid = %endpoint.id, "failed to spawn remote listener {:?}", e);
                         }
                     }
@@ -332,7 +331,7 @@ async fn handle_new_connection(
             let Config { ref host, .. } = config.get().expect("failed to read config");
 
             tracing::info!("process Reconnect action");
-            let mut old_client = match store.remove_client(client_id).await {
+            let old_client = match store.remove_client(client_id).await {
                 Some(client) => client,
                 None => {
                     tracing::warn!(cid=%client_id, "try to reconnect, but client not found");
@@ -340,9 +339,9 @@ async fn handle_new_connection(
                     return;
                 }
             };
-            old_client.disable().await;
+            let endpoints = old_client.endpoints.clone();
+            drop(old_client);
 
-            let endpoints = old_client.endpoints;
             let server_hello = ServerHelloV2::Success {
                 client_id,
                 host: host.clone(),

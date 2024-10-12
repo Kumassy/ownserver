@@ -9,7 +9,7 @@ use tracing::Instrument;
 use warp::ws::{Message, WebSocket};
 
 use crate::{Store, remote::stream::StreamMessage, ClientStreamError};
-use chrono::Utc;
+use chrono::{DateTime, Duration, Utc};
 
 
 #[derive(Debug)]
@@ -18,10 +18,23 @@ pub struct Client {
     pub endpoints: Endpoints,
 
     ws_tx: SplitSink<WebSocket, Message>,
-    // ws_rx: SplitStream<WebSocket>,
-    store: Arc<Store>,
-    ct: CancellationToken,
-    disabled: bool,
+    ct_self: CancellationToken,
+    ct_child: CancellationToken,
+    state: ClientState,
+}
+
+const RECONNECT_WINDOW: Duration = Duration::minutes(2);
+
+#[derive(Debug)]
+pub enum ClientState {
+    /// client websocket is active
+    Connected,
+
+    /// client websocket was disconnected, waiting for reconnect
+    WaitReconnect {
+        /// if client does't reconnect within window, drop streams associated with this client
+        expires: DateTime<Utc>
+    },
 }
 
 impl Client {
@@ -29,7 +42,7 @@ impl Client {
         let (sink, mut stream) = ws.split();
         let token = CancellationToken::new();
 
-        let ct = token.clone();
+        let ct: CancellationToken = token.clone();
         let store_ = store.clone();
         tokio::spawn(async move {
             loop {
@@ -113,16 +126,11 @@ impl Client {
                     }
                 }
             }
-            store_.disable_client(client_id).await;
+            store_.set_wait_reconnect(client_id).await;
         }.instrument(tracing::info_span!("client_read_loop")));
 
-        Self { client_id, endpoints, ws_tx: sink, store, ct: token, disabled: false }
+        Self { client_id, endpoints, ws_tx: sink, ct_self: token, ct_child: CancellationToken::new(), state: ClientState::Connected }
     }
-
-    // pub async fn send_to_stream(&self, stream_id: StreamId, message: StreamMessage) -> Result<(), Box<dyn std::error::Error>> {
-    //     self.store.streams.get_mut(&stream_id).unwrap().send_to_remote(stream_id, message).await?;
-    //     Ok(())
-    // }
 
     pub async fn send_to_client(&mut self, packet: ControlPacketV2) -> Result<(), ClientStreamError> {
         let mut codec = ControlPacketV2Codec::new();
@@ -134,30 +142,45 @@ impl Client {
 
         if let Err(e) =  self.ws_tx.send(Message::binary(bytes.to_vec())).await {
             tracing::debug!(cid = %self.client_id, error = ?e, "client disconnected: aborting");
-            self.disable().await;
+            self.set_wait_reconnect();
             return Err(ClientStreamError::ClientError(format!("failed to communicate with client {:?}", e)))
         }
         Ok(())
     }
 
-    pub async fn disable(&mut self) {
-        tracing::info!(cid = %self.client_id, "client was disabled");
-        // self.ct.cancel();
-        self.disabled = true;
-
-        // self.store.disable_remote_by_client(self.client_id).await;
+    pub fn set_wait_reconnect(&mut self) {
+        self.state = ClientState::WaitReconnect { expires: Utc::now() + RECONNECT_WINDOW };
     }
 
-    pub fn disabled(&self) -> bool {
-        self.disabled
+    pub fn can_cleanup(&self) -> bool {
+        matches!(self.state, ClientState::WaitReconnect { expires } if Utc::now() >= expires)
     }
 
-    pub fn cancellation_token(&self) -> CancellationToken {
-        self.ct.clone()
+    pub fn clone_child_token(&self) -> CancellationToken {
+        self.ct_child.clone()
     }
 
     pub fn endpoints(&self) -> &Endpoints {
         &self.endpoints
     }
 
+}
+
+impl Drop for Client {
+    fn drop(&mut self) {
+        self.ct_self.cancel();
+
+        match self.state {
+            ClientState::Connected => {
+                tracing::warn!(cid = %self.client_id, "dropping connected client");
+            },
+            ClientState::WaitReconnect { expires } if Utc::now() < expires => {
+                tracing::info!(cid = %self.client_id, "dropping client, retain streams");
+            },
+            ClientState::WaitReconnect { .. } => {
+                tracing::info!(cid = %self.client_id, "droppping client and associated streams");
+                self.ct_child.cancel();
+            }
+        }
+    }
 }
