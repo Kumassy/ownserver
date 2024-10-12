@@ -87,7 +87,7 @@ pub async fn run_with_token(
     //     }
     // });
 
-    let client = Client::new(&mut set, store.clone(), client_id, websocket);
+    let client = Client::new(&mut set, store.clone(), client_id, websocket, ct);
     store.add_client(client).await;
 
     Ok((client_info, set))

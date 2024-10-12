@@ -73,14 +73,14 @@ mod e2e_tcp_test {
     async fn refuse_remote_traffic_when_client_canceled() -> Result<(), Box<dyn std::error::Error>> {
         let endpoint_claims = get_endpoint_claims_single(LOCAL_PORT);
         with_proxy(RequestType::NewClient { endpoint_claims }, |_token_server, _proxy_server, proxy_client| async move {
-            let client_info = proxy_client.client_info;
+            let client_info = proxy_client.client_info.clone();
             let remote_addr = format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port);
             wait!();
 
             with_local_server(LOCAL_PORT, |_local_server| async move {
                 // cancel client
-                let cancellation_token = proxy_client.cancellation_token;
-                cancellation_token.cancel();
+                proxy_client.cancel().await;
+                wait!();
 
                 // access remote port
                 // we can access remote server because remote_port_for_client remains open
@@ -105,7 +105,7 @@ mod e2e_tcp_test {
     async fn refuse_remote_traffic_after_client_canceled() -> Result<(), Box<dyn std::error::Error>> {
         let endpoint_claims = get_endpoint_claims_single(LOCAL_PORT);
         with_proxy(RequestType::NewClient { endpoint_claims }, |_token_server, _proxy_server, proxy_client| async move {
-            let client_info = proxy_client.client_info;
+            let client_info = proxy_client.client_info.clone();
             let remote_addr = format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port);
             wait!();
 
@@ -118,8 +118,8 @@ mod e2e_tcp_test {
                 assert_tcp_socket_bytes_matches!(&mut remote, b"hello, foobar");
 
                 // cancel client
-                let cancellation_token = proxy_client.cancellation_token;
-                cancellation_token.cancel();
+                proxy_client.cancel().await;
+                wait!();
 
                 remote.write_all(b"foobar".as_ref()).await?;
                 // assert_tcp_socket_bytes_matches!(remote, b"");
@@ -137,7 +137,7 @@ mod e2e_tcp_test {
     async fn remove_disabled_client_streams() -> Result<(), Box<dyn std::error::Error>> {
         let endpoint_claims = get_endpoint_claims_single(LOCAL_PORT);
         with_proxy(RequestType::NewClient { endpoint_claims }, |_token_server, proxy_server, proxy_client| async move {
-            let client_info = proxy_client.client_info;
+            let client_info = proxy_client.client_info.clone();
             let remote_addr = format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port);
             wait!();
 
@@ -155,8 +155,8 @@ mod e2e_tcp_test {
                 assert_eq!(store.len_clients().await, 1);
                 assert_eq!(store.len_streams().await, 1);
 
-                let cancellation_token = proxy_client.cancellation_token;
-                cancellation_token.cancel();
+                // cancel client
+                proxy_client.cancel().await;
                 wait!();
 
                 // client and stream remains in store
@@ -335,12 +335,9 @@ mod e2e_tcp_test {
     #[serial]
     async fn reconnect_client(
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // TODO: delete this
-        pretty_env_logger::init();
-
         let endpoint_claims = get_endpoint_claims_single(LOCAL_PORT);
         with_proxy(RequestType::NewClient { endpoint_claims }, |_token_server, proxy_server, proxy_client| async move {
-            let client_info = proxy_client.client_info;
+            let client_info = proxy_client.client_info.clone();
             let remote_addr = format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port);
             wait!();
 
@@ -351,9 +348,8 @@ mod e2e_tcp_test {
                 assert_tcp_socket_bytes_matches!(&mut remote, b"hello, foobar");
 
 
-                // close client
-                proxy_client.cancellation_token.cancel();
-                proxy_client.store.remove_client().await;
+                // cancel client
+                proxy_client.cancel().await;
                 wait!();
 
                 // reconnect

@@ -21,9 +21,8 @@ pub struct Client {
     ct_self: CancellationToken,
     ct_child: CancellationToken,
     state: ClientState,
+    reconnect_window: Duration,
 }
-
-const RECONNECT_WINDOW: Duration = Duration::minutes(2);
 
 #[derive(Debug)]
 pub enum ClientState {
@@ -38,7 +37,7 @@ pub enum ClientState {
 }
 
 impl Client {
-    pub fn new(store: Arc<Store>, client_id: ClientId, endpoints: Endpoints, ws: WebSocket) -> Self {
+    pub fn new(store: Arc<Store>, client_id: ClientId, endpoints: Endpoints, ws: WebSocket, reconnect_window: Duration) -> Self {
         let (sink, mut stream) = ws.split();
         let token = CancellationToken::new();
 
@@ -129,7 +128,15 @@ impl Client {
             store_.set_wait_reconnect(client_id).await;
         }.instrument(tracing::info_span!("client_read_loop")));
 
-        Self { client_id, endpoints, ws_tx: sink, ct_self: token, ct_child: CancellationToken::new(), state: ClientState::Connected }
+        Self {
+            client_id,
+            endpoints,
+            ws_tx: sink,
+            ct_self: token,
+            ct_child: CancellationToken::new(),
+            state: ClientState::Connected,
+            reconnect_window,
+        }
     }
 
     pub async fn send_to_client(&mut self, packet: ControlPacketV2) -> Result<(), ClientStreamError> {
@@ -149,7 +156,8 @@ impl Client {
     }
 
     pub fn set_wait_reconnect(&mut self) {
-        self.state = ClientState::WaitReconnect { expires: Utc::now() + RECONNECT_WINDOW };
+        self.state = ClientState::WaitReconnect { expires: Utc::now() + self.reconnect_window };
+        tracing::debug!(cid = %self.client_id, "set client state: {:?}", self.state);
     }
 
     pub fn can_cleanup(&self) -> bool {

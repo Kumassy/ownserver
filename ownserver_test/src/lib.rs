@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use chrono::Duration;
 use once_cell::sync::OnceCell;
 
 use ownserver_auth::build_routes;
@@ -79,6 +80,13 @@ pub struct ProxyClient {
     pub cancellation_token: CancellationToken,
 }
 
+impl ProxyClient {
+    pub async fn cancel(&self) {
+        self.cancellation_token.cancel();
+        self.store.remove_client().await;
+    }
+}
+
     
 pub struct LocalServer {
     
@@ -114,6 +122,7 @@ pub async fn launch_proxy_server(
             remote_port_end,
             periodic_cleanup_interval: 2 << 30,
             periodic_ping_interval: 2 << 30,
+            reconnect_window: Duration::seconds(2),
         }
     );
 

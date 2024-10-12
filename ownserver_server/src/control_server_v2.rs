@@ -285,6 +285,7 @@ async fn handle_new_connection(
     match provisioning_action {
         ProvisioningAction::NewClient { claims } => {
             tracing::info!("process NewClient action");
+            let Config { reconnect_window, ..  } = config.get().expect("failed to read config");
             // 3. convert client hello to server hello
             // allocate ports based on client claims
             let server_hello = process_client_claims(config, store.clone(), claims).await;
@@ -305,7 +306,7 @@ async fn handle_new_connection(
             };
 
             // 5. spawn remote listener
-            let client = Client::new(store.clone(), client_id, endpoints.clone(), websocket);
+            let client = Client::new(store.clone(), client_id, endpoints.clone(), websocket, *reconnect_window);
             let ct_child = client.clone_child_token();
             store.add_client(client).await;
             tracing::info!(cid=%client_id, "register client to store");
@@ -328,7 +329,7 @@ async fn handle_new_connection(
             increment_counter!("ownserver_server.control_server.handle_new_connection.newclient.success");
         }
         ProvisioningAction::Reconnect { client_id } => {
-            let Config { ref host, .. } = config.get().expect("failed to read config");
+            let Config { ref host, reconnect_window,  .. } = config.get().expect("failed to read config");
 
             tracing::info!("process Reconnect action");
             let old_client = match store.remove_client(client_id).await {
@@ -353,7 +354,7 @@ async fn handle_new_connection(
                 return;
             }
 
-            let new_client = Client::new(store.clone(), client_id, endpoints, websocket);
+            let new_client = Client::new(store.clone(), client_id, endpoints, websocket, *reconnect_window);
             store.add_client(new_client).await;
             tracing::info!(cid=%client_id, "register reconnect client to store");
             increment_counter!("ownserver_server.control_server.handle_new_connection.reconnect.success");
@@ -382,6 +383,7 @@ mod verify_client_handshake_test {
                 remote_port_end: 10011,
                 periodic_cleanup_interval: 15,
                 periodic_ping_interval: 15,
+                reconnect_window: Duration::minutes(2)
             }
         );
         &CONFIG

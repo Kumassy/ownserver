@@ -70,12 +70,10 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn new(set: &mut JoinSet<Result<(), Error>>, store: Arc<Store>, client_id: ClientId, websocket: WebSocketStream<MaybeTlsStream<TcpStream>>) -> Self {
+    pub fn new(set: &mut JoinSet<Result<(), Error>>, store: Arc<Store>, client_id: ClientId, websocket: WebSocketStream<MaybeTlsStream<TcpStream>>, token: CancellationToken) -> Self {
         let (ws_tx, mut ws_stream) = websocket.split();
         
-        let token = CancellationToken::new();
-        let ct = token.child_token();
-
+        let ct = token.clone();
         let store_ = store.clone();
         set.spawn(async move {
             loop {

@@ -1,3 +1,4 @@
+use chrono::Duration;
 use ownserver_server::Store;
 pub use ownserver_server::{
     port_allocator::PortAllocator,
@@ -37,6 +38,9 @@ struct Opt {
 
     #[structopt(long, default_value = "15")]
     periodic_ping_interval: u64,
+
+    #[structopt(long, default_value = "2")]
+    reconnect_window_minutes: i64,
 }
 
 impl From<Opt> for Config {
@@ -49,6 +53,7 @@ impl From<Opt> for Config {
             remote_port_end,
             periodic_cleanup_interval,
             periodic_ping_interval,
+            reconnect_window_minutes,
             ..
         } = opt;
 
@@ -60,6 +65,7 @@ impl From<Opt> for Config {
             remote_port_end,
             periodic_cleanup_interval,
             periodic_ping_interval,
+            reconnect_window: Duration::minutes(reconnect_window_minutes),
         }
     }
 }

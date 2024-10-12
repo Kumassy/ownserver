@@ -107,11 +107,11 @@ impl Store {
 
     pub async fn cleanup(&self) {
         tracing::debug!("Store::cleanup");
-        self.streams.write().await.retain(|_, v| !v.disabled());
 
         let mut eids_to_remove = Vec::new();
         for (_, client ) in self.clients.read().await.iter() {
             if client.can_cleanup() {
+                self.disable_remote_by_client(client.client_id).await;
                 client.endpoints().iter().for_each(|e| {
                     eids_to_remove.push(e.id)
                 });
@@ -123,6 +123,8 @@ impl Store {
                 tracing::warn!(eid = %eid, "failed to release endpoint {:?}", e);
             }
         }
+
+        self.streams.write().await.retain(|_, v| !v.disabled());
 
         let v = self.len_clients().await as f64;
         gauge!("ownserver_server.store.clients", v);
