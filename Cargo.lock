@@ -1569,7 +1569,6 @@ dependencies = [
  "rmp-serde",
  "serde",
  "serde_json",
- "serial_test",
  "tokio",
  "tokio-test",
  "tokio-tungstenite 0.17.2",

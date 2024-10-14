@@ -113,7 +113,7 @@ async fn main() {
     let store = Arc::new(Store::new(*remote_port_start..*remote_port_end));
 
     let mut set = run(
-        &CONFIG,
+        CONFIG.get().expect("failed to get config"),
         store,
     ).await;
     

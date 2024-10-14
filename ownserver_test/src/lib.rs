@@ -1,6 +1,5 @@
 use std::sync::Arc;
 use chrono::Duration;
-use once_cell::sync::OnceCell;
 
 use ownserver_auth::build_routes;
 use ownserver_server::{
@@ -19,6 +18,8 @@ use tokio_util::sync::CancellationToken;
 use tokio::net::UdpSocket;
 use futures::Future;
 
+mod ports;
+pub use ports::{use_ports, PortSet};
 
 #[macro_export]
 macro_rules! wait {
@@ -56,15 +57,6 @@ macro_rules! assert_udp_socket_bytes_matches {
         assert_eq!(data, $expected);  
     };
 }
-
-pub static CONFIG: OnceCell<Config> = OnceCell::new();
-
-pub const CONTROL_PORT: u16 = 5000;
-pub const LOCAL_PORT: u16 = 3000;
-pub const REMOTE_PORT_START: u16 = 4500;
-pub const REMOTE_PORT_END: u16 = 4599;
-pub const TOKEN_PORT: u16 = 8888;
-
 
 pub struct TokenServer {
 }
@@ -113,25 +105,23 @@ pub async fn launch_proxy_server(
     remote_port_end: u16
 ) -> Result<ProxyServer, Box<dyn std::error::Error>> {
 
-    let config = CONFIG.get_or_init(||
-        Config {
-            control_port,
-            token_secret: "supersecret".to_string(),
-            host: "127.0.0.1".to_string(),
-            remote_port_start,
-            remote_port_end,
-            periodic_cleanup_interval: 2 << 30,
-            periodic_ping_interval: 2 << 30,
-            reconnect_window: Duration::seconds(2),
-        }
-    );
+    let config = Box::leak(Box::new(Config {
+        control_port,
+        token_secret: "supersecret".to_string(),
+        host: "127.0.0.1".to_string(),
+        remote_port_start,
+        remote_port_end,
+        periodic_cleanup_interval: 2 << 30,
+        periodic_ping_interval: 2 << 30,
+        reconnect_window: Duration::seconds(2),
+    }));
 
     let store = Arc::new(Store::new(config.remote_port_start..config.remote_port_end));
 
     let store_ = store.clone();
     tokio::spawn(async move {
         proxy_server::run(
-            &CONFIG,
+            config,
             store_,
         )
         .await.join_next().await;
@@ -159,6 +149,7 @@ pub mod tcp {
     }
     
     pub async fn launch_proxy_client(
+        token_port: u16,
         control_port: u16,
         request_type: RequestType,
     ) -> Result<ProxyClient, Box<dyn std::error::Error>> {
@@ -166,7 +157,7 @@ pub mod tcp {
         let cancellation_token = CancellationToken::new();
     
         let (client_info, mut set) =
-                proxy_client::run(client_store.clone(), control_port, "http://127.0.0.1:8888/v0/request_token", cancellation_token.clone(), 15, request_type)
+                proxy_client::run(client_store.clone(), control_port, &format!("http://127.0.0.1:{}/v0/request_token", token_port), cancellation_token.clone(), 15, request_type)
                     .await
                     .expect("failed to launch proxy_client");
         tokio::spawn(async move {
@@ -281,17 +272,17 @@ pub mod tcp {
     }
 
 
-    pub async fn with_proxy<T>(request_type: RequestType, test_func: impl FnOnce(TokenServer, ProxyServer, ProxyClient) -> T)
+    pub async fn with_proxy<T>(port_set: PortSet, request_type: RequestType, test_func: impl FnOnce(TokenServer, ProxyServer, ProxyClient) -> T)
         where
         T: Future<Output = Result<(), Box<dyn std::error::Error>>> + Send,
     {
-        let token_server = launch_token_server(TOKEN_PORT).await;
+        let token_server = launch_token_server(port_set.token_port).await;
         wait!();
 
-        let proxy_server = launch_proxy_server(CONTROL_PORT, REMOTE_PORT_START, REMOTE_PORT_END).await.expect("failed to launch proxy server");
+        let proxy_server = launch_proxy_server(port_set.control_port, port_set.remote_ports.start, port_set.remote_ports.end).await.expect("failed to launch proxy server");
         wait!();
 
-        let proxy_client = launch_proxy_client(CONTROL_PORT, request_type).await.expect("failed to launch proxy client");
+        let proxy_client = launch_proxy_client(port_set.token_port, port_set.control_port, request_type).await.expect("failed to launch proxy client");
 
         test_func(token_server, proxy_server, proxy_client).await.expect("failed to call test_func");
     }
@@ -331,6 +322,7 @@ pub mod udp {
     }
 
     pub async fn launch_proxy_client(
+        token_port: u16,
         control_port: u16,
         request_type: RequestType,
     ) -> Result<ProxyClient, Box<dyn std::error::Error>> {
@@ -338,7 +330,7 @@ pub mod udp {
         let cancellation_token = CancellationToken::new();
     
         let (client_info, mut set) =
-            proxy_client::run(client_store.clone(), control_port, "http://127.0.0.1:8888/v0/request_token", cancellation_token.clone(), 15, request_type)
+            proxy_client::run(client_store.clone(), control_port, &format!("http://127.0.0.1:{}/v0/request_token", token_port), cancellation_token.clone(), 15, request_type)
                 .await
                 .expect("failed to launch proxy_client");
         tokio::spawn(async move {
@@ -388,17 +380,17 @@ pub mod udp {
     }
 
 
-    pub async fn with_proxy<T>(request_type: RequestType, test_func: impl FnOnce(TokenServer, ProxyServer, ProxyClient) -> T)
+    pub async fn with_proxy<T>(port_set: PortSet, request_type: RequestType, test_func: impl FnOnce(TokenServer, ProxyServer, ProxyClient) -> T)
         where
         T: Future<Output = Result<(), Box<dyn std::error::Error>>> + Send,
     {
-        let token_server = launch_token_server(TOKEN_PORT).await;
+        let token_server = launch_token_server(port_set.token_port).await;
         wait!();
 
-        let proxy_server = launch_proxy_server(CONTROL_PORT, REMOTE_PORT_START, REMOTE_PORT_END).await.expect("failed to launch proxy server");
+        let proxy_server = launch_proxy_server(port_set.control_port, port_set.remote_ports.start, port_set.remote_ports.end).await.expect("failed to launch proxy server");
         wait!();
 
-        let proxy_client = launch_proxy_client(CONTROL_PORT, request_type).await.expect("failed to launch proxy client");
+        let proxy_client = launch_proxy_client(port_set.token_port, port_set.control_port, request_type).await.expect("failed to launch proxy client");
 
         test_func(token_server, proxy_server, proxy_client).await.expect("failed to call test_func");
     }
