@@ -60,36 +60,31 @@ pub async fn run_with_token(
     }
     store.register_endpoints(client_info.endpoints.clone());
 
-    // // split reading and writing
-    // let (mut ws_sink, mut ws_stream) = websocket.split();
-
     let mut set = JoinSet::new();
     let client_id = client_info.client_id;
     let ct = cancellation_token.child_token();
 
-    // TODO: implement ping
-
-    // set.spawn(async move {
-    //     loop {
-    //         tokio::select! {
-    //             _ = tokio::time::sleep(Duration::from_secs(ping_interval)) => {
-    //                 let now = Utc::now();
-    //                 let packet = ControlPacketV2::Ping(0, now);
-    //                 if let Err(e) =  tunnel_tx_.send(packet).await {
-    //                     error!("cid={} failed to send ping to tx buffer: {:?}", &client_id, e);
-    //                     return Ok(());
-    //                 }
-    //             },
-    //             _ = ct.cancelled() => {
-    //                 return Ok(());
-    //             }
-    //         }
-    //     }
-    // });
-
-    let client = Client::new(&mut set, store.clone(), client_id, websocket, ct);
+    let client = Client::new(&mut set, store.clone(), client_id, websocket, ct.clone());
     store.add_client(client).await;
 
+    set.spawn(async move {
+        loop {
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_secs(ping_interval)) => {
+                    let now = Utc::now();
+                    let packet = ControlPacketV2::Ping(0, now);
+
+                    if let Err(e) = store.send_to_server(packet).await {
+                        error!("cid={} failed to send ping to tx buffer: {:?}", &client_id, e);
+                        return Ok(());
+                    }
+                },
+                _ = ct.cancelled() => {
+                    return Ok(());
+                }
+            }
+        }
+    });
     Ok((client_info, set))
 
 }

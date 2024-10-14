@@ -140,6 +140,12 @@ impl Client {
     }
 }
 
+impl Drop for Client {
+    fn drop(&mut self) {
+        self.ct.cancel();
+    }
+}
+
 async fn process_control_flow_message(
     store: Arc<Store>,
     payload: Vec<u8>,
