@@ -31,6 +31,14 @@ pub mod error;
 pub mod local;
 pub mod proxy_client;
 pub mod api;
+pub mod recorder;
+
+#[derive(Debug, Clone)]
+pub struct Config {
+    pub control_port: u16,
+    pub token_server: String,
+    pub ping_interval: u64,
+}
 
 #[derive(Debug, Clone)]
 pub struct LocalStream {

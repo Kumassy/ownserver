@@ -5,6 +5,7 @@ use futures::channel::mpsc::{unbounded, UnboundedSender};
 use futures::{Sink, SinkExt, Stream, StreamExt};
 use log::*;
 use serde::{Deserialize, Serialize};
+use tokio::signal;
 use tokio_util::codec::{Encoder, Decoder};
 use std::sync::Arc;
 use std::time::Duration;
@@ -17,12 +18,14 @@ use tokio_util::sync::CancellationToken;
 use url::Url;
 
 use crate::error::Error;
-use crate::{local, Client, Store};
+use crate::recorder::record_client_info;
+use crate::{local, recorder::record_error, record_log, Client, Config, Store};
 use crate::StreamMessage;
 use ownserver_lib::{
-    ClientHelloV2, ClientId, ClientType, ControlPacketV2, ControlPacketV2Codec, EndpointClaims, Endpoints, Protocol, ServerHelloV2, CLIENT_HELLO_VERSION
+    ClientHelloV2, ClientId, ClientType, ControlPacketV2, ControlPacketV2Codec, Endpoint, EndpointClaims, Endpoints, Protocol, ServerHelloV2, CLIENT_HELLO_VERSION
 };
 
+#[derive(Debug, Clone)]
 pub enum RequestType {
     NewClient {
         endpoint_claims: EndpointClaims,
@@ -103,6 +106,109 @@ pub async fn run(
 
     run_with_token(store, control_port, cancellation_token, ping_interval, token, host, request_type).await
 }
+
+
+async fn new_run_client(
+    config: &'static Config,
+    store: Arc<Store>,
+    cancellation_token: CancellationToken,
+    endpoint_claims: EndpointClaims,
+) -> Result<()> {
+    // get token from token server
+    record_log!("Connecting to auth server: {}", config.token_server);
+    let (mut token, host) = fetch_token(&config.token_server).await?;
+    info!("got token: {}, host: {}", token, host);
+    record_log!("Your proxy server: {}", host);
+
+    let reconnect_attempts = 0;
+    let mut request_type = RequestType::NewClient { endpoint_claims };
+    loop {
+        // TODO: backoff
+
+        // handshake
+        record_log!("Connecting to proxy server: {}:{}", host, config.control_port);
+        let url = Url::parse(&format!("ws://{}:{}/tunnel", host, config.control_port))?;
+
+        let mut websocket = match connect_async(url).await {
+            Ok((websocket, _)) => websocket,
+            Err(_) => {
+                record_error(Error::ServerDown);
+                continue 
+            }
+        };
+        info!("WebSocket handshake has been successfully completed");
+    
+        if let Err(e) = send_client_hello(&mut websocket, token.to_string(), request_type.clone()).await {
+            record_error(e.into());
+            continue;
+        }
+
+        let client_info = match verify_server_hello(&mut websocket).await {
+            Ok(client_info) => client_info,
+            Err(e) => {
+                record_error(e);
+                continue  
+            }
+        };
+        let client_id = client_info.client_id;
+        store.register_endpoints(client_info.endpoints.clone());
+        record_client_info(client_info);
+
+
+        // spawn main thread
+        let mut set = JoinSet::new();
+        let ct = cancellation_token.clone();
+    
+        let client = Client::new(&mut set, store.clone(), client_id, websocket, ct.clone());
+        store.add_client(client).await;
+    
+        let store_ = store.clone();
+        set.spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = tokio::time::sleep(Duration::from_secs(config.ping_interval)) => {
+                        let now = Utc::now();
+                        let packet = ControlPacketV2::Ping(0, now);
+    
+                        if let Err(e) = store_.send_to_server(packet).await {
+                            warn!("cid={} failed to send ping to tx buffer: {:?}", &client_id, e);
+                            return Err(e);
+                        }
+                    },
+                    _ = ct.cancelled() => {
+                        return Ok(());
+                    }
+                }
+            }
+        });
+
+        tokio::select! {
+            // some tasks crashed
+            v = set.join_next() => {
+                info!("some tasks exited: {:?}, reconnecting...", v);
+
+                // abort current tasks
+                cancellation_token.cancel();
+                set.shutdown();
+
+                // TODO: get token
+                token = "new_token".to_string();
+                request_type = RequestType::Reconnect;
+                continue;
+            },
+            // cancelled by API
+            _ = cancellation_token.cancelled() => {
+                break;
+            },
+            // cancelled by terminal
+            _ = signal::ctrl_c() => {
+                break;
+            }
+        }
+    }
+    Ok(())
+}
+
 
 pub async fn send_client_hello<T>(websocket: &mut T, token: String, request_type: RequestType) -> Result<(), T::Error>
 where

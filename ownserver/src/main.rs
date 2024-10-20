@@ -5,7 +5,7 @@ use ownserver_lib::{EndpointClaim, Protocol};
 use tokio_util::sync::CancellationToken;
 use clap::Parser;
 
-use ownserver::{api, proxy_client::{run, RequestType}, Store};
+use ownserver::{api, proxy_client::{run, RequestType}, record_log, Store};
 
 #[derive(Parser, Debug)]
 #[command(name = "ownserver")]
@@ -99,3 +99,4 @@ async fn main() -> Result<()> {
 
     Ok(())
 }
+
