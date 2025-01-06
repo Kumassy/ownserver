@@ -93,8 +93,8 @@ impl Client {
                                 tracing::debug!(cid = %client_id, sid = %stream_id, "tunnel says: refused");
                                 (stream_id, StreamMessage::TunnelRefused)
                             }
-                            ControlPacketV2::Ping(seq, datetime) => {
-                                tracing::trace!(cid = %client_id, "pong");
+                            ControlPacketV2::Ping(seq, datetime, None) => {
+                                tracing::trace!(cid = %client_id, seq = %seq, datetime=%datetime, "pong");
                                 let _ = store_.send_to_client(client_id, ControlPacketV2::Pong(seq, datetime)).await;
                                 continue;
                             }
@@ -104,6 +104,11 @@ impl Client {
                                 let current_time = Utc::now();
                                 let rtt = current_time.signed_duration_since(datetime).num_milliseconds() as f64;
                                 gauge!("ownserver_server.stream.rtt", rtt, "client_id" => client_id.to_string());
+                                continue;
+                            }
+                            ControlPacketV2::Ping(seq, datetime, Some(token)) => {
+                                tracing::error!(cid = %client_id, seq = %seq, datetime=%datetime, token=%token, "invalid protocol ControlPacketV2::Ping, client cannot send token");
+                                let _ = store_.send_to_client(client_id, ControlPacketV2::Pong(seq, datetime)).await;
                                 continue;
                             }
                             ControlPacketV2::Init(stream_id, endpoint_id, remote_info) => {

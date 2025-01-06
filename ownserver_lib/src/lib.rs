@@ -101,7 +101,7 @@ pub enum ControlPacketV2 {
     Data(StreamId, Vec<u8>),
     Refused(StreamId),
     End(StreamId),
-    Ping(u32,DateTime<chrono::Utc>),
+    Ping(u32,DateTime<chrono::Utc>,Option<String>),
     Pong(u32,DateTime<chrono::Utc>),
 }
 
@@ -112,7 +112,8 @@ impl std::fmt::Display for ControlPacketV2 {
             ControlPacketV2::Data(sid, data) => write!(f, "ControlPacket::Data(sid={}, data_len={})", sid,  data.len()),
             ControlPacketV2::Refused(sid)  => write!(f, "ControlPacket::Refused(sid={})", sid),
             ControlPacketV2::End(sid) => write!(f, "ControlPacket::End(sid={})", sid),
-            ControlPacketV2::Ping(seq, datetime) => write!(f, "ControlPacket::Ping(seq={}, datetime={})", seq, datetime),
+            ControlPacketV2::Ping(seq, datetime, Some(token)) => write!(f, "ControlPacket::Ping(seq={}, datetime={}, token={})", seq, datetime, token),
+            ControlPacketV2::Ping(seq, datetime, None) => write!(f, "ControlPacket::Ping(seq={}, datetime={})", seq, datetime),
             ControlPacketV2::Pong(seq, datetime) => write!(f, "ControlPacket::Pong(seq={}, datetime={})", seq, datetime),
         }
     }

@@ -76,9 +76,23 @@ pub fn spawn<A: Into<SocketAddr> + std::fmt::Debug>(
         loop {
             sleep(Duration::from_secs(periodic_ping_interval)).await;
 
+            
             let current_time = Utc::now();
-            store.broadcast_to_clients(ControlPacketV2::Ping(0, current_time)).await;
-            tracing::debug!("broadcasted ping");
+            let client_ids = store.get_client_ids().await;
+
+            for client_id in client_ids {
+                tracing::debug!(cid = %client_id, "send ping to client");
+                match ReconnectTokenPayload::new(client_id).into_token(&config.token_secret) {
+                    Ok(token) => {
+                        if let Err(e) = store.send_to_client(client_id, ControlPacketV2::Ping(0, current_time, Some(token))).await {
+                            tracing::warn!(cid = %client_id, "failed to send reconnect token {:?}", e);
+                        }
+                    },
+                    Err(e) => {
+                        tracing::warn!(cid = %client_id, "failed to create reconnect token {:?}", e);
+                    }
+                }
+            }
         }
     });
     

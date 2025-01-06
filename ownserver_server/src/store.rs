@@ -1,7 +1,7 @@
 use std::{net::SocketAddr, collections::HashMap, ops::Range};
 
 use dashmap::DashMap;
-use ownserver_lib::{StreamId, ClientId, EndpointClaims, Endpoints, ControlPacketV2, EndpointId, Endpoint};
+use ownserver_lib::{ClientId, ControlPacketV2, Endpoint, EndpointClaims, EndpointId, Endpoints, StreamId};
 use metrics::gauge;
 use rand::Rng;
 use tokio::{sync::{RwLock, Mutex}, net::ToSocketAddrs};
@@ -94,6 +94,10 @@ impl Store {
         let v = self.len_clients().await as f64;
         gauge!("ownserver_server.store.clients", v);
         client
+    }
+
+    pub async fn get_client_ids(&self) -> Vec<ClientId> {
+        self.clients.read().await.keys().cloned().collect()
     }
 
     pub async fn add_remote(&self, remote: RemoteStream, peer_addr: SocketAddr) {

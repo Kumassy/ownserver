@@ -37,4 +37,7 @@ pub enum Error {
 
     #[error("Join error.")]
     JoinError(#[from] tokio::task::JoinError),
+
+    #[error("Failed to get reconnect token.")]
+    ReconnectTokenError,
 }

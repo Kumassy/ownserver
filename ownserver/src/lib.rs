@@ -210,9 +210,14 @@ async fn process_control_flow_message(
                 }
             }
         }
-        ControlPacketV2::Ping(seq, datetime) => {
+        ControlPacketV2::Ping(seq, datetime, None) => {
             debug!("got ping");
             let _ = store.send_to_server(ControlPacketV2::Pong(seq, datetime)).await;
+        }
+        ControlPacketV2::Ping(seq, datetime, Some(ref token)) => {
+            debug!("got ping");
+            let _ = store.send_to_server(ControlPacketV2::Pong(seq, datetime)).await;
+            store.update_reconnect_token(token.clone()).await;
         }
         ControlPacketV2::Pong(_, datetime) => {
             debug!("got pong");
@@ -270,6 +275,7 @@ pub struct Store {
     client: Mutex<Option<Client>>,
     endpoints_map: DashMap<EndpointId, Endpoint>,
     rtt: AtomicI64,
+    reconnect_token: Mutex<Option<String>>,
 }
 
 impl Store {
@@ -351,6 +357,15 @@ impl Store {
             // TODO: Implement Error
             Err(Error::ServerDown)
         }
+    }
+
+    pub async fn get_reconnect_token(&self) -> Option<String> {
+        let t = self.reconnect_token.lock().await;
+        t.clone()
+    }
+    pub async fn update_reconnect_token(&self, token: String) {
+        let mut t = self.reconnect_token.lock().await;
+        *t = Some(token);
     }
 
 }

@@ -75,7 +75,7 @@ pub async fn run_with_token(
             tokio::select! {
                 _ = tokio::time::sleep(Duration::from_secs(ping_interval)) => {
                     let now = Utc::now();
-                    let packet = ControlPacketV2::Ping(0, now);
+                    let packet = ControlPacketV2::Ping(0, now, None);
 
                     if let Err(e) = store.send_to_server(packet).await {
                         error!("cid={} failed to send ping to tx buffer: {:?}", &client_id, e);
@@ -120,10 +120,10 @@ async fn new_run_client(
     info!("got token: {}, host: {}", token, host);
     record_log!("Your proxy server: {}", host);
 
-    let reconnect_attempts = 0;
+    let mut reconnect_attempts = 0;
     let mut request_type = RequestType::NewClient { endpoint_claims };
     loop {
-        // TODO: backoff
+        // TODO: add backoff
 
         // handshake
         record_log!("Connecting to proxy server: {}:{}", host, config.control_port);
@@ -168,7 +168,7 @@ async fn new_run_client(
                 tokio::select! {
                     _ = tokio::time::sleep(Duration::from_secs(config.ping_interval)) => {
                         let now = Utc::now();
-                        let packet = ControlPacketV2::Ping(0, now);
+                        let packet = ControlPacketV2::Ping(0, now, None);
     
                         if let Err(e) = store_.send_to_server(packet).await {
                             warn!("cid={} failed to send ping to tx buffer: {:?}", &client_id, e);
@@ -188,11 +188,19 @@ async fn new_run_client(
                 info!("some tasks exited: {:?}, reconnecting...", v);
 
                 // abort current tasks
+                // TODO: use child token. if we cancel this token,
+                // `cancellation_token.cancelled()` may be triggered
                 cancellation_token.cancel();
-                set.shutdown();
+                set.shutdown().await;
 
-                // TODO: get token
-                token = "new_token".to_string();
+                let t = match store.get_reconnect_token().await {
+                    Some(t) => t,
+                    None => {
+                        record_error(Error::ReconnectTokenError);
+                        break;
+                    }
+                };
+                token = t;
                 request_type = RequestType::Reconnect;
                 continue;
             },
@@ -304,118 +312,6 @@ where
         host,
         endpoints,
     })
-}
-
-pub async fn process_control_flow_message(
-    store: Arc<Store>,
-    tunnel_tx: &mut UnboundedSender<ControlPacketV2>,
-    payload: Vec<u8>,
-) -> Result<ControlPacketV2, Box<dyn std::error::Error>> {
-    let mut bytes = BytesMut::from(&payload[..]);
-    let control_packet = ControlPacketV2Codec::new().decode(&mut bytes)?
-        .ok_or("failed to parse partial packet")?;
-        // TODO: should handle None case
-
-    match control_packet {
-        // TODO: use remote_info
-        ControlPacketV2::Init(stream_id, endpoint_id, ref remote_info) => {
-            debug!("sid={} eid={} remote_info={} init stream", stream_id, endpoint_id, remote_info);
-
-            let endpoint = match store.get_endpoint_by_endpoint_id(endpoint_id) {
-                Some(e) => e,
-                None => {
-                    warn!(
-                        "sid={} eid={} endpoint is not registered",
-                        stream_id, endpoint_id
-                    );
-                    return Err(format!("eid={} is not registered", endpoint_id).into())
-                }
-            };
-
-            if store.has_stream(&stream_id) {
-                warn!(
-                    "sid={} already exist at init process",
-                    stream_id
-                );
-                return Err(format!("sid={} is already exist", stream_id).into())
-            }
-
-            match endpoint.protocol {
-                Protocol::TCP => {
-                    local::tcp::setup_new_stream(
-                        store.clone(),
-                        stream_id,
-                        endpoint_id,
-                        remote_info.clone(),
-                    )
-                    .await?;
-                    println!("new tcp stream arrived: sid={}, eid={}", stream_id, endpoint_id);
-                }
-                Protocol::UDP => {
-                    local::udp::setup_new_stream(
-                        store.clone(),
-                        stream_id,
-                        endpoint_id,
-                        remote_info.clone(),
-                    )
-                    .await?;
-                    println!("new udp stream arrived: sid={}, eid={}", stream_id, endpoint_id);
-                }
-            }
-        }
-        ControlPacketV2::Ping(seq, datetime) => {
-            debug!("got ping");
-            let _ = tunnel_tx.send(ControlPacketV2::Pong(seq, datetime)).await;
-        }
-        ControlPacketV2::Pong(_, datetime) => {
-            debug!("got pong");
-            // calculate RTT
-            let current_time = Utc::now();
-            let rtt = current_time.signed_duration_since(datetime).num_milliseconds();
-            store.set_rtt(rtt);
-            debug!("RTT: {}ms", rtt);
-        }
-        ControlPacketV2::Refused(_) => return Err("unexpected control packet".into()),
-        ControlPacketV2::End(stream_id) => {
-            debug!("sid={} end stream", stream_id);
-            // proxy server try to close control stream and local stream
-
-            tokio::spawn(async move {
-                if let Some((stream_id, mut tx)) = store.remove_stream(&stream_id) {
-                    tokio::time::sleep(Duration::from_secs(5)).await;
-                    let _ = tx.send_to_local(StreamMessage::Close).await.map_err(|e| {
-                        error!(
-                            "sid={} failed to send stream close: {:?}",
-                            stream_id,
-                            e
-                        );
-                    });
-                    println!("close tcp stream: {}", stream_id);
-                }
-            });
-        }
-        ControlPacketV2::Data(stream_id, ref data) => {
-            debug!("sid={} new data: {}", stream_id, data.len());
-
-            match store.get_mut_stream(&stream_id) {
-                Some(mut tx) => {
-                    tx.send_to_local(StreamMessage::Data(data.clone())).await?;
-                    debug!("sid={} forwarded to local socket", stream_id);
-                }
-                None => {
-                    error!(
-                        "sid={} got data but no stream to send it to.",
-                        stream_id
-                    );
-                    tunnel_tx
-                        .send(ControlPacketV2::Refused(stream_id))
-                        .await?;
-                }
-            }
-        }
-    };
-
-    Ok(control_packet)
 }
 
 #[derive(Serialize, Deserialize)]
