@@ -9,7 +9,7 @@ mod e2e_tcp_test {
     use super::*;
     use ownserver::proxy_client::{self, RequestType};
     use ownserver_lib::reconnect::ReconnectTokenPayload;
-    use ownserver_test::{assert_tcp_socket_bytes_matches, tcp::{get_endpoint_claims_single, launch_proxy_client_reconnect, with_local_server, with_local_server_echoback, with_proxy}, use_ports, PortSet};
+    use ownserver_test::{assert_tcp_socket_bytes_matches, tcp::{get_endpoint_claims_single, launch_proxy_client_reconnect, with_local_server, with_local_server_echoback, with_proxy, with_proxy_new}, use_ports, PortSet};
 
     #[tokio::test]
     async fn forward_remote_traffic_to_local(
@@ -382,8 +382,6 @@ mod e2e_tcp_test {
     #[tokio::test]
     async fn reconnect_when_websocket_disconnected_multiple_times(
     ) -> Result<(), Box<dyn std::error::Error>> {
-        pretty_env_logger::init();
-
         let [local_port] = use_ports();
         let port_set = PortSet::new();
         let control_port = port_set.control_port;
@@ -425,6 +423,86 @@ mod e2e_tcp_test {
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn reconnect_when_websocket_disconnected_new(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let [local_port] = use_ports();
+        let port_set = PortSet::new();
+        let endpoint_claims = get_endpoint_claims_single(local_port);
+
+        with_proxy_new(port_set, RequestType::NewClient { endpoint_claims }, |_token_server, proxy_server, proxy_client| async move {
+            let client_info = proxy_client.client_info.clone();
+            let remote_addr = format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port);
+            wait!();
+
+            with_local_server(local_port, |_local_server| async move {
+                let mut remote = TcpStream::connect(remote_addr)
+                    .await?;
+                remote.write_all(b"foobar".as_ref()).await?;
+                assert_tcp_socket_bytes_matches!(&mut remote, b"hello, foobar");
+
+                // ensure ping is sent to client
+                wait!();
+
+                // terminate websocket connection by dropping client
+                proxy_client.store.remove_client().await;
+                wait!();
+
+                // reconnect happens in background
+
+                remote.write_all(b"fugapiyo".as_ref()).await?;
+                assert_tcp_socket_bytes_matches!(&mut remote, b"hello, fugapiyo");
+
+                Ok(())
+            }).await;
+            Ok(())
+        }).await;
+
+        Ok(())
+    }
+
+
+    #[tokio::test]
+    async fn reconnect_when_websocket_disconnected_multiple_time_new(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let [local_port] = use_ports();
+        let port_set = PortSet::new();
+        let endpoint_claims = get_endpoint_claims_single(local_port);
+
+        with_proxy_new(port_set, RequestType::NewClient { endpoint_claims }, |_token_server, proxy_server, mut proxy_client| async move {
+            let client_info = proxy_client.client_info.clone();
+            let remote_addr = format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port);
+            wait!();
+
+            with_local_server(local_port, |_local_server| async move {
+                let mut remote = TcpStream::connect(remote_addr)
+                    .await?;
+                remote.write_all(b"foobar".as_ref()).await?;
+                assert_tcp_socket_bytes_matches!(&mut remote, b"hello, foobar");
+
+
+                for i in 0..3 {
+                    // terminate websocket connection by dropping client
+                    proxy_client.store.remove_client().await;
+                    wait!();
+
+                    // reconnect
+                    wait!();
+
+                    // send & validate
+                    remote.write_all(format!("fugapiyo {}", i).as_bytes()).await?;
+                    assert_tcp_socket_bytes_matches!(&mut remote, format!("hello, fugapiyo {}", i).as_bytes());
+                }
+
+                Ok(())
+            }).await;
+            Ok(())
+        }).await;
+
+        Ok(())
+    }
+
 }
 
 
