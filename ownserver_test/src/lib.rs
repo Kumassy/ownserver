@@ -101,9 +101,10 @@ pub async fn launch_token_server(token_port: u16) -> TokenServer {
 pub async fn launch_proxy_server(
     control_port: u16,
     remote_port_start: u16,
-    remote_port_end: u16
+    remote_port_end: u16,
+    ping_interval: Option<u64>,
 ) -> Result<ProxyServer, Box<dyn std::error::Error>> {
-
+    let periodic_ping_interval = ping_interval.unwrap_or(2 << 30);
     let config = Box::leak(Box::new(ownserver_server::Config {
         control_port,
         token_secret: "supersecret".to_string(),
@@ -111,7 +112,7 @@ pub async fn launch_proxy_server(
         remote_port_start,
         remote_port_end,
         periodic_cleanup_interval: 2 << 30,
-        periodic_ping_interval: 2 << 30,
+        periodic_ping_interval,
         reconnect_window: Duration::seconds(2),
     }));
 
@@ -131,42 +132,6 @@ pub async fn launch_proxy_server(
         store,
     })
 }
-
-
-pub async fn launch_proxy_server_new(
-    control_port: u16,
-    remote_port_start: u16,
-    remote_port_end: u16
-) -> Result<ProxyServer, Box<dyn std::error::Error>> {
-
-    let config = Box::leak(Box::new(ownserver_server::Config {
-        control_port,
-        token_secret: "supersecret".to_string(),
-        host: "127.0.0.1".to_string(),
-        remote_port_start,
-        remote_port_end,
-        periodic_cleanup_interval: 2 << 30,
-        periodic_ping_interval: 1, 
-        reconnect_window: Duration::seconds(60),
-    }));
-
-    let store = Arc::new(Store::new(config.remote_port_start..config.remote_port_end));
-
-    let store_ = store.clone();
-    tokio::spawn(async move {
-        proxy_server::run(
-            config,
-            store_,
-        )
-        .await.join_next().await;
-    });
-
-    wait!();
-    Ok(ProxyServer {
-        store,
-    })
-}
-
 
 pub mod tcp {
 
@@ -342,14 +307,14 @@ pub mod tcp {
     }
 
 
-    pub async fn with_proxy<T>(port_set: PortSet, request_type: RequestType, test_func: impl FnOnce(TokenServer, ProxyServer, ProxyClient) -> T)
+    async fn _with_proxy<T>(ping_interval: Option<u64>, port_set: PortSet, request_type: RequestType, test_func: impl FnOnce(TokenServer, ProxyServer, ProxyClient) -> T)
         where
         T: Future<Output = Result<(), Box<dyn std::error::Error>>> + Send,
     {
         let token_server = launch_token_server(port_set.token_port).await;
         wait!();
 
-        let proxy_server = launch_proxy_server(port_set.control_port, port_set.remote_ports.start, port_set.remote_ports.end).await.expect("failed to launch proxy server");
+        let proxy_server = launch_proxy_server(port_set.control_port, port_set.remote_ports.start, port_set.remote_ports.end, ping_interval).await.expect("failed to launch proxy server");
         wait!();
 
         let proxy_client = launch_proxy_client(port_set.token_port, port_set.control_port, request_type).await.expect("failed to launch proxy client");
@@ -357,19 +322,19 @@ pub mod tcp {
         test_func(token_server, proxy_server, proxy_client).await.expect("failed to call test_func");
     }
 
-    pub async fn with_proxy_new<T>(port_set: PortSet, request_type: RequestType, test_func: impl FnOnce(TokenServer, ProxyServer, ProxyClient) -> T)
+
+    pub async fn with_proxy<T>(port_set: PortSet, request_type: RequestType, test_func: impl FnOnce(TokenServer, ProxyServer, ProxyClient) -> T)
         where
         T: Future<Output = Result<(), Box<dyn std::error::Error>>> + Send,
     {
-        let token_server = launch_token_server(port_set.token_port).await;
-        wait!();
+        _with_proxy(None, port_set, request_type, test_func).await;
+    }
 
-        let proxy_server = launch_proxy_server_new(port_set.control_port, port_set.remote_ports.start, port_set.remote_ports.end).await.expect("failed to launch proxy server");
-        wait!();
-
-        let proxy_client = launch_proxy_client_new(port_set.token_port, port_set.control_port, request_type).await.expect("failed to launch proxy client");
-
-        test_func(token_server, proxy_server, proxy_client).await.expect("failed to call test_func");
+    pub async fn with_proxy_use_reconnect<T>(port_set: PortSet, request_type: RequestType, test_func: impl FnOnce(TokenServer, ProxyServer, ProxyClient) -> T)
+        where
+        T: Future<Output = Result<(), Box<dyn std::error::Error>>> + Send,
+    {
+        _with_proxy(Some(1), port_set, request_type, test_func).await;
     }
 
 
@@ -473,7 +438,7 @@ pub mod udp {
         let token_server = launch_token_server(port_set.token_port).await;
         wait!();
 
-        let proxy_server = launch_proxy_server(port_set.control_port, port_set.remote_ports.start, port_set.remote_ports.end).await.expect("failed to launch proxy server");
+        let proxy_server = launch_proxy_server(port_set.control_port, port_set.remote_ports.start, port_set.remote_ports.end, None).await.expect("failed to launch proxy server");
         wait!();
 
         let proxy_client = launch_proxy_client(port_set.token_port, port_set.control_port, request_type).await.expect("failed to launch proxy client");

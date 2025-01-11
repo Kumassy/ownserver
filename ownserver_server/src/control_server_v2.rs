@@ -3,7 +3,7 @@ use futures::{
     Sink, SinkExt, Stream, StreamExt,
 };
 use ownserver_lib::reconnect::ReconnectTokenPayload;
-use ownserver_lib::{ClientHelloV2, ClientType, ControlPacketV2, EndpointClaim, EndpointClaims, Protocol, ServerHelloV2};
+use ownserver_lib::{ClientHelloV2, ClientType, ControlPacketV2, EndpointClaims, Protocol, ServerHelloV2};
 pub use ownserver_lib::{ClientId, StreamId, CLIENT_HELLO_VERSION};
 use ownserver_auth::decode_jwt;
 use metrics::increment_counter;
@@ -19,7 +19,6 @@ use warp::{
 
 use rand::{rngs::StdRng, SeedableRng};
 use std::sync::Arc;
-use once_cell::sync::OnceCell;
 use thiserror::Error;
 
 use crate::{Store, Client};
@@ -384,7 +383,7 @@ mod verify_client_handshake_test {
     use super::*;
     use ownserver_auth::make_jwt;
     use chrono::Duration;
-    use ownserver_lib::{ClientType, Protocol};
+    use ownserver_lib::{ClientType, EndpointClaim, Protocol};
 
     static CONFIG: LazyLock<Config> = LazyLock::new(||
         Config {

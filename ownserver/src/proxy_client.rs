@@ -1,13 +1,10 @@
 use anyhow::{anyhow, Result};
-use bytes::BytesMut;
 use chrono::Utc;
-use futures::channel::mpsc::{unbounded, UnboundedSender};
 use futures::{Sink, SinkExt, Stream, StreamExt};
 use log::*;
 use serde::{Deserialize, Serialize};
 use tokio::signal;
 use tokio::time::sleep;
-use tokio_util::codec::{Encoder, Decoder};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::task::JoinSet;
@@ -20,10 +17,9 @@ use url::Url;
 
 use crate::error::Error;
 use crate::recorder::record_client_info;
-use crate::{local, recorder::record_error, record_log, Client, Config, Store};
-use crate::StreamMessage;
+use crate::{recorder::record_error, record_log, Client, Config, Store};
 use ownserver_lib::{
-    ClientHelloV2, ClientId, ClientType, ControlPacketV2, ControlPacketV2Codec, Endpoint, EndpointClaims, Endpoints, Protocol, ServerHelloV2, CLIENT_HELLO_VERSION
+    ClientHelloV2, ClientId, ClientType, ControlPacketV2, EndpointClaims, Endpoints, ServerHelloV2, CLIENT_HELLO_VERSION
 };
 
 #[derive(Debug, Clone)]
@@ -391,7 +387,7 @@ mod fetch_token_test {
 mod client_verify_server_hello_test {
     use super::*;
     use futures::{channel::mpsc, SinkExt};
-    use ownserver_lib::{ClientId, ServerHelloV2, EndpointId, Endpoint};
+    use ownserver_lib::{ClientId, Endpoint, EndpointId, Protocol, ServerHelloV2};
 
     #[tokio::test]
     async fn it_accept_server_hello() -> Result<(), Box<dyn std::error::Error>> {

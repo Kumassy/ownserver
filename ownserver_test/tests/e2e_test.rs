@@ -7,9 +7,9 @@ use ownserver_lib::{EndpointClaim, Protocol};
 #[cfg(test)]
 mod e2e_tcp_test {
     use super::*;
-    use ownserver::proxy_client::{self, RequestType};
+    use ownserver::proxy_client::RequestType;
     use ownserver_lib::reconnect::ReconnectTokenPayload;
-    use ownserver_test::{assert_tcp_socket_bytes_matches, tcp::{get_endpoint_claims_single, launch_proxy_client_reconnect, with_local_server, with_local_server_echoback, with_proxy, with_proxy_new}, use_ports, PortSet};
+    use ownserver_test::{assert_tcp_socket_bytes_matches, tcp::{get_endpoint_claims_single, launch_proxy_client_reconnect, with_local_server, with_local_server_echoback, with_proxy, with_proxy_use_reconnect}, use_ports, PortSet};
 
     #[tokio::test]
     async fn forward_remote_traffic_to_local(
@@ -345,7 +345,7 @@ mod e2e_tcp_test {
         let control_port = port_set.control_port;
         let endpoint_claims = get_endpoint_claims_single(local_port);
 
-        with_proxy(port_set, RequestType::NewClient { endpoint_claims }, |_token_server, proxy_server, proxy_client| async move {
+        with_proxy(port_set, RequestType::NewClient { endpoint_claims }, |_token_server, _proxy_server, proxy_client| async move {
             let client_info = proxy_client.client_info.clone();
             let remote_addr = format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port);
             wait!();
@@ -387,7 +387,7 @@ mod e2e_tcp_test {
         let control_port = port_set.control_port;
         let endpoint_claims = get_endpoint_claims_single(local_port);
 
-        with_proxy(port_set, RequestType::NewClient { endpoint_claims }, |_token_server, proxy_server, mut proxy_client| async move {
+        with_proxy(port_set, RequestType::NewClient { endpoint_claims }, |_token_server, _proxy_server, mut proxy_client| async move {
             let client_info = proxy_client.client_info.clone();
             let remote_addr = format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port);
             wait!();
@@ -431,7 +431,7 @@ mod e2e_tcp_test {
         let port_set = PortSet::new();
         let endpoint_claims = get_endpoint_claims_single(local_port);
 
-        with_proxy_new(port_set, RequestType::NewClient { endpoint_claims }, |_token_server, proxy_server, proxy_client| async move {
+        with_proxy_use_reconnect(port_set, RequestType::NewClient { endpoint_claims }, |_token_server, _proxy_server, proxy_client| async move {
             let client_info = proxy_client.client_info.clone();
             let remote_addr = format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port);
             wait!();
@@ -470,7 +470,7 @@ mod e2e_tcp_test {
         let port_set = PortSet::new();
         let endpoint_claims = get_endpoint_claims_single(local_port);
 
-        with_proxy_new(port_set, RequestType::NewClient { endpoint_claims }, |_token_server, proxy_server, mut proxy_client| async move {
+        with_proxy_use_reconnect(port_set, RequestType::NewClient { endpoint_claims }, |_token_server, _proxy_server, proxy_client| async move {
             let client_info = proxy_client.client_info.clone();
             let remote_addr = format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port);
             wait!();

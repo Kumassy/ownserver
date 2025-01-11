@@ -1,8 +1,8 @@
 use std::io::{self, ErrorKind};
 use std::sync::Arc;
 
-use futures::channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
-use futures::{SinkExt, StreamExt};
+use futures::channel::mpsc::{unbounded, UnboundedReceiver};
+use futures::StreamExt;
 
 use tokio::io::{split, AsyncReadExt, AsyncWriteExt};
 use tokio::io::{ReadHalf, WriteHalf};

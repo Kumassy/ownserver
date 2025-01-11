@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use chrono::{Duration, DateTime, Utc};
+use chrono::{Duration, Utc};
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation, errors::Error as JWTError};
 use crate::ClientId;
 
