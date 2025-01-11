@@ -6,6 +6,7 @@ use futures::{Sink, SinkExt, Stream, StreamExt};
 use log::*;
 use serde::{Deserialize, Serialize};
 use tokio::signal;
+use tokio::time::sleep;
 use tokio_util::codec::{Encoder, Decoder};
 use std::sync::Arc;
 use std::time::Duration;
@@ -108,11 +109,11 @@ pub async fn run(
 }
 
 
-async fn new_run_client(
+pub async fn new_run_client(
     config: &'static Config,
     store: Arc<Store>,
     cancellation_token: CancellationToken,
-    endpoint_claims: EndpointClaims,
+    request_type: RequestType,
 ) -> Result<()> {
     // get token from token server
     record_log!("Connecting to auth server: {}", config.token_server);
@@ -121,9 +122,10 @@ async fn new_run_client(
     record_log!("Your proxy server: {}", host);
 
     let mut reconnect_attempts = 0;
-    let mut request_type = RequestType::NewClient { endpoint_claims };
+    let mut request_type = request_type;
     loop {
         // TODO: add backoff
+        sleep(Duration::from_secs(reconnect_attempts * 4)).await;
 
         // handshake
         record_log!("Connecting to proxy server: {}:{}", host, config.control_port);
@@ -133,6 +135,7 @@ async fn new_run_client(
             Ok((websocket, _)) => websocket,
             Err(_) => {
                 record_error(Error::ServerDown);
+                reconnect_attempts += 1;
                 continue 
             }
         };
@@ -140,6 +143,7 @@ async fn new_run_client(
     
         if let Err(e) = send_client_hello(&mut websocket, token.to_string(), request_type.clone()).await {
             record_error(e.into());
+            reconnect_attempts += 1;
             continue;
         }
 
@@ -147,12 +151,14 @@ async fn new_run_client(
             Ok(client_info) => client_info,
             Err(e) => {
                 record_error(e);
+                reconnect_attempts += 1;
                 continue  
             }
         };
         let client_id = client_info.client_id;
         store.register_endpoints(client_info.endpoints.clone());
-        record_client_info(client_info);
+        record_client_info(client_info.clone());
+        reconnect_attempts = 0;
 
 
         // spawn main thread
