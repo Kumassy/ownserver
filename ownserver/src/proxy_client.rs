@@ -67,7 +67,7 @@ pub async fn run_with_token(
     let client_id = client_info.client_id;
     let ct = cancellation_token.child_token();
 
-    let client = Client::new(&mut set, store.clone(), client_id, websocket, ct.clone());
+    let client = Client::new(&mut set, store.clone(), client_info.clone(), websocket, ct.clone());
     store.add_client(client).await;
 
     set.spawn(async move {

@@ -11,7 +11,8 @@ use error::Error;
 use futures::channel::mpsc::{SendError, UnboundedSender};
 use futures::stream::SplitSink;
 use futures::{SinkExt, StreamExt};
-use ownserver_lib::{ClientId, ControlPacketV2, ControlPacketV2Codec, Endpoint, EndpointId, Endpoints, Protocol, RemoteInfo, StreamId};
+use ownserver_lib::{ControlPacketV2, ControlPacketV2Codec, Endpoint, EndpointId, Endpoints, Protocol, RemoteInfo, StreamId};
+use proxy_client::ClientInfo;
 use serde::{Deserialize, Serialize};
 use tokio::net::{TcpStream, ToSocketAddrs};
 use tokio::sync::Mutex;
@@ -71,16 +72,17 @@ pub struct LocalStreamEntry {
 
 #[derive(Debug)]
 pub struct Client {
-    pub client_id: ClientId,
+    pub client_info: ClientInfo,
     ws_tx: SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>,
     store: Arc<Store>,
     ct: CancellationToken,
 }
 
 impl Client {
-    pub fn new(set: &mut JoinSet<Result<(), Error>>, store: Arc<Store>, client_id: ClientId, websocket: WebSocketStream<MaybeTlsStream<TcpStream>>, token: CancellationToken) -> Self {
+    pub fn new(set: &mut JoinSet<Result<(), Error>>, store: Arc<Store>, client_info: ClientInfo, websocket: WebSocketStream<MaybeTlsStream<TcpStream>>, token: CancellationToken) -> Self {
         let (ws_tx, mut ws_stream) = websocket.split();
         
+        let client_id = client_info.client_id;
         let ct = token.clone();
         let store_ = store.clone();
         set.spawn(async move {
@@ -123,7 +125,7 @@ impl Client {
         
         Self {
             store,
-            client_id,
+            client_info,
             ws_tx,
             ct: token,
         }
@@ -133,13 +135,13 @@ impl Client {
         let mut codec = ControlPacketV2Codec::new();
         let mut bytes = BytesMut::new();
         if let Err(e) = codec.encode(packet, &mut bytes) {
-            warn!("cid={} failed to encode message: {:?}", self.client_id, e);
+            warn!("cid={} failed to encode message: {:?}", self.client_info.client_id, e);
             
             // TODO: Implement Error
             return Ok(());
         }
         if let Err(e) = self.ws_tx.send(Message::binary(bytes.to_vec())).await {
-            warn!("cid={} failed to write message to tunnel websocket: {:?}", self.client_id, e);
+            warn!("cid={} failed to write message to tunnel websocket: {:?}", self.client_info.client_id, e);
 
             return Err(Error::WebSocketError(e));
         }
@@ -348,6 +350,11 @@ impl Store {
     pub async fn remove_client(&self) {
         let mut c = self.client.lock().await;
         *c = None;
+    }
+
+    pub async fn get_client_info(&self) -> Option<ClientInfo> {
+        let c = self.client.lock().await;
+        c.as_ref().map(|c| c.client_info.clone())
     }
 
     pub async fn send_to_server(&self, packet: ControlPacketV2) -> Result<(), Error>  {
