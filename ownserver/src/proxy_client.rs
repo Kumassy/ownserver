@@ -157,12 +157,13 @@ async fn new_run_client(
 
         // spawn main thread
         let mut set = JoinSet::new();
-        let ct = cancellation_token.clone();
+        let ct = cancellation_token.child_token();
     
-        let client = Client::new(&mut set, store.clone(), client_id, websocket, ct.clone());
+        let client = Client::new(&mut set, store.clone(), client_info, websocket, ct.clone());
         store.add_client(client).await;
     
         let store_ = store.clone();
+        let ct_ = ct.clone();
         set.spawn(async move {
             loop {
                 tokio::select! {
@@ -175,7 +176,7 @@ async fn new_run_client(
                             return Err(e);
                         }
                     },
-                    _ = ct.cancelled() => {
+                    _ = ct_.cancelled() => {
                         return Ok(());
                     }
                 }
@@ -187,10 +188,7 @@ async fn new_run_client(
             v = set.join_next() => {
                 info!("some tasks exited: {:?}, reconnecting...", v);
 
-                // abort current tasks
-                // TODO: use child token. if we cancel this token,
-                // `cancellation_token.cancelled()` may be triggered
-                cancellation_token.cancel();
+                ct.cancel();
                 set.shutdown().await;
 
                 let t = match store.get_reconnect_token().await {
@@ -206,6 +204,7 @@ async fn new_run_client(
             },
             // cancelled by API
             _ = cancellation_token.cancelled() => {
+                info!("run_client cancelled by token");
                 break;
             },
             // cancelled by terminal
