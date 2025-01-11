@@ -161,8 +161,10 @@ impl Client {
     }
 
     pub fn set_wait_reconnect(&mut self) {
-        self.state = ClientState::WaitReconnect { expires: Utc::now() + self.reconnect_window };
-        tracing::debug!(cid = %self.client_id, "set client state: {:?}", self.state);
+        if let ClientState::Connected = self.state {
+            self.state = ClientState::WaitReconnect { expires: Utc::now() + self.reconnect_window };
+            tracing::debug!(cid = %self.client_id, "set client state: {:?}", self.state);
+        }
     }
 
     pub fn can_cleanup(&self) -> bool {
