@@ -1,5 +1,6 @@
 use metrics::increment_counter;
 use ownserver_lib::{ControlPacketV2, EndpointId, RemoteInfo};
+use warp::filters::ws::WebSocket;
 use std::io::{self, ErrorKind};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -14,7 +15,7 @@ use super::stream::StreamMessage;
 
 #[tracing::instrument(skip(store, cancellation_token))]
 pub async fn spawn_remote(
-    store: Arc<Store>,
+    store: Arc<Store<WebSocket>>,
     client_id: ClientId,
     endpoint_id: EndpointId,
     cancellation_token: CancellationToken,
@@ -61,7 +62,7 @@ pub async fn spawn_remote(
 
 #[tracing::instrument(skip(store, socket))]
 pub async fn accept_connection(
-    store: Arc<Store>,
+    store: Arc<Store<WebSocket>>,
     socket: TcpStream,
     client_id: ClientId,
     endpoint_id: EndpointId,
@@ -96,12 +97,12 @@ pub struct RemoteTcp {
     socket_tx: WriteHalf<TcpStream>,
     remote_info: RemoteInfo,
     ct: CancellationToken,
-    store: Arc<Store>,
+    store: Arc<Store<WebSocket>>,
     disabled: bool,
 }
 
 impl RemoteTcp {
-    pub fn new(store: Arc<Store>, socket: TcpStream, client_id: ClientId, endpoint_id: EndpointId, peer_addr: SocketAddr) -> Self {
+    pub fn new(store: Arc<Store<WebSocket>>, socket: TcpStream, client_id: ClientId, endpoint_id: EndpointId, peer_addr: SocketAddr) -> Self {
         let (mut stream, sink) = tokio::io::split(socket);
         let stream_id = StreamId::new();
         let ct: CancellationToken = CancellationToken::new();

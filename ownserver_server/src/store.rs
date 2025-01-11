@@ -1,24 +1,30 @@
 use std::{net::SocketAddr, collections::HashMap, ops::Range};
 
 use dashmap::DashMap;
+use futures::Sink;
 use ownserver_lib::{ClientId, ControlPacketV2, Endpoint, EndpointClaims, EndpointId, Endpoints, StreamId};
 use metrics::gauge;
 use rand::Rng;
 use tokio::{sync::{RwLock, Mutex}, net::ToSocketAddrs};
+use warp::filters::ws::Message;
 
 use crate::{port_allocator::{PortAllocator, PortAllocatorError}, remote::stream::{RemoteStream, StreamMessage}, Client, ClientStreamError};
 
 
 #[derive(Debug, Default)]
-pub struct Store {
+pub struct Store<S> {
     streams: RwLock<HashMap<StreamId, RemoteStream>>,
-    clients: RwLock<HashMap<ClientId, Client>>,
+    clients: RwLock<HashMap<ClientId, Client<S>>>,
     addrs_map: DashMap<SocketAddr, StreamId>,
     endpoints_map: DashMap<EndpointId, Endpoint>,
     alloc: Mutex<PortAllocator>,
 }
 
-impl Store {
+impl<S, E> Store<S>
+where
+    S: futures::Stream<Item = Result<Message, warp::Error>> + Sink<Message, Error = E> + Unpin + Send + 'static,
+    E: std::fmt::Debug,
+{
     pub fn new(range: Range<u16>) -> Self {
         Self {
             streams: Default::default(),
@@ -80,7 +86,7 @@ impl Store {
         }
     }
 
-    pub async fn add_client(&self, client: Client) {
+    pub async fn add_client(&self, client: Client<S>) {
         let client_id = client.client_id;
         self.clients.write().await.insert(client_id, client);
 
@@ -88,7 +94,7 @@ impl Store {
         gauge!("ownserver_server.store.clients", v);
     }
 
-    pub async fn remove_client(&self, client_id: ClientId) -> Option<Client> {
+    pub async fn remove_client(&self, client_id: ClientId) -> Option<Client<S>> {
         let client = self.clients.write().await.remove(&client_id);
 
         let v = self.len_clients().await as f64;

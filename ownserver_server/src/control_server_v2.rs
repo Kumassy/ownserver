@@ -28,7 +28,7 @@ use crate::Config;
 #[tracing::instrument(skip(config, store))]
 pub fn spawn<A: Into<SocketAddr> + std::fmt::Debug>(
     config: &'static Config,
-    store: Arc<Store>,
+    store: Arc<Store<WebSocket>>,
     addr: A,
 ) -> JoinSet<()> {
     let periodic_cleanup_interval = config.periodic_cleanup_interval;
@@ -236,7 +236,7 @@ impl From<VerifyClientHandshakeError> for ServerHelloV2 {
 
 async fn process_client_claims(
     config: &'static Config,
-    store: Arc<Store>,
+    store: Arc<Store<WebSocket>>,
     claims: EndpointClaims
 ) -> ServerHelloV2 {
     let Config { ref host, .. } = config;
@@ -266,7 +266,7 @@ async fn process_client_claims(
 #[tracing::instrument(skip(config, store, websocket))]
 async fn handle_new_connection(
     config: &'static Config,
-    store: Arc<Store>,
+    store: Arc<Store<WebSocket>>,
     client_ip: SocketAddr,
     mut websocket: WebSocket,
 ) {

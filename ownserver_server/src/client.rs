@@ -1,23 +1,23 @@
 use std::sync::Arc;
 
 use bytes::BytesMut;
-use futures::{stream::SplitSink, StreamExt, SinkExt};
+use futures::{stream::SplitSink, Sink, SinkExt, StreamExt};
 use metrics::gauge;
 use ownserver_lib::{ClientId, Endpoints, ControlPacketV2Codec, ControlPacketV2};
 use tokio_util::{sync::CancellationToken, codec::{Encoder, Decoder}};
 use tracing::Instrument;
-use warp::ws::{Message, WebSocket};
+use warp::ws::Message;
 
 use crate::{Store, remote::stream::StreamMessage, ClientStreamError};
 use chrono::{DateTime, Duration, Utc};
 
 
 #[derive(Debug)]
-pub struct Client {
+pub struct Client<S> {
     pub client_id: ClientId,
     pub endpoints: Endpoints,
 
-    ws_tx: SplitSink<WebSocket, Message>,
+    ws_tx: SplitSink<S, Message>,
     ct_self: CancellationToken,
     ct_child: CancellationToken,
     state: ClientState,
@@ -36,8 +36,13 @@ pub enum ClientState {
     },
 }
 
-impl Client {
-    pub fn new(store: Arc<Store>, client_id: ClientId, endpoints: Endpoints, ws: WebSocket, reconnect_window: Duration) -> Self {
+impl<S, E> Client<S>
+where
+    S: futures::Stream<Item = Result<Message, warp::Error>> + Sink<Message, Error = E> + Unpin + Send + 'static,
+    E: std::fmt::Debug,
+{
+    pub fn new(store: Arc<Store<S>>, client_id: ClientId, endpoints: Endpoints, ws: S, reconnect_window: Duration) -> Self
+    {
         let (sink, mut stream) = ws.split();
         let token = CancellationToken::new();
 
@@ -181,7 +186,7 @@ impl Client {
 
 }
 
-impl Drop for Client {
+impl<S> Drop for Client<S> {
     fn drop(&mut self) {
         self.ct_self.cancel();
 
@@ -197,5 +202,77 @@ impl Drop for Client {
                 self.ct_child.cancel();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use warp::Error;
+    use futures::{Stream, Sink};
+    use std::pin::Pin;
+    use std::task::{Context, Poll};
+    use std::collections::VecDeque;
+
+    struct FakeWebSocket {
+        messages: VecDeque<Result<Message, Error>>,
+    }
+
+    impl FakeWebSocket {
+        fn new(messages: Vec<Result<Message, Error>>) -> Self {
+            Self {
+                messages: VecDeque::from(messages),
+            }
+        }
+    }
+
+    impl Stream for FakeWebSocket {
+        type Item = Result<Message, Error>;
+
+        fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+            Poll::Ready(self.messages.pop_front())
+        }
+    }
+
+    impl Sink<Message> for FakeWebSocket {
+        type Error = Error;
+
+        fn poll_ready(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn start_send(self: Pin<&mut Self>, _item: Message) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn poll_close(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    #[tokio::test]
+    async fn test_call_set_wait_reconnect_do_not_update_expires_at() {
+        let store = Arc::new(Store::new(0..65535));
+        let client_id = ClientId::new();
+        let endpoints = Endpoints::new();
+        let reconnect_window = Duration::seconds(10);
+        let ws = FakeWebSocket::new(vec![]);
+        let mut client = Client::new(store, client_id, endpoints, ws, reconnect_window);
+
+        client.set_wait_reconnect();
+        let expires_before = match client.state {
+            ClientState::WaitReconnect { expires } => {
+                expires
+            }
+            _ => panic!("Client state is not WaitReconnect"),
+        };
+
+        client.set_wait_reconnect();
+
+        assert!(matches!(client.state, ClientState::WaitReconnect { expires } if expires == expires_before));
     }
 }

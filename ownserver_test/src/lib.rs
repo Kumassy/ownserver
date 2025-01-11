@@ -19,6 +19,7 @@ use futures::Future;
 
 mod ports;
 pub use ports::{use_ports, PortSet};
+use warp::filters::ws::WebSocket;
 
 #[macro_export]
 macro_rules! wait {
@@ -62,7 +63,7 @@ pub struct TokenServer {
 
 
 pub struct ProxyServer {
-    pub store: Arc<Store>,
+    pub store: Arc<Store<WebSocket>>,
 }
 
 pub struct ProxyClient {

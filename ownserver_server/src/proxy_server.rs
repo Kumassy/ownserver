@@ -1,4 +1,5 @@
 pub use ownserver_lib::{ClientId, StreamId};
+use warp::filters::ws::WebSocket;
 use std::sync::Arc;
 use tokio::task::JoinSet;
 
@@ -8,7 +9,7 @@ use crate::Config;
 #[tracing::instrument(skip(config, store))]
 pub async fn run(
     config: &'static Config,
-    store: Arc<Store>,
+    store: Arc<Store<WebSocket>>,
 ) -> JoinSet<()> {
     tracing::info!("starting server!");
 

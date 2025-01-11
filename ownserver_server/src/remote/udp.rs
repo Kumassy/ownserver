@@ -4,6 +4,7 @@ use ownserver_lib::{ControlPacketV2, EndpointId, RemoteInfo};
 use tokio::net::UdpSocket;
 use tracing::Instrument;
 use tokio_util::sync::CancellationToken;
+use warp::filters::ws::WebSocket;
 use std::sync::Arc;
 
 use crate::{Store, remote::stream::RemoteStream, ClientStreamError};
@@ -13,7 +14,7 @@ use super::stream::StreamMessage;
 
 #[tracing::instrument(skip(store, cancellation_token))]
 pub async fn spawn_remote(
-    store: Arc<Store>,
+    store: Arc<Store<WebSocket>>,
     client_id: ClientId,
     endpoint_id: EndpointId,
     cancellation_token: CancellationToken,
@@ -40,7 +41,7 @@ pub async fn spawn_remote(
 #[tracing::instrument(skip(ct, store, udp_socket))]
 async fn process_udp_stream(
     ct: CancellationToken,
-    store: Arc<Store>,
+    store: Arc<Store<WebSocket>>,
     client_id: ClientId,
     endpoint_id: EndpointId,
     udp_socket: Arc<UdpSocket>,
@@ -120,12 +121,12 @@ pub struct RemoteUdp {
     socket: Arc<UdpSocket>,
     remote_info: RemoteInfo,
     ct: CancellationToken,
-    store: Arc<Store>,
+    store: Arc<Store<WebSocket>>,
     disabled: bool,
 }
 
 impl RemoteUdp {
-    pub fn new(store: Arc<Store>, socket: Arc<UdpSocket>, peer_addr: SocketAddr, client_id: ClientId, endpoint_id: EndpointId) -> Self {
+    pub fn new(store: Arc<Store<WebSocket>>, socket: Arc<UdpSocket>, peer_addr: SocketAddr, client_id: ClientId, endpoint_id: EndpointId) -> Self {
         let stream_id = StreamId::new();
         let ct = CancellationToken::new();
         let remote_info = RemoteInfo::new(peer_addr);
