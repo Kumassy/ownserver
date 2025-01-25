@@ -39,7 +39,7 @@ fn calculate_reconnect_backoff(attempts: u32) -> Duration {
     }
 }
 
-pub async fn new_run_client(
+pub async fn run_client(
     config: &'static Config,
     store: Arc<Store>,
     cancellation_token: CancellationToken,

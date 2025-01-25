@@ -165,10 +165,10 @@ pub mod tcp {
         let client_store_ = client_store.clone();
         let cancellation_token_ = cancellation_token.clone();
         tokio::spawn(async move {
-            proxy_client::new_run_client(config, client_store_, cancellation_token_, request_type)
+            proxy_client::run_client(config, client_store_, cancellation_token_, request_type)
                 .await
                 .expect("failed to launch proxy_client");
-            tracing::warn!("new_run_client finished");
+            tracing::warn!("run_client finished");
         });
     
         for _ in 0..10 {
@@ -201,10 +201,10 @@ pub mod tcp {
         let client_store_ = client_store.clone();
         let cancellation_token_ = cancellation_token.clone();
         tokio::spawn(async move {
-            proxy_client::new_run_client(config, client_store_, cancellation_token_, request_type)
+            proxy_client::run_client(config, client_store_, cancellation_token_, request_type)
                 .await
                 .expect("failed to launch proxy_client");
-            tracing::warn!("new_run_client finished");
+            tracing::warn!("run_client finished");
         });
     
         for _ in 0..10 {
@@ -373,10 +373,10 @@ pub mod udp {
         let client_store_ = client_store.clone();
         let cancellation_token_ = cancellation_token.clone();
         tokio::spawn(async move {
-            proxy_client::new_run_client(config, client_store_, cancellation_token_, request_type)
+            proxy_client::run_client(config, client_store_, cancellation_token_, request_type)
                 .await
                 .expect("failed to launch proxy_client");
-            tracing::warn!("new_run_client finished");
+            tracing::warn!("run_client finished");
         });
     
         for _ in 0..10 {

@@ -5,7 +5,7 @@ use ownserver_lib::{EndpointClaim, Protocol};
 use tokio_util::sync::CancellationToken;
 use clap::Parser;
 
-use ownserver::{api, proxy_client::{new_run_client, RequestType}, Config, Store};
+use ownserver::{api, proxy_client::{run_client, RequestType}, Config, Store};
 
 #[derive(Parser, Debug)]
 #[command(name = "ownserver")]
@@ -80,7 +80,7 @@ async fn main() -> Result<()> {
     let store_ = store.clone();
 
     info!("start client main loop");
-    new_run_client(CONFIG.get().expect("Failed to get config"), store_, cancellation_token,
+    run_client(CONFIG.get().expect("Failed to get config"), store_, cancellation_token,
         RequestType::NewClient {
             endpoint_claims: cli.endpoint
         }
