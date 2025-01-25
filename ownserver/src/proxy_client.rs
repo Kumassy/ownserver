@@ -5,7 +5,7 @@ use log::*;
 use serde::{Deserialize, Serialize};
 use tokio::signal;
 use tokio::time::sleep;
-use std::sync::Arc;
+use std::{cmp::min, sync::Arc};
 use std::time::Duration;
 use tokio::task::JoinSet;
 use tokio_tungstenite::{
@@ -104,6 +104,14 @@ pub async fn run(
     run_with_token(store, control_port, cancellation_token, ping_interval, token, host, request_type).await
 }
 
+const MAX_RECONNECT_BACKOFF_SECS: u64 = 300;
+fn calculate_reconnect_backoff(attempts: u32) -> Duration {
+    match attempts {
+        0 => Duration::from_secs(0),
+        1..10 => Duration::from_secs(min(2u64.pow(attempts - 1), MAX_RECONNECT_BACKOFF_SECS)),
+        _ => Duration::from_secs(MAX_RECONNECT_BACKOFF_SECS),
+    }
+}
 
 pub async fn new_run_client(
     config: &'static Config,
@@ -120,8 +128,9 @@ pub async fn new_run_client(
     let mut reconnect_attempts = 0;
     let mut request_type = request_type;
     loop {
-        // TODO: add backoff
-        sleep(Duration::from_secs(reconnect_attempts * 4)).await;
+        let reconnect_backoff = calculate_reconnect_backoff(reconnect_attempts);
+        record_log!("Connecting in {} seconds...", reconnect_backoff.as_secs());
+        sleep(reconnect_backoff).await;
 
         // handshake
         record_log!("Connecting to proxy server: {}:{}", host, config.control_port);
@@ -471,5 +480,26 @@ mod client_verify_server_hello_test {
         assert!(matches!(server_hello, Error::WebSocketError(_)));
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod calculate_reconnect_backoff_test {
+    use super::*;
+
+    #[test]
+    fn it_calculates_reconnect_backoff() {
+        assert_eq!(calculate_reconnect_backoff(0), Duration::from_secs(0));
+        assert_eq!(calculate_reconnect_backoff(1), Duration::from_secs(1));
+        assert_eq!(calculate_reconnect_backoff(2), Duration::from_secs(2));
+        assert_eq!(calculate_reconnect_backoff(3), Duration::from_secs(4));
+        assert_eq!(calculate_reconnect_backoff(4), Duration::from_secs(8));
+        assert_eq!(calculate_reconnect_backoff(5), Duration::from_secs(16));
+        assert_eq!(calculate_reconnect_backoff(6), Duration::from_secs(32));
+        assert_eq!(calculate_reconnect_backoff(7), Duration::from_secs(64));
+        assert_eq!(calculate_reconnect_backoff(8), Duration::from_secs(128));
+        assert_eq!(calculate_reconnect_backoff(9), Duration::from_secs(256));
+        assert_eq!(calculate_reconnect_backoff(10), Duration::from_secs(300));
+        assert_eq!(calculate_reconnect_backoff(11), Duration::from_secs(300));
     }
 }
