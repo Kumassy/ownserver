@@ -1,11 +1,11 @@
-use std::{sync::Arc, ops::RangeInclusive};
+use std::{ops::RangeInclusive, sync::{Arc, OnceLock}};
 use anyhow::Result;
 use log::*;
 use ownserver_lib::{EndpointClaim, Protocol};
 use tokio_util::sync::CancellationToken;
 use clap::Parser;
 
-use ownserver::{api, proxy_client::{run, RequestType}, Store};
+use ownserver::{api, proxy_client::{new_run_client, RequestType}, Config, Store};
 
 #[derive(Parser, Debug)]
 #[command(name = "ownserver")]
@@ -65,36 +65,32 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     debug!("{:?}", cli);
 
+    static CONFIG: OnceLock<Config> = OnceLock::new();
+    let config = Config {
+        control_port: cli.control_port,
+        token_server: cli.token_server,
+        ping_interval: cli.periodic_ping_interval,
+    };
+    CONFIG.set(config).expect("Failed to set config");
+
     let store: Arc<Store> = Default::default();
     let cancellation_token = CancellationToken::new();
 
 
     let store_ = store.clone();
-    let (client_info, mut set) =
-        run(store_, cli.control_port, &cli.token_server, cancellation_token, cli.periodic_ping_interval,
-            RequestType::NewClient {
-                endpoint_claims: cli.endpoint
-            }
-        ).await?;
-    info!("client is running under configuration: {:?}", client_info);
+
+    info!("start client main loop");
+    new_run_client(CONFIG.get().expect("Failed to get config"), store_, cancellation_token,
+        RequestType::NewClient {
+            endpoint_claims: cli.endpoint
+        }
+    ).await?;
 
     if let Some(api_port) = cli.api_port {
         info!("client side api is available at localhost:{}", api_port);
-        set.spawn(async move {
+        tokio::spawn(async move {
             api::spawn_api(store, api_port).await;
-            Ok(())
         });
-    }
-
-    while let Some(res) = set.join_next().await {
-        match res {
-            Err(join_error) => {
-                error!("join error {:?} for client", join_error);
-            }
-            Ok(_) => {
-                info!("client successfully terminated");
-            }
-        }
     }
 
     Ok(())

@@ -156,49 +156,32 @@ pub mod tcp {
         let client_store: Arc<ClientStore> = Default::default();
         let cancellation_token = CancellationToken::new();
     
-        let (client_info, mut set) =
-                proxy_client::run(client_store.clone(), control_port, &format!("http://127.0.0.1:{}/v0/request_token", token_port), cancellation_token.clone(), 15, request_type)
-                    .await
-                    .expect("failed to launch proxy_client");
-        tokio::spawn(async move {
-            while let Some(res) = set.join_next().await {
-                let _ = res.unwrap();
-            }
-        });
-    
-        wait!();
-        Ok(ProxyClient {
-            store: client_store,
-            client_info,
-            cancellation_token,
-        })
-    }
+        let config = Box::leak(Box::new(ownserver::Config {
+            control_port,
+            token_server: format!("http://127.0.0.1:{}/v0/request_token", token_port),
+            ping_interval: 15,
+        }));
 
-    pub async fn launch_proxy_client_reconnect(
-        client_store: Arc<ClientStore>,
-        control_port: u16,
-        token: String,
-        host: String,
-        request_type: RequestType,
-    ) -> Result<ProxyClient, Box<dyn std::error::Error>> {
-        let cancellation_token = CancellationToken::new();
-    
-        let (client_info, mut set) =
-                proxy_client::run_with_token(client_store.clone(), control_port, cancellation_token.clone(), 15, token, host, request_type)
-                    .await
-                    .expect("failed to launch proxy_client");
+        let client_store_ = client_store.clone();
+        let cancellation_token_ = cancellation_token.clone();
         tokio::spawn(async move {
-            while let Some(res) = set.join_next().await {
-                let _ = res.unwrap();
-            }
+            proxy_client::new_run_client(config, client_store_, cancellation_token_, request_type)
+                .await
+                .expect("failed to launch proxy_client");
+            tracing::warn!("new_run_client finished");
         });
     
-        wait!();
-        Ok(ProxyClient {
-            store: client_store,
-            client_info,
-            cancellation_token,
-        })
+        for _ in 0..10 {
+            wait!();
+            if let Some(client_info) = client_store.get_client_info().await {
+                return Ok(ProxyClient {
+                    store: client_store,
+                    client_info,
+                    cancellation_token,
+                });
+            }
+        }
+        Err("failed to get client info".into())
     }
 
     pub async fn launch_proxy_client_new(
@@ -218,7 +201,7 @@ pub mod tcp {
         let client_store_ = client_store.clone();
         let cancellation_token_ = cancellation_token.clone();
         tokio::spawn(async move {
-            proxy_client::new_run_client(config, client_store_.clone(), cancellation_token_, request_type)
+            proxy_client::new_run_client(config, client_store_, cancellation_token_, request_type)
                 .await
                 .expect("failed to launch proxy_client");
             tracing::warn!("new_run_client finished");
@@ -381,22 +364,32 @@ pub mod udp {
         let client_store: Arc<ClientStore> = Default::default();
         let cancellation_token = CancellationToken::new();
     
-        let (client_info, mut set) =
-            proxy_client::run(client_store.clone(), control_port, &format!("http://127.0.0.1:{}/v0/request_token", token_port), cancellation_token.clone(), 15, request_type)
+        let config = Box::leak(Box::new(ownserver::Config {
+            control_port,
+            token_server: format!("http://127.0.0.1:{}/v0/request_token", token_port),
+            ping_interval: 15,
+        }));
+
+        let client_store_ = client_store.clone();
+        let cancellation_token_ = cancellation_token.clone();
+        tokio::spawn(async move {
+            proxy_client::new_run_client(config, client_store_, cancellation_token_, request_type)
                 .await
                 .expect("failed to launch proxy_client");
-        tokio::spawn(async move {
-            while let Some(res) = set.join_next().await {
-                let _ = res.unwrap();
-            }
+            tracing::warn!("new_run_client finished");
         });
     
-        wait!();
-        Ok(ProxyClient {
-            store: client_store,
-            client_info,
-            cancellation_token,
-        })
+        for _ in 0..10 {
+            wait!();
+            if let Some(client_info) = client_store.get_client_info().await {
+                return Ok(ProxyClient {
+                    store: client_store,
+                    client_info,
+                    cancellation_token,
+                });
+            }
+        }
+        Err("failed to get client info".into())
     }
     
     pub async fn launch_local_server(local_port: u16) -> LocalServer {
