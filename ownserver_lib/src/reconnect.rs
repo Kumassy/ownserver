@@ -30,11 +30,7 @@ impl ReconnectTokenPayload {
         }
     }
 
-    pub fn into_token(self, secret: &str) -> Result<String, JWTError> {
-        self.into_token_raw(secret, RECONNECT_TOKEN_VALID_DURATION)
-    }
-
-    fn into_token_raw(self, secret: &str, duration: Duration) -> Result<String, JWTError> {
+    fn _into_token(self, secret: &str, duration: Duration) -> Result<String, JWTError> {
         let header = Header {
             typ: Some("JWT".to_string()),
             alg: Algorithm::HS256,
@@ -56,13 +52,24 @@ impl ReconnectTokenPayload {
         )
     }
 
-    pub fn decode_token(secret: &str, token: &str) -> Result<Self, JWTError> {
-        let token_message = decode::<ReconnectTokenClaims>(
+    pub fn into_token(self, secret: &str) -> Result<String, JWTError> {
+        self._into_token(secret, RECONNECT_TOKEN_VALID_DURATION)
+    }
+
+    fn _decode_token(secret: &str, token: &str, leeway: u64) -> Result<Self, JWTError> {
+        let mut validation = Validation::new(Algorithm::HS256);
+        validation.leeway = leeway;
+
+        let token_message: Result<jsonwebtoken::TokenData<ReconnectTokenClaims>, JWTError> = decode::<ReconnectTokenClaims>(
             token,
             &DecodingKey::from_secret(secret.as_ref()),
-            &Validation::new(Algorithm::HS256),
+            &validation,
         );
         token_message.map(|data| data.claims.into())
+    }
+
+    pub fn decode_token(secret: &str, token: &str) -> Result<Self, JWTError> {
+        Self::_decode_token(secret, token, 60)
     }
 }
 
@@ -103,10 +110,10 @@ mod tests {
         let secret = "foobarbaz";
         let client_id = ClientId::new();
 
-        let token = ReconnectTokenPayload::new(client_id).into_token_raw(secret, Duration::seconds(3))?;
+        let token = ReconnectTokenPayload::new(client_id)._into_token(secret, Duration::seconds(3))?;
         sleep(std::time::Duration::from_secs(5)).await;
 
-        let decode_result = ReconnectTokenPayload::decode_token(secret, &token);
+        let decode_result = ReconnectTokenPayload::_decode_token(secret, &token, 0);
         assert!(decode_result.is_err());
 
         Ok(())
