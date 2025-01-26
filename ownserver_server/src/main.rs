@@ -9,11 +9,11 @@ use metrics::{describe_counter, describe_gauge};
 use metrics_exporter_prometheus::PrometheusBuilder;
 use tracing_subscriber::prelude::*;
 use std::sync::Arc;
-use once_cell::sync::OnceCell;
+use std::sync::OnceLock;
 use structopt::StructOpt;
 use metrics::Unit;
 
-static CONFIG: OnceCell<Config> = OnceCell::new();
+static CONFIG: OnceLock<Config> = OnceLock::new();
 
 #[derive(StructOpt, Debug)]
 #[structopt(name = "ownserver-server")]
