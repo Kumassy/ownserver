@@ -40,7 +40,7 @@ fn calculate_reconnect_backoff(attempts: u32) -> Duration {
 }
 
 pub async fn run_client(
-    config: &'static Config,
+    config: &Config,
     store: Arc<Store>,
     cancellation_token: CancellationToken,
     request_type: RequestType,
@@ -101,10 +101,11 @@ pub async fn run_client(
     
         let store_ = store.clone();
         let ct_ = ct.clone();
+        let ping_interval = config.ping_interval;
         set.spawn(async move {
             loop {
                 tokio::select! {
-                    _ = tokio::time::sleep(Duration::from_secs(config.ping_interval)) => {
+                    _ = tokio::time::sleep(Duration::from_secs(ping_interval)) => {
                         let now = Utc::now();
                         let packet = ControlPacketV2::Ping(0, now, None);
     

@@ -65,13 +65,11 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     debug!("{:?}", cli);
 
-    static CONFIG: OnceLock<Config> = OnceLock::new();
     let config = Config {
         control_port: cli.control_port,
         token_server: cli.token_server,
         ping_interval: cli.periodic_ping_interval,
     };
-    CONFIG.set(config).expect("Failed to set config");
 
     let store: Arc<Store> = Default::default();
     let cancellation_token = CancellationToken::new();
@@ -80,7 +78,7 @@ async fn main() -> Result<()> {
     let store_ = store.clone();
 
     info!("start client main loop");
-    run_client(CONFIG.get().expect("Failed to get config"), store_, cancellation_token,
+    run_client(&config, store_, cancellation_token,
         RequestType::NewClient {
             endpoint_claims: cli.endpoint
         }

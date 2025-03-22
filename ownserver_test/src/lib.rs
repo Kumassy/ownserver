@@ -156,16 +156,16 @@ pub mod tcp {
         let client_store: Arc<ClientStore> = Default::default();
         let cancellation_token = CancellationToken::new();
     
-        let config = Box::leak(Box::new(ownserver::Config {
+        let config = ownserver::Config {
             control_port,
             token_server: format!("http://127.0.0.1:{}/v0/request_token", token_port),
             ping_interval: 15,
-        }));
+        };
 
         let client_store_ = client_store.clone();
         let cancellation_token_ = cancellation_token.clone();
         tokio::spawn(async move {
-            proxy_client::run_client(config, client_store_, cancellation_token_, request_type)
+            proxy_client::run_client(&config, client_store_, cancellation_token_, request_type)
                 .await
                 .expect("failed to launch proxy_client");
             tracing::warn!("run_client finished");
@@ -189,11 +189,11 @@ pub mod tcp {
         control_port: u16,
         request_type: RequestType,
     ) -> Result<ProxyClient, Box<dyn std::error::Error>> {
-        let config = Box::leak(Box::new(ownserver::Config {
+        let config = ownserver::Config {
             control_port,
             token_server: format!("http://127.0.0.1:{}/v0/request_token", token_port),
             ping_interval: 15,
-        }));
+        };
 
         let client_store: Arc<ClientStore> = Default::default();
         let cancellation_token = CancellationToken::new();
@@ -201,7 +201,7 @@ pub mod tcp {
         let client_store_ = client_store.clone();
         let cancellation_token_ = cancellation_token.clone();
         tokio::spawn(async move {
-            proxy_client::run_client(config, client_store_, cancellation_token_, request_type)
+            proxy_client::run_client(&config, client_store_, cancellation_token_, request_type)
                 .await
                 .expect("failed to launch proxy_client");
             tracing::warn!("run_client finished");
@@ -364,16 +364,16 @@ pub mod udp {
         let client_store: Arc<ClientStore> = Default::default();
         let cancellation_token = CancellationToken::new();
     
-        let config = Box::leak(Box::new(ownserver::Config {
+        let config = ownserver::Config {
             control_port,
             token_server: format!("http://127.0.0.1:{}/v0/request_token", token_port),
             ping_interval: 15,
-        }));
+        };
 
         let client_store_ = client_store.clone();
         let cancellation_token_ = cancellation_token.clone();
         tokio::spawn(async move {
-            proxy_client::run_client(config, client_store_, cancellation_token_, request_type)
+            proxy_client::run_client(&config, client_store_, cancellation_token_, request_type)
                 .await
                 .expect("failed to launch proxy_client");
             tracing::warn!("run_client finished");
