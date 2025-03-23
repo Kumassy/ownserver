@@ -51,8 +51,13 @@ pub fn recorder() -> &'static OnceLock<&'static dyn EventRecorder> {
     &RECORDER
 }
 
+pub fn init_recorder(recorder: &'static dyn EventRecorder) -> Result<(), &'static dyn EventRecorder> {
+    RECORDER.set(recorder)
+}
+
 pub fn init_stdout_event_recorder() -> Result<(), &'static dyn EventRecorder> {
-    RECORDER.set(&StdoutRecorder {})
+    let recorder = Box::leak(Box::new(StdoutRecorder {}));
+    init_recorder(recorder)
 }
 
 #[macro_export]
