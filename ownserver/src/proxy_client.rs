@@ -17,7 +17,7 @@ use url::Url;
 
 use crate::error::Error;
 use crate::recorder::record_client_info;
-use crate::{recorder::record_error, record_log, Client, Config, Store};
+use crate::{Client, Config, Store};
 use ownserver_lib::{
     ClientHelloV2, ClientId, ClientType, ControlPacketV2, EndpointClaims, Endpoints, ServerHelloV2, CLIENT_HELLO_VERSION
 };
@@ -46,26 +46,26 @@ pub async fn run_client(
     request_type: RequestType,
 ) -> Result<()> {
     // get token from token server
-    record_log!("Connecting to auth server: {}", config.token_server);
+    info!("Connecting to auth server: {}", config.token_server);
     let (mut token, host) = fetch_token(&config.token_server).await?;
     info!("got token: {}, host: {}", token, host);
-    record_log!("Your proxy server: {}", host);
+    info!("Your proxy server: {}", host);
 
     let mut reconnect_attempts = 0;
     let mut request_type = request_type;
     loop {
         let reconnect_backoff = calculate_reconnect_backoff(reconnect_attempts);
-        record_log!("Connecting in {} seconds...", reconnect_backoff.as_secs());
+        info!("Connecting in {} seconds...", reconnect_backoff.as_secs());
         sleep(reconnect_backoff).await;
 
         // handshake
-        record_log!("Connecting to proxy server: {}:{}", host, config.control_port);
+        info!("Connecting to proxy server: {}:{}", host, config.control_port);
         let url = Url::parse(&format!("ws://{}:{}/tunnel", host, config.control_port))?;
 
         let mut websocket = match connect_async(url).await {
             Ok((websocket, _)) => websocket,
             Err(_) => {
-                record_error(Error::ServerDown);
+                warn!("Failed to connect to proxy server");
                 reconnect_attempts += 1;
                 continue 
             }
@@ -73,7 +73,7 @@ pub async fn run_client(
         info!("WebSocket handshake has been successfully completed");
     
         if let Err(e) = send_client_hello(&mut websocket, token.to_string(), request_type.clone()).await {
-            record_error(e.into());
+            warn!("Failed to send client hello: {:?}", e);
             reconnect_attempts += 1;
             continue;
         }
@@ -81,7 +81,7 @@ pub async fn run_client(
         let client_info = match verify_server_hello(&mut websocket).await {
             Ok(client_info) => client_info,
             Err(e) => {
-                record_error(e);
+                warn!("failed to verify server hello: {:?}", e);
                 reconnect_attempts += 1;
                 continue  
             }
@@ -132,7 +132,7 @@ pub async fn run_client(
                 let t = match store.get_reconnect_token().await {
                     Some(t) => t,
                     None => {
-                        record_error(Error::ReconnectTokenError);
+                        warn!("failed to get reconnect token");
                         break;
                     }
                 };
