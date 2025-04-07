@@ -91,14 +91,14 @@ where
         self.clients.write().await.insert(client_id, client);
 
         let v = self.len_clients().await as f64;
-        gauge!("ownserver_server.store.clients", v);
+        gauge!("ownserver_server.store.clients").set(v);
     }
 
     pub async fn remove_client(&self, client_id: ClientId) -> Option<Client<S>> {
         let client = self.clients.write().await.remove(&client_id);
 
         let v = self.len_clients().await as f64;
-        gauge!("ownserver_server.store.clients", v);
+        gauge!("ownserver_server.store.clients").set(v);
         client
     }
 
@@ -112,7 +112,7 @@ where
         self.addrs_map.insert(peer_addr, stream_id);
 
         let v = self.len_streams().await as f64;
-        gauge!("ownserver_server.store.streams", v);
+        gauge!("ownserver_server.store.streams").set(v);
     }
 
     pub async fn cleanup(&self) {
@@ -137,9 +137,9 @@ where
         self.streams.write().await.retain(|_, v| !v.disabled());
 
         let v = self.len_clients().await as f64;
-        gauge!("ownserver_server.store.clients", v);
+        gauge!("ownserver_server.store.clients").set(v);
         let v = self.len_streams().await as f64;
-        gauge!("ownserver_server.store.streams", v);
+        gauge!("ownserver_server.store.streams").set(v);
     }
 
     pub async fn find_stream_id_by_addr(&self, addr: &SocketAddr) -> Option<StreamId> {

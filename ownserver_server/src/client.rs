@@ -108,7 +108,7 @@ where
 
                                 let current_time = Utc::now();
                                 let rtt = current_time.signed_duration_since(datetime).num_milliseconds() as f64;
-                                gauge!("ownserver_server.stream.rtt", rtt, "client_id" => client_id.to_string());
+                                gauge!("ownserver_server.stream.rtt", "client_id" => client_id.to_string()).set(rtt);
                                 continue;
                             }
                             ControlPacketV2::Ping(seq, datetime, Some(token)) => {

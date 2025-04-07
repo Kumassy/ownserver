@@ -1,5 +1,5 @@
 use std::{io::{self, ErrorKind}, net::SocketAddr};
-use metrics::increment_counter;
+use metrics::counter;
 use ownserver_lib::{ControlPacketV2, EndpointId, RemoteInfo};
 use tokio::net::UdpSocket;
 use tracing::Instrument;
@@ -33,7 +33,7 @@ pub async fn spawn_remote(
         .instrument(tracing::info_span!("process_udp_stream")),
     );
 
-    increment_counter!("ownserver_server.remote.udp.swawn_remote");
+    counter!("ownserver_server.remote.udp.swawn_remote").increment(1);
     Ok(())
 }
 

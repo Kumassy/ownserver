@@ -2,11 +2,11 @@ use chrono::Utc;
 use futures::{
     Sink, SinkExt, Stream, StreamExt,
 };
+use metrics::counter;
 use ownserver_lib::reconnect::ReconnectTokenPayload;
 use ownserver_lib::{ClientHelloV2, ClientType, ControlPacketV2, EndpointClaims, Protocol, ServerHelloV2};
 pub use ownserver_lib::{ClientId, StreamId, CLIENT_HELLO_VERSION};
 use ownserver_auth::decode_jwt;
-use metrics::increment_counter;
 use std::{convert::Infallible, time::Duration};
 use std::net::SocketAddr;
 use tokio::time::sleep;
@@ -170,7 +170,7 @@ async fn validate_client_hello(
         Ok(client_hello) => client_hello,
         _ => {
             tracing::warn!("failed to deserialize client hello");
-            increment_counter!("ownserver_server.control_server.process_client_claims.invalid_client_hello");
+            counter!("ownserver_server.control_server.process_client_claims.invalid_client_hello").increment(1);
 
             return Err(VerifyClientHandshakeError::InvalidClientHello);
         }
@@ -179,7 +179,7 @@ async fn validate_client_hello(
 
     if client_hello.version != CLIENT_HELLO_VERSION {
         tracing::warn!("client sent not supported client handshake version. client: {}, server: {}", client_hello.version, CLIENT_HELLO_VERSION);
-        increment_counter!("ownserver_server.control_server.process_client_claims.version_mismatch");
+        counter!("ownserver_server.control_server.process_client_claims.version_mismatch").increment(1);
 
         return Err(VerifyClientHandshakeError::VersionMismatch);
     }
@@ -193,13 +193,13 @@ async fn validate_client_hello(
                 },
                 Ok(false) => {
                     tracing::warn!("client try to connect to non-designated host");
-                    increment_counter!("ownserver_server.control_server.process_client_claims.illegal_host");
+                    counter!("ownserver_server.control_server.process_client_claims.illegal_host").increment(1);
 
                     return Err(VerifyClientHandshakeError::IllegalHost);
                 },
                 Err(e) => {
                     tracing::warn!("failed to parse client jwt: {:?}", e);
-                    increment_counter!("ownserver_server.control_server.process_client_claims.invalid_jwt");
+                    counter!("ownserver_server.control_server.process_client_claims.invalid_jwt").increment(1);
 
                     return Err(VerifyClientHandshakeError::InvalidJWT);
                 }
@@ -250,12 +250,12 @@ async fn process_client_claims(
                 endpoints,
             };
 
-            increment_counter!("ownserver_server.control_server.process_client_claims.success");
+            counter!("ownserver_server.control_server.process_client_claims.success").increment(1);
             server_hello
         },
         Err(_) => {
             tracing::error!("failed to allocate port");
-            increment_counter!("ownserver_server.control_server.process_client_claims.service_temporary_unavailable");
+            counter!("ownserver_server.control_server.process_client_claims.service_temporary_unavailable").increment(1);
 
             ServerHelloV2::ServiceTemporaryUnavailable
         }
@@ -270,14 +270,14 @@ async fn handle_new_connection(
     client_ip: SocketAddr,
     mut websocket: WebSocket,
 ) {
-    increment_counter!("ownserver_server.control_server.handle_new_connection");
+    counter!("ownserver_server.control_server.handle_new_connection").increment(1);
 
 
     // 1. read client hello
     let client_hello_data = match read_client_hello(&mut websocket).await {
         Some(data) => data,
         None => {
-            increment_counter!("ownserver_server.control_server.handle_new_connection.read_client_hello_error");
+            counter!("ownserver_server.control_server.handle_new_connection.read_client_hello_error").increment(1);
             return
         }
     };
@@ -289,7 +289,7 @@ async fn handle_new_connection(
             let server_hello: ServerHelloV2 = e.into();
             if let Err(e) = send_server_hello(&mut websocket, &server_hello).await {
                 tracing::error!("failed to send server hello: {:?}", e);
-                increment_counter!("ownserver_server.control_server.handle_new_connection.send_server_hello_error");
+                counter!("ownserver_server.control_server.handle_new_connection.send_server_hello_error").increment(1);
             }
             return;
         },
@@ -306,7 +306,7 @@ async fn handle_new_connection(
             // 4. respond with server hello
             if let Err(e) = send_server_hello(&mut websocket, &server_hello).await {
                 tracing::error!("failed to send server hello: {:?}", e);
-                increment_counter!("ownserver_server.control_server.handle_new_connection.send_server_hello_error");
+                counter!("ownserver_server.control_server.handle_new_connection.send_server_hello_error").increment(1);
                 return;
             }
 
@@ -339,7 +339,7 @@ async fn handle_new_connection(
                 }
 
             }
-            increment_counter!("ownserver_server.control_server.handle_new_connection.newclient.success");
+            counter!("ownserver_server.control_server.handle_new_connection.newclient.success").increment(1);
         }
         ProvisioningAction::Reconnect { client_id } => {
             let Config { ref host, reconnect_window,  .. } = config;
@@ -349,7 +349,7 @@ async fn handle_new_connection(
                 Some(client) => client,
                 None => {
                     tracing::warn!(cid=%client_id, "try to reconnect, but client not found");
-                    increment_counter!("ownserver_server.control_server.handle_new_connection.reconnect.client_not_found");
+                    counter!("ownserver_server.control_server.handle_new_connection.reconnect.client_not_found").increment(1);
                     return;
                 }
             };
@@ -363,14 +363,14 @@ async fn handle_new_connection(
             };
             if let Err(e) = send_server_hello(&mut websocket, &server_hello).await {
                 tracing::error!("failed to send server hello: {:?}", e);
-                increment_counter!("ownserver_server.control_server.handle_new_connection.send_server_hello_error");
+                counter!("ownserver_server.control_server.handle_new_connection.send_server_hello_error").increment(1);
                 return;
             }
 
             let new_client = Client::new(store.clone(), client_id, endpoints, websocket, *reconnect_window);
             store.add_client(new_client).await;
             tracing::info!(cid=%client_id, "register reconnect client to store");
-            increment_counter!("ownserver_server.control_server.handle_new_connection.reconnect.success");
+            counter!("ownserver_server.control_server.handle_new_connection.reconnect.success").increment(1);
         },
     }
 

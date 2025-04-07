@@ -1,4 +1,4 @@
-use metrics::increment_counter;
+use metrics::counter;
 use ownserver_lib::{ControlPacketV2, EndpointId, RemoteInfo};
 use warp::filters::ws::WebSocket;
 use std::io::{self, ErrorKind};
@@ -56,7 +56,7 @@ pub async fn spawn_remote(
         }
     }.instrument(tracing::info_span!("spawn_accept_connection")));
 
-    increment_counter!("ownserver_server.remote.tcp.swawn_remote");
+    counter!("ownserver_server.remote.tcp.swawn_remote").increment(1);
     Ok(())
 }
 
