@@ -18,7 +18,7 @@ struct Cli {
     api_port: Option<u16>,
     #[arg(long, default_value_t = 5000, help = "Advanced settings")]
     control_port: u16,
-    #[arg(long, default_value = "https://auth.ownserver.kumassy.com/v1/request_token", help = "Advanced settings")]
+    #[arg(long, default_value = "https://auth.ownserver.kumassy.com/v2/request_token", help = "Advanced settings")]
     token_server: String,
 
     #[structopt(long, default_value = "15")]
