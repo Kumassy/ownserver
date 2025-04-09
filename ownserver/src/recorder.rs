@@ -1,7 +1,5 @@
-use std::sync::OnceLock;
-
+use std::{fmt, sync::OnceLock};
 use log::{info, warn};
-
 use crate::proxy_client::ClientInfo;
 
 
@@ -39,17 +37,31 @@ impl EventRecorder for StdoutRecorder {
     }
 }
 
+
+static SET_EVENT_RECORDER_ERROR: &str = "attempted to set a event recorder after the logging system \
+                                 was already initialized";
+
+#[derive(Debug)]
+pub struct SetEventRecorderError(());
+
+impl fmt::Display for SetEventRecorderError {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt.write_str(SET_EVENT_RECORDER_ERROR)
+    }
+}
+impl std::error::Error for SetEventRecorderError {}
+
 pub fn recorder() -> &'static OnceLock<&'static dyn EventRecorder> {
     &RECORDER
 }
 
-pub fn init_recorder(recorder: &'static dyn EventRecorder) -> Result<(), &'static dyn EventRecorder> {
-    RECORDER.set(recorder)
+pub fn init_recorder(recorder: &'static dyn EventRecorder) -> Result<(), SetEventRecorderError> {
+    RECORDER.set(recorder).map_err(|_| SetEventRecorderError(()))
 }
 
-pub fn init_stdout_event_recorder() -> Result<(), &'static dyn EventRecorder> {
+pub fn init_stdout_event_recorder() {
     let recorder = Box::leak(Box::new(StdoutRecorder {}));
-    init_recorder(recorder)
+    init_recorder(recorder).unwrap();
 }
 
 pub fn record_client_info(client_info: ClientInfo) {

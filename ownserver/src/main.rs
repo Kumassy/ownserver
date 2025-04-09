@@ -5,7 +5,7 @@ use ownserver_lib::{EndpointClaim, Protocol};
 use tokio_util::sync::CancellationToken;
 use clap::Parser;
 
-use ownserver::{api, proxy_client::{run_client, RequestType}, Config, Store};
+use ownserver::{api, proxy_client::{run_client, RequestType}, recorder::init_stdout_event_recorder, Config, Store};
 
 #[derive(Parser, Debug)]
 #[command(name = "ownserver")]
@@ -61,6 +61,7 @@ fn parse_endpoint(s: &str) -> Result<EndpointClaim, String> {
 #[tokio::main]
 async fn main() -> Result<()> {
     pretty_env_logger::init();
+    init_stdout_event_recorder();
 
     let cli = Cli::parse();
     debug!("{:?}", cli);
