@@ -1,4 +1,5 @@
 use chrono::Duration;
+use metrics_util::MetricKindMask;
 use ownserver_server::Store;
 pub use ownserver_server::{
     port_allocator::PortAllocator,
@@ -23,6 +24,9 @@ struct Opt {
 
     #[structopt(long, env = "MT_TOKEN_SECRET")]
     token_secret: String,
+
+    #[structopt(long, default_value = "300")]
+    metrics_idle_timeout: u64,
 
     #[structopt(short, long)]
     host: String,
@@ -49,6 +53,7 @@ impl From<Opt> for Config {
             control_port,
             token_secret,
             host,
+            metrics_idle_timeout,
             remote_port_start,
             remote_port_end,
             periodic_cleanup_interval,
@@ -61,6 +66,7 @@ impl From<Opt> for Config {
             control_port,
             token_secret,
             host,
+            metrics_idle_timeout,
             remote_port_start,
             remote_port_end,
             periodic_cleanup_interval,
@@ -85,8 +91,13 @@ async fn main() {
         .try_init()
         .expect("Failed to register tracer with registry");
 
+
+    let metrics_idle_timeout = CONFIG.get().expect("failed to read config").metrics_idle_timeout;
     let builder = PrometheusBuilder::new();
-    builder.install().expect("failed to install recorder/exporter");
+    builder
+        .idle_timeout(MetricKindMask::ALL, Some(std::time::Duration::from_secs(metrics_idle_timeout)))
+        .install().expect("failed to install recorder/exporter");
+
     describe_gauge!("ownserver_server.store.clients", "[gauge] The number of Clients at this time.");
     describe_gauge!("ownserver_server.store.streams", "[gauge] The number of RemoteStreams at this time.");
     describe_gauge!("ownserver_server.stream.rtt", Unit::Milliseconds, "[gauge] RTT between server and client.");

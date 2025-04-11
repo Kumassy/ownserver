@@ -33,6 +33,7 @@ chrono = "0.4"
 structopt = "0.3.25"
 metrics = "0.24"
 metrics-exporter-prometheus = "0.16"
+metrics-util = "0.19"
 bytes = "1.10"
 
 [dev-dependencies]

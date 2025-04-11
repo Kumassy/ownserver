@@ -390,6 +390,7 @@ mod verify_client_handshake_test {
             control_port: 5000,
             token_secret: "supersecret".to_string(),
             host: "foohost.test.local".to_string(),
+            metrics_idle_timeout: 300,
             remote_port_start: 10010,
             remote_port_end: 10011,
             periodic_cleanup_interval: 15,

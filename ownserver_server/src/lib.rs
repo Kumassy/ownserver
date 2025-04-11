@@ -17,6 +17,7 @@ pub struct Config {
     pub control_port: u16,
     pub token_secret: String,
     pub host: String,
+    pub metrics_idle_timeout: u64,
     pub remote_port_start: u16,
     pub remote_port_end: u16,
     pub periodic_cleanup_interval: u64,
