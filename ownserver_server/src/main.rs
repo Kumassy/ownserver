@@ -96,11 +96,24 @@ async fn main() {
     let builder = PrometheusBuilder::new();
     builder
         .idle_timeout(MetricKindMask::ALL, Some(std::time::Duration::from_secs(metrics_idle_timeout)))
-        .install().expect("failed to install recorder/exporter");
+        .install()
+        .expect("failed to install recorder/exporter");
 
-    describe_gauge!("ownserver_server.store.clients", "[gauge] The number of Clients at this time.");
-    describe_gauge!("ownserver_server.store.streams", "[gauge] The number of RemoteStreams at this time.");
-    describe_gauge!("ownserver_server.stream.rtt", Unit::Milliseconds, "[gauge] RTT between server and client.");
+    describe_counter!("ownserver_server.remote.tcp.swawn_remote", "Number of TCP remote connections spawned");
+    describe_counter!("ownserver_server.remote.tcp.received_bytes", "Bytes received over TCP connections");
+    describe_counter!("ownserver_server.remote.tcp.sent_bytes", "Bytes sent over TCP connections");
+
+    describe_counter!("ownserver_server.remote.udp.swawn_remote", "Number of UDP remote connections spawned");
+    describe_counter!("ownserver_server.remote.udp.received_bytes", "Bytes received over UDP connections");
+    describe_counter!("ownserver_server.remote.udp.sent_bytes", "Bytes sent over UDP connections");
+
+    describe_counter!("ownserver_server.client.control_packet.received_bytes", "Bytes received in control packets");
+    describe_counter!("ownserver_server.client.control_packet.sent_bytes", "Bytes sent in control packets");
+
+    describe_gauge!("ownserver_server.store.clients", "Number of active clients");
+    describe_gauge!("ownserver_server.store.streams", "Number of active streams");
+    describe_gauge!("ownserver_server.stream.rtt", "Round-trip time between server and client in milliseconds");
+
     describe_counter!("ownserver_server.control_server.handle_new_connection", "[counter] The number of successfully accepted websocket connections so far.");
     describe_counter!("ownserver_server.control_server.handle_new_connection.read_client_hello_error", "[counter] The number of times the server failed to read request from clients.");
     describe_counter!("ownserver_server.control_server.handle_new_connection.send_server_hello_error", "[counter] The server tried to send error to clients, but failed.");

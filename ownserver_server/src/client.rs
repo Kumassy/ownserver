@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use bytes::BytesMut;
 use futures::{stream::SplitSink, Sink, SinkExt, StreamExt};
-use metrics::gauge;
+use metrics::{counter, gauge};
 use ownserver_lib::{ClientId, Endpoints, ControlPacketV2Codec, ControlPacketV2};
 use tokio_util::{sync::CancellationToken, codec::{Encoder, Decoder}};
 use tracing::Instrument;
@@ -72,6 +72,8 @@ where
                         };
                 
                         let mut bytes = BytesMut::from(&message[..]);
+                        counter!("ownserver_server.client.control_packet.received_bytes", "client_id" => client_id.to_string()).increment(bytes.len() as u64);
+
                         let packet = match ControlPacketV2Codec::new().decode(&mut bytes) {
                             Ok(Some(packet)) => packet,
                             Ok(None) => {
@@ -162,6 +164,7 @@ where
             self.set_wait_reconnect();
             return Err(ClientStreamError::ClientError(format!("failed to communicate with client {:?}", e)))
         }
+        counter!("ownserver_server.client.control_packet.sent_bytes", "client_id" => self.client_id.to_string()).increment(bytes.len() as u64);
         Ok(())
     }
 

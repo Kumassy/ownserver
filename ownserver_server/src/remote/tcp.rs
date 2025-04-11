@@ -132,6 +132,7 @@ impl RemoteTcp {
                     }
                 };
                 tracing::debug!(cid = %client_id, sid = %stream_id, "read {} bytes message from remote", n);
+                counter!("ownserver_server.remote.tcp.received_bytes", "client_id" => client_id.to_string(), "stream_id" => stream_id.to_string()).increment(n as u64);
 
                 if n == 0 {
                     tracing::debug!(cid = %client_id, sid = %stream_id, "remote client streams end");
@@ -199,6 +200,8 @@ impl RemoteTcp {
             self.disable();
             return Err(ClientStreamError::RemoteError(format!("stream_id: {}, {:?}", self.stream_id, e)))
         }
+
+        counter!("ownserver_server.remote.tcp.sent_bytes", "client_id" => self.client_id.to_string(), "stream_id" => self.stream_id.to_string()).increment(data.len() as u64);
         Ok(())
     }
 

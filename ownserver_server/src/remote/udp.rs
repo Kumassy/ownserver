@@ -98,6 +98,7 @@ async fn process_udp_stream(
         }
 
         tracing::debug!(cid = %client_id, sid = %stream_id, "read {} bytes message from remote client", n);
+        counter!("ownserver_server.remote.udp.received_bytes", "client_id" => client_id.to_string(), "stream_id" => stream_id.to_string()).increment(n as u64);
 
         let data = &buf[..n];
         let packet = ControlPacketV2::Data(stream_id, data.to_vec());
@@ -159,6 +160,7 @@ impl RemoteUdp {
             self.disable();
             return Err(ClientStreamError::RemoteError(format!("stream_id: {}, {:?}", self.stream_id, e)))
         }
+        counter!("ownserver_server.remote.udp.sent_bytes", "client_id" => self.client_id.to_string(), "stream_id" => self.stream_id.to_string()).increment(data.len() as u64);
         Ok(())
     }
 
