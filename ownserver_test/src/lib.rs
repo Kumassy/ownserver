@@ -110,6 +110,7 @@ pub async fn launch_proxy_server(
         control_port,
         token_secret: "supersecret".to_string(),
         host: "127.0.0.1".to_string(),
+        metrics_idle_timeout: 300,
         remote_port_start,
         remote_port_end,
         periodic_cleanup_interval: 2 << 30,
