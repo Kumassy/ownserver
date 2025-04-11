@@ -201,7 +201,7 @@ impl<S> Drop for Client<S> {
                 tracing::info!(cid = %self.client_id, "dropping client, retain streams");
             },
             ClientState::WaitReconnect { .. } => {
-                tracing::info!(cid = %self.client_id, "droppping client and associated streams");
+                tracing::info!(cid = %self.client_id, "dropping client and associated streams");
                 self.ct_child.cancel();
             }
         }
