@@ -1,11 +1,11 @@
-use std::{sync::Arc, ops::RangeInclusive};
+use std::{ops::RangeInclusive, sync::Arc};
 use anyhow::Result;
 use log::*;
 use ownserver_lib::{EndpointClaim, Protocol};
 use tokio_util::sync::CancellationToken;
 use clap::Parser;
 
-use ownserver::{proxy_client::run, api, Store};
+use ownserver::{api, proxy_client::{run_client, RequestType}, recorder::init_stdout_event_recorder, Config, Store};
 
 #[derive(Parser, Debug)]
 #[command(name = "ownserver")]
@@ -18,7 +18,7 @@ struct Cli {
     api_port: Option<u16>,
     #[arg(long, default_value_t = 5000, help = "Advanced settings")]
     control_port: u16,
-    #[arg(long, default_value = "https://auth.ownserver.kumassy.com/v1/request_token", help = "Advanced settings")]
+    #[arg(long, default_value = "https://auth.ownserver.kumassy.com/v2/request_token", help = "Advanced settings")]
     token_server: String,
 
     #[structopt(long, default_value = "15")]
@@ -61,37 +61,37 @@ fn parse_endpoint(s: &str) -> Result<EndpointClaim, String> {
 #[tokio::main]
 async fn main() -> Result<()> {
     pretty_env_logger::init();
+    init_stdout_event_recorder();
 
     let cli = Cli::parse();
     debug!("{:?}", cli);
+
+    let config = Config {
+        control_port: cli.control_port,
+        token_server: cli.token_server,
+        ping_interval: cli.periodic_ping_interval,
+    };
 
     let store: Arc<Store> = Default::default();
     let cancellation_token = CancellationToken::new();
 
 
     let store_ = store.clone();
-    let (client_info, mut set) =
-        run(store_, cli.control_port, &cli.token_server, cancellation_token, cli.endpoint, cli.periodic_ping_interval).await?;
-    info!("client is running under configuration: {:?}", client_info);
+
+    info!("start client main loop");
+    run_client(&config, store_, cancellation_token,
+        RequestType::NewClient {
+            endpoint_claims: cli.endpoint
+        }
+    ).await?;
 
     if let Some(api_port) = cli.api_port {
         info!("client side api is available at localhost:{}", api_port);
-        set.spawn(async move {
+        tokio::spawn(async move {
             api::spawn_api(store, api_port).await;
-            Ok(())
         });
-    }
-
-    while let Some(res) = set.join_next().await {
-        match res {
-            Err(join_error) => {
-                error!("join error {:?} for client", join_error);
-            }
-            Ok(_) => {
-                info!("client successfully terminated");
-            }
-        }
     }
 
     Ok(())
 }
+

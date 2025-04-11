@@ -1,12 +1,11 @@
 use anyhow::{anyhow, Result};
-use bytes::BytesMut;
 use chrono::Utc;
-use futures::channel::mpsc::{unbounded, UnboundedSender};
 use futures::{Sink, SinkExt, Stream, StreamExt};
 use log::*;
 use serde::{Deserialize, Serialize};
-use tokio_util::codec::{Encoder, Decoder};
-use std::sync::Arc;
+use tokio::signal;
+use tokio::time::sleep;
+use std::{cmp::min, sync::Arc};
 use std::time::Duration;
 use tokio::task::JoinSet;
 use tokio_tungstenite::{
@@ -17,160 +16,166 @@ use tokio_util::sync::CancellationToken;
 use url::Url;
 
 use crate::error::Error;
-use crate::{local, Store};
-use crate::StreamMessage;
+use crate::recorder::record_client_info;
+use crate::{Client, Config, Store};
 use ownserver_lib::{
-    ClientId, CLIENT_HELLO_VERSION, ControlPacketV2, ControlPacketV2Codec, ClientHelloV2, EndpointClaims, Endpoints, ServerHelloV2, Protocol,
+    ClientHelloV2, ClientId, ClientType, ControlPacketV2, EndpointClaims, Endpoints, ServerHelloV2, CLIENT_HELLO_VERSION
 };
 
-pub async fn run(
-    store: Arc<Store>,
-    control_port: u16,
-    token_server: &str,
-    cancellation_token: CancellationToken,
-    endpoint_claims: EndpointClaims,
-    ping_interval: u64,
-) -> Result<(ClientInfo, JoinSet<Result<(), Error>>)> {
-    println!("Connecting to auth server: {}", token_server);
-    let (token, host) = fetch_token(token_server).await?;
-    info!("got token: {}, host: {}", token, host);
-    println!("Your proxy server: {}", host);
-
-    println!("Connecting to proxy server: {}:{}", host, control_port);
-    let url = Url::parse(&format!("ws://{}:{}/tunnel", host, control_port))?;
-    let (mut websocket, _) = connect_async(url).await.map_err(|_| Error::ServerDown)?;
-    info!("WebSocket handshake has been successfully completed");
-
-    send_client_hello(&mut websocket, token, endpoint_claims).await?;
-    let client_info = verify_server_hello(&mut websocket).await?;
-    info!(
-        "cid={} got client_info from server: {:?}",
-        client_info.client_id, client_info
-    );
-    println!("Your Client ID: {}", client_info.client_id);
-    println!("Endpoint Info:");
-    for endpoint in client_info.endpoints.iter() {
-        let message = format!("{}://localhost:{} <--> {}://{}:{}", endpoint.protocol, endpoint.local_port, endpoint.protocol, client_info.host, endpoint.remote_port);
-        println!("+{}+", "-".repeat(message.len() + 2));
-        println!("| {} |", message);
-        println!("+{}+", "-".repeat(message.len() + 2));
-    }
-    store.register_endpoints(client_info.endpoints.clone());
-
-    // split reading and writing
-    let (mut ws_sink, mut ws_stream) = websocket.split();
-
-    // tunnel channel
-    let (mut tunnel_tx, mut tunnel_rx) = unbounded::<ControlPacketV2>();
-
-    let mut set = JoinSet::new();
-    let client_id = client_info.client_id;
-    let ct = cancellation_token.child_token();
-    // continuously write to websocket tunnel
-    set.spawn(async move {
-        loop {
-            tokio::select! {
-                v = tunnel_rx.next() => {
-                    let packet = match v {
-                        Some(data) => data,
-                        None => {
-                            warn!("cid={} control flow didn't send anything!", client_id);
-                            return Ok(());
-                        }
-                    };
-
-                    let mut codec = ControlPacketV2Codec::new();
-                    let mut bytes = BytesMut::new();
-                    if let Err(e) = codec.encode(packet, &mut bytes) {
-                        warn!("cid={} failed to encode message: {:?}", client_id, e);
-                        return Ok(());
-                    }
-                    if let Err(e) = ws_sink.send(Message::binary(bytes.to_vec())).await {
-                        warn!("cid={} failed to write message to tunnel websocket: {:?}", client_id, e);
-                        return Ok(());
-                    }
-
-                },
-                _ = ct.cancelled() => {
-                    return Ok(());
-                }
-            }
-        }
-    });
-
-    let ct = cancellation_token.child_token();
-    let mut tunnel_tx_ = tunnel_tx.clone();
-    set.spawn(async move {
-        loop {
-            tokio::select! {
-                _ = tokio::time::sleep(Duration::from_secs(ping_interval)) => {
-                    let now = Utc::now();
-                    let packet = ControlPacketV2::Ping(0, now);
-                    if let Err(e) =  tunnel_tx_.send(packet).await {
-                        error!("cid={} failed to send ping to tx buffer: {:?}", &client_id, e);
-                        return Ok(());
-                    }
-                },
-                _ = ct.cancelled() => {
-                    return Ok(());
-                }
-            }
-        }
-    });
-
-    let ct = cancellation_token.child_token();
-    set.spawn(async move {
-        // continuously read from websocket tunnel
-        loop {
-            tokio::select! {
-                v = ws_stream.next() => {
-                    match v {
-                        Some(Ok(message)) if message.is_close() => {
-                            debug!("cid={} got close message", client_id);
-                            return Ok(());
-                        }
-                        Some(Ok(message)) => {
-                            let packet = process_control_flow_message(
-                                store.clone(),
-                                &mut tunnel_tx,
-                                message.into_data(),
-                            )
-                            .await
-                            .map_err(|e| {
-                                error!("cid={} Malformed protocol control packet: {:?}", client_id, e);
-                                Error::MalformedMessageFromServer
-                            })?;
-                            debug!("cid={} Processed data packet: {}", client_id, packet);
-                        }
-                        Some(Err(e)) => {
-                            warn!("cid={} websocket read error: {:?}", client_id, e);
-                            return Err(Error::Timeout);
-                        }
-                        None => {
-                            warn!("cid={} websocket sent none", client_id);
-                            return Err(Error::Timeout);
-                        }
-                    }
-                },
-                _ = ct.cancelled() => {
-                    return Ok(());
-                }
-            }
-        }
-    });
-
-
-    Ok((client_info, set))
+#[derive(Debug, Clone)]
+pub enum RequestType {
+    NewClient {
+        endpoint_claims: EndpointClaims,
+    },
+    Reconnect,
 }
 
-pub async fn send_client_hello<T>(websocket: &mut T, token: String, endpoint_claims: EndpointClaims) -> Result<(), T::Error>
+const MAX_RECONNECT_BACKOFF_SECS: u64 = 300;
+fn calculate_reconnect_backoff(attempts: u32) -> Duration {
+    match attempts {
+        0 => Duration::from_secs(0),
+        1..10 => Duration::from_secs(min(2u64.pow(attempts - 1), MAX_RECONNECT_BACKOFF_SECS)),
+        _ => Duration::from_secs(MAX_RECONNECT_BACKOFF_SECS),
+    }
+}
+
+pub async fn run_client(
+    config: &Config,
+    store: Arc<Store>,
+    cancellation_token: CancellationToken,
+    request_type: RequestType,
+) -> Result<()> {
+    // get token from token server
+    info!("Connecting to auth server: {}", config.token_server);
+    let (mut token, host) = fetch_token(&config.token_server).await?;
+    info!("got token: {}, host: {}", token, host);
+    info!("Your proxy server: {}", host);
+
+    let mut reconnect_attempts = 0;
+    let mut request_type = request_type;
+    loop {
+        let reconnect_backoff = calculate_reconnect_backoff(reconnect_attempts);
+        info!("Connecting in {} seconds...", reconnect_backoff.as_secs());
+        sleep(reconnect_backoff).await;
+
+        // handshake
+        info!("Connecting to proxy server: {}:{}", host, config.control_port);
+        let url = Url::parse(&format!("ws://{}:{}/tunnel", host, config.control_port))?;
+
+        let mut websocket = match connect_async(url).await {
+            Ok((websocket, _)) => websocket,
+            Err(_) => {
+                warn!("Failed to connect to proxy server");
+                reconnect_attempts += 1;
+                continue 
+            }
+        };
+        info!("WebSocket handshake has been successfully completed");
+    
+        if let Err(e) = send_client_hello(&mut websocket, token.to_string(), request_type.clone()).await {
+            warn!("Failed to send client hello: {:?}", e);
+            reconnect_attempts += 1;
+            continue;
+        }
+
+        let client_info = match verify_server_hello(&mut websocket).await {
+            Ok(client_info) => client_info,
+            Err(e) => {
+                warn!("failed to verify server hello: {:?}", e);
+                reconnect_attempts += 1;
+                continue  
+            }
+        };
+        let client_id = client_info.client_id;
+        store.register_endpoints(client_info.endpoints.clone());
+        record_client_info(client_info.clone());
+        reconnect_attempts = 0;
+
+
+        // spawn main thread
+        let mut set = JoinSet::new();
+        let ct = cancellation_token.child_token();
+    
+        let client = Client::new(&mut set, store.clone(), client_info, websocket, ct.clone());
+        store.add_client(client).await;
+    
+        let store_ = store.clone();
+        let ct_ = ct.clone();
+        let ping_interval = config.ping_interval;
+        set.spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = tokio::time::sleep(Duration::from_secs(ping_interval)) => {
+                        let now = Utc::now();
+                        let packet = ControlPacketV2::Ping(0, now, None);
+    
+                        if let Err(e) = store_.send_to_server(packet).await {
+                            warn!("cid={} failed to send ping to tx buffer: {:?}", &client_id, e);
+                            return Err(e);
+                        }
+                    },
+                    _ = ct_.cancelled() => {
+                        return Ok(());
+                    }
+                }
+            }
+        });
+
+        tokio::select! {
+            // some tasks crashed
+            v = set.join_next() => {
+                info!("some tasks exited: {:?}, reconnecting...", v);
+
+                ct.cancel();
+                set.shutdown().await;
+
+                let t = match store.get_reconnect_token().await {
+                    Some(t) => t,
+                    None => {
+                        warn!("failed to get reconnect token");
+                        break;
+                    }
+                };
+                token = t;
+                request_type = RequestType::Reconnect;
+                continue;
+            },
+            // cancelled by API
+            _ = cancellation_token.cancelled() => {
+                info!("run_client cancelled by token");
+                break;
+            },
+            // cancelled by terminal
+            _ = signal::ctrl_c() => {
+                break;
+            }
+        }
+    }
+    Ok(())
+}
+
+
+pub async fn send_client_hello<T>(websocket: &mut T, token: String, request_type: RequestType) -> Result<(), T::Error>
 where
     T: Unpin + Sink<Message>,
 {
-    let hello = ClientHelloV2 {
-        version: CLIENT_HELLO_VERSION,
-        token,
-        endpoint_claims,
+    let hello = match request_type {
+        RequestType::NewClient { endpoint_claims } => {
+            ClientHelloV2 {
+                version: CLIENT_HELLO_VERSION,
+                token,
+                endpoint_claims,
+                client_type: ClientType::Auth,
+            }
+        }
+        RequestType::Reconnect => {
+            ClientHelloV2 {
+                version: CLIENT_HELLO_VERSION,
+                token,
+                endpoint_claims: vec![],
+                client_type: ClientType::Reconnect,
+            }
+        }
     };
     debug!("Sent client hello: {:?}", hello);
     let hello_data = serde_json::to_vec(&hello).unwrap_or_default();
@@ -246,120 +251,6 @@ where
     })
 }
 
-pub async fn process_control_flow_message(
-    store: Arc<Store>,
-    tunnel_tx: &mut UnboundedSender<ControlPacketV2>,
-    payload: Vec<u8>,
-) -> Result<ControlPacketV2, Box<dyn std::error::Error>> {
-    let mut bytes = BytesMut::from(&payload[..]);
-    let control_packet = ControlPacketV2Codec::new().decode(&mut bytes)?
-        .ok_or("failed to parse partial packet")?;
-        // TODO: should handle None case
-
-    match control_packet {
-        // TODO: use remote_info
-        ControlPacketV2::Init(stream_id, endpoint_id, ref remote_info) => {
-            debug!("sid={} eid={} remote_info={} init stream", stream_id, endpoint_id, remote_info);
-
-            let endpoint = match store.get_endpoint_by_endpoint_id(endpoint_id) {
-                Some(e) => e,
-                None => {
-                    warn!(
-                        "sid={} eid={} endpoint is not registered",
-                        stream_id, endpoint_id
-                    );
-                    return Err(format!("eid={} is not registered", endpoint_id).into())
-                }
-            };
-
-            if store.has_stream(&stream_id) {
-                warn!(
-                    "sid={} already exist at init process",
-                    stream_id
-                );
-                return Err(format!("sid={} is already exist", stream_id).into())
-            }
-
-            match endpoint.protocol {
-                Protocol::TCP => {
-                    local::tcp::setup_new_stream(
-                        store.clone(),
-                        tunnel_tx.clone(),
-                        stream_id,
-                        endpoint_id,
-                        remote_info.clone(),
-                    )
-                    .await?;
-                    println!("new tcp stream arrived: sid={}, eid={}", stream_id, endpoint_id);
-                }
-                Protocol::UDP => {
-                    local::udp::setup_new_stream(
-                        store.clone(),
-                        tunnel_tx.clone(),
-                        stream_id,
-                        endpoint_id,
-                        remote_info.clone(),
-                    )
-                    .await?;
-                    println!("new udp stream arrived: sid={}, eid={}", stream_id, endpoint_id);
-                }
-            }
-        }
-        ControlPacketV2::Ping(seq, datetime) => {
-            debug!("got ping");
-            let _ = tunnel_tx.send(ControlPacketV2::Pong(seq, datetime)).await;
-        }
-        ControlPacketV2::Pong(_, datetime) => {
-            debug!("got pong");
-            // calculate RTT
-            let current_time = Utc::now();
-            let rtt = current_time.signed_duration_since(datetime).num_milliseconds();
-            store.set_rtt(rtt);
-            debug!("RTT: {}ms", rtt);
-        }
-        ControlPacketV2::Refused(_) => return Err("unexpected control packet".into()),
-        ControlPacketV2::End(stream_id) => {
-            debug!("sid={} end stream", stream_id);
-            // proxy server try to close control stream and local stream
-
-            tokio::spawn(async move {
-                if let Some((stream_id, mut tx)) = store.remove_stream(&stream_id) {
-                    tokio::time::sleep(Duration::from_secs(5)).await;
-                    let _ = tx.send_to_local(StreamMessage::Close).await.map_err(|e| {
-                        error!(
-                            "sid={} failed to send stream close: {:?}",
-                            stream_id,
-                            e
-                        );
-                    });
-                    println!("close tcp stream: {}", stream_id);
-                }
-            });
-        }
-        ControlPacketV2::Data(stream_id, ref data) => {
-            debug!("sid={} new data: {}", stream_id, data.len());
-
-            match store.get_mut_stream(&stream_id) {
-                Some(mut tx) => {
-                    tx.send_to_local(StreamMessage::Data(data.clone())).await?;
-                    debug!("sid={} forwarded to local socket", stream_id);
-                }
-                None => {
-                    error!(
-                        "sid={} got data but no stream to send it to.",
-                        stream_id
-                    );
-                    tunnel_tx
-                        .send(ControlPacketV2::Refused(stream_id))
-                        .await?;
-                }
-            }
-        }
-    };
-
-    Ok(control_packet)
-}
-
 #[derive(Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum TokenResponse {
@@ -432,7 +323,7 @@ mod fetch_token_test {
 mod client_verify_server_hello_test {
     use super::*;
     use futures::{channel::mpsc, SinkExt};
-    use ownserver_lib::{ClientId, ServerHelloV2, EndpointId, Endpoint};
+    use ownserver_lib::{ClientId, Endpoint, EndpointId, Protocol, ServerHelloV2};
 
     #[tokio::test]
     async fn it_accept_server_hello() -> Result<(), Box<dyn std::error::Error>> {
@@ -516,5 +407,26 @@ mod client_verify_server_hello_test {
         assert!(matches!(server_hello, Error::WebSocketError(_)));
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod calculate_reconnect_backoff_test {
+    use super::*;
+
+    #[test]
+    fn it_calculates_reconnect_backoff() {
+        assert_eq!(calculate_reconnect_backoff(0), Duration::from_secs(0));
+        assert_eq!(calculate_reconnect_backoff(1), Duration::from_secs(1));
+        assert_eq!(calculate_reconnect_backoff(2), Duration::from_secs(2));
+        assert_eq!(calculate_reconnect_backoff(3), Duration::from_secs(4));
+        assert_eq!(calculate_reconnect_backoff(4), Duration::from_secs(8));
+        assert_eq!(calculate_reconnect_backoff(5), Duration::from_secs(16));
+        assert_eq!(calculate_reconnect_backoff(6), Duration::from_secs(32));
+        assert_eq!(calculate_reconnect_backoff(7), Duration::from_secs(64));
+        assert_eq!(calculate_reconnect_backoff(8), Duration::from_secs(128));
+        assert_eq!(calculate_reconnect_backoff(9), Duration::from_secs(256));
+        assert_eq!(calculate_reconnect_backoff(10), Duration::from_secs(300));
+        assert_eq!(calculate_reconnect_backoff(11), Duration::from_secs(300));
     }
 }

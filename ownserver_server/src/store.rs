@@ -1,24 +1,30 @@
 use std::{net::SocketAddr, collections::HashMap, ops::Range};
 
 use dashmap::DashMap;
-use ownserver_lib::{StreamId, ClientId, EndpointClaims, Endpoints, ControlPacketV2, EndpointId, Endpoint};
+use futures::Sink;
+use ownserver_lib::{ClientId, ControlPacketV2, Endpoint, EndpointClaims, EndpointId, Endpoints, StreamId};
 use metrics::gauge;
 use rand::Rng;
 use tokio::{sync::{RwLock, Mutex}, net::ToSocketAddrs};
+use warp::filters::ws::Message;
 
-use crate::{remote::stream::{RemoteStream, StreamMessage}, Client, ClientStreamError, port_allocator::{PortAllocator, PortAllocatorError}};
+use crate::{port_allocator::{PortAllocator, PortAllocatorError}, remote::stream::{RemoteStream, StreamMessage}, Client, ClientStreamError};
 
 
 #[derive(Debug, Default)]
-pub struct Store {
+pub struct Store<S> {
     streams: RwLock<HashMap<StreamId, RemoteStream>>,
-    clients: RwLock<HashMap<ClientId, Client>>,
+    clients: RwLock<HashMap<ClientId, Client<S>>>,
     addrs_map: DashMap<SocketAddr, StreamId>,
     endpoints_map: DashMap<EndpointId, Endpoint>,
     alloc: Mutex<PortAllocator>,
 }
 
-impl Store {
+impl<S, E> Store<S>
+where
+    S: futures::Stream<Item = Result<Message, warp::Error>> + Sink<Message, Error = E> + Unpin + Send + 'static,
+    E: std::fmt::Debug,
+{
     pub fn new(range: Range<u16>) -> Self {
         Self {
             streams: Default::default(),
@@ -73,18 +79,31 @@ impl Store {
             }
         }
     }
-    pub async fn disable_client(&self, client_id: ClientId) {
+
+    pub async fn set_wait_reconnect(&self, client_id: ClientId) {
         if let Some(client) = self.clients.write().await.get_mut(&client_id) {
-            client.disable().await;
+            client.set_wait_reconnect();
         }
     }
 
-    pub async fn add_client(&self, client: Client) {
+    pub async fn add_client(&self, client: Client<S>) {
         let client_id = client.client_id;
         self.clients.write().await.insert(client_id, client);
 
         let v = self.len_clients().await as f64;
-        gauge!("ownserver_server.store.clients", v);
+        gauge!("ownserver_server.store.clients").set(v);
+    }
+
+    pub async fn remove_client(&self, client_id: ClientId) -> Option<Client<S>> {
+        let client = self.clients.write().await.remove(&client_id);
+
+        let v = self.len_clients().await as f64;
+        gauge!("ownserver_server.store.clients").set(v);
+        client
+    }
+
+    pub async fn get_client_ids(&self) -> Vec<ClientId> {
+        self.clients.read().await.keys().cloned().collect()
     }
 
     pub async fn add_remote(&self, remote: RemoteStream, peer_addr: SocketAddr) {
@@ -93,32 +112,34 @@ impl Store {
         self.addrs_map.insert(peer_addr, stream_id);
 
         let v = self.len_streams().await as f64;
-        gauge!("ownserver_server.store.streams", v);
+        gauge!("ownserver_server.store.streams").set(v);
     }
 
     pub async fn cleanup(&self) {
         tracing::debug!("Store::cleanup");
-        self.streams.write().await.retain(|_, v| !v.disabled());
 
         let mut eids_to_remove = Vec::new();
         for (_, client ) in self.clients.read().await.iter() {
-            if client.disabled() {
+            if client.can_cleanup() {
+                self.disable_remote_by_client(client.client_id).await;
                 client.endpoints().iter().for_each(|e| {
                     eids_to_remove.push(e.id)
                 });
             }
         }
-        self.clients.write().await.retain(|_, v| !v.disabled());
+        self.clients.write().await.retain(|_, v| !v.can_cleanup());
         for eid in eids_to_remove {
             if let Err(e) = self.release_endpoint(eid).await {
                 tracing::warn!(eid = %eid, "failed to release endpoint {:?}", e);
             }
         }
 
+        self.streams.write().await.retain(|_, v| !v.disabled());
+
         let v = self.len_clients().await as f64;
-        gauge!("ownserver_server.store.clients", v);
+        gauge!("ownserver_server.store.clients").set(v);
         let v = self.len_streams().await as f64;
-        gauge!("ownserver_server.store.streams", v);
+        gauge!("ownserver_server.store.streams").set(v);
     }
 
     pub async fn find_stream_id_by_addr(&self, addr: &SocketAddr) -> Option<StreamId> {

@@ -1,9 +1,10 @@
 use std::{io::{self, ErrorKind}, net::SocketAddr};
-use metrics::increment_counter;
+use metrics::counter;
 use ownserver_lib::{ControlPacketV2, EndpointId, RemoteInfo};
 use tokio::net::UdpSocket;
 use tracing::Instrument;
 use tokio_util::sync::CancellationToken;
+use warp::filters::ws::WebSocket;
 use std::sync::Arc;
 
 use crate::{Store, remote::stream::RemoteStream, ClientStreamError};
@@ -13,7 +14,7 @@ use super::stream::StreamMessage;
 
 #[tracing::instrument(skip(store, cancellation_token))]
 pub async fn spawn_remote(
-    store: Arc<Store>,
+    store: Arc<Store<WebSocket>>,
     client_id: ClientId,
     endpoint_id: EndpointId,
     cancellation_token: CancellationToken,
@@ -32,7 +33,7 @@ pub async fn spawn_remote(
         .instrument(tracing::info_span!("process_udp_stream")),
     );
 
-    increment_counter!("ownserver_server.remote.udp.swawn_remote");
+    counter!("ownserver_server.remote.udp.swawn_remote").increment(1);
     Ok(())
 }
 
@@ -40,7 +41,7 @@ pub async fn spawn_remote(
 #[tracing::instrument(skip(ct, store, udp_socket))]
 async fn process_udp_stream(
     ct: CancellationToken,
-    store: Arc<Store>,
+    store: Arc<Store<WebSocket>>,
     client_id: ClientId,
     endpoint_id: EndpointId,
     udp_socket: Arc<UdpSocket>,
@@ -97,6 +98,7 @@ async fn process_udp_stream(
         }
 
         tracing::debug!(cid = %client_id, sid = %stream_id, "read {} bytes message from remote client", n);
+        counter!("ownserver_server.remote.udp.received_bytes", "client_id" => client_id.to_string(), "stream_id" => stream_id.to_string()).increment(n as u64);
 
         let data = &buf[..n];
         let packet = ControlPacketV2::Data(stream_id, data.to_vec());
@@ -120,12 +122,12 @@ pub struct RemoteUdp {
     socket: Arc<UdpSocket>,
     remote_info: RemoteInfo,
     ct: CancellationToken,
-    store: Arc<Store>,
+    store: Arc<Store<WebSocket>>,
     disabled: bool,
 }
 
 impl RemoteUdp {
-    pub fn new(store: Arc<Store>, socket: Arc<UdpSocket>, peer_addr: SocketAddr, client_id: ClientId, endpoint_id: EndpointId) -> Self {
+    pub fn new(store: Arc<Store<WebSocket>>, socket: Arc<UdpSocket>, peer_addr: SocketAddr, client_id: ClientId, endpoint_id: EndpointId) -> Self {
         let stream_id = StreamId::new();
         let ct = CancellationToken::new();
         let remote_info = RemoteInfo::new(peer_addr);
@@ -158,6 +160,7 @@ impl RemoteUdp {
             self.disable();
             return Err(ClientStreamError::RemoteError(format!("stream_id: {}, {:?}", self.stream_id, e)))
         }
+        counter!("ownserver_server.remote.udp.sent_bytes", "client_id" => self.client_id.to_string(), "stream_id" => self.stream_id.to_string()).increment(data.len() as u64);
         Ok(())
     }
 

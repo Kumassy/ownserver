@@ -1,3 +1,5 @@
+use chrono::Duration;
+use metrics_util::MetricKindMask;
 use ownserver_server::Store;
 pub use ownserver_server::{
     port_allocator::PortAllocator,
@@ -8,11 +10,10 @@ use metrics::{describe_counter, describe_gauge};
 use metrics_exporter_prometheus::PrometheusBuilder;
 use tracing_subscriber::prelude::*;
 use std::sync::Arc;
-use once_cell::sync::OnceCell;
+use std::sync::OnceLock;
 use structopt::StructOpt;
-use metrics::Unit;
 
-static CONFIG: OnceCell<Config> = OnceCell::new();
+static CONFIG: OnceLock<Config> = OnceLock::new();
 
 #[derive(StructOpt, Debug)]
 #[structopt(name = "ownserver-server")]
@@ -22,6 +23,9 @@ struct Opt {
 
     #[structopt(long, env = "MT_TOKEN_SECRET")]
     token_secret: String,
+
+    #[structopt(long, default_value = "300")]
+    metrics_idle_timeout: u64,
 
     #[structopt(short, long)]
     host: String,
@@ -37,6 +41,9 @@ struct Opt {
 
     #[structopt(long, default_value = "15")]
     periodic_ping_interval: u64,
+
+    #[structopt(long, default_value = "2")]
+    reconnect_window_minutes: i64,
 }
 
 impl From<Opt> for Config {
@@ -45,10 +52,12 @@ impl From<Opt> for Config {
             control_port,
             token_secret,
             host,
+            metrics_idle_timeout,
             remote_port_start,
             remote_port_end,
             periodic_cleanup_interval,
             periodic_ping_interval,
+            reconnect_window_minutes,
             ..
         } = opt;
 
@@ -56,10 +65,12 @@ impl From<Opt> for Config {
             control_port,
             token_secret,
             host,
+            metrics_idle_timeout,
             remote_port_start,
             remote_port_end,
             periodic_cleanup_interval,
             periodic_ping_interval,
+            reconnect_window: Duration::minutes(reconnect_window_minutes),
         }
     }
 }
@@ -79,12 +90,35 @@ async fn main() {
         .try_init()
         .expect("Failed to register tracer with registry");
 
+
+    let metrics_idle_timeout = CONFIG.get().expect("failed to read config").metrics_idle_timeout;
     let builder = PrometheusBuilder::new();
-    builder.install().expect("failed to install recorder/exporter");
-    describe_gauge!("ownserver_server.store.clients", "[gauge] The number of Clients at this time.");
-    describe_gauge!("ownserver_server.store.streams", "[gauge] The number of RemoteStreams at this time.");
-    describe_gauge!("ownserver_server.stream.rtt", Unit::Milliseconds, "[gauge] RTT between server and client.");
+    builder
+        .idle_timeout(MetricKindMask::ALL, Some(std::time::Duration::from_secs(metrics_idle_timeout)))
+        .install()
+        .expect("failed to install recorder/exporter");
+
+    describe_counter!("ownserver_server.remote.tcp.swawn_remote", "Number of TCP remote connections spawned");
+    describe_counter!("ownserver_server.remote.tcp.received_bytes", "Bytes received over TCP connections");
+    describe_counter!("ownserver_server.remote.tcp.sent_bytes", "Bytes sent over TCP connections");
+
+    describe_counter!("ownserver_server.remote.udp.swawn_remote", "Number of UDP remote connections spawned");
+    describe_counter!("ownserver_server.remote.udp.received_bytes", "Bytes received over UDP connections");
+    describe_counter!("ownserver_server.remote.udp.sent_bytes", "Bytes sent over UDP connections");
+
+    describe_counter!("ownserver_server.client.control_packet.received_bytes", "Bytes received in control packets");
+    describe_counter!("ownserver_server.client.control_packet.sent_bytes", "Bytes sent in control packets");
+
+    describe_gauge!("ownserver_server.store.clients", "Number of active clients");
+    describe_gauge!("ownserver_server.store.streams", "Number of active streams");
+    describe_gauge!("ownserver_server.stream.rtt", "Round-trip time between server and client in milliseconds");
+
     describe_counter!("ownserver_server.control_server.handle_new_connection", "[counter] The number of successfully accepted websocket connections so far.");
+    describe_counter!("ownserver_server.control_server.handle_new_connection.read_client_hello_error", "[counter] The number of times the server failed to read request from clients.");
+    describe_counter!("ownserver_server.control_server.handle_new_connection.send_server_hello_error", "[counter] The server tried to send error to clients, but failed.");
+    describe_counter!("ownserver_server.control_server.handle_new_connection.reconnect.client_not_found", "[counter] The server received a reconnect request from clients, but the client was not found.");
+    describe_counter!("ownserver_server.control_server.handle_new_connection.newclient.success", "[counter] The number of successfully processed new client requests.");
+    describe_counter!("ownserver_server.control_server.handle_new_connection.reconnect.success", "[counter] The number of successfully processed reconnect requests.");
     describe_counter!("ownserver_server.control_server.try_client_handshake.success", "[counter] The number of succesfully handshake requests so far.");
     describe_counter!("ownserver_server.control_server.try_client_handshake.service_temporary_unavailable", "[counter] The number of handshake error ServiceTemporaryUnavailable so far.");
     describe_counter!("ownserver_server.control_server.try_client_handshake.invalid_client_hello", "[counter] The number of handshake error InvalidClientHello so far.");
@@ -102,7 +136,7 @@ async fn main() {
     let store = Arc::new(Store::new(*remote_port_start..*remote_port_end));
 
     let mut set = run(
-        &CONFIG,
+        CONFIG.get().expect("failed to get config"),
         store,
     ).await;
     

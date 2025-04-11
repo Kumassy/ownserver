@@ -1,5 +1,6 @@
-use metrics::increment_counter;
+use metrics::counter;
 use ownserver_lib::{ControlPacketV2, EndpointId, RemoteInfo};
+use warp::filters::ws::WebSocket;
 use std::io::{self, ErrorKind};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -14,7 +15,7 @@ use super::stream::StreamMessage;
 
 #[tracing::instrument(skip(store, cancellation_token))]
 pub async fn spawn_remote(
-    store: Arc<Store>,
+    store: Arc<Store<WebSocket>>,
     client_id: ClientId,
     endpoint_id: EndpointId,
     cancellation_token: CancellationToken,
@@ -55,13 +56,13 @@ pub async fn spawn_remote(
         }
     }.instrument(tracing::info_span!("spawn_accept_connection")));
 
-    increment_counter!("ownserver_server.remote.tcp.swawn_remote");
+    counter!("ownserver_server.remote.tcp.swawn_remote").increment(1);
     Ok(())
 }
 
 #[tracing::instrument(skip(store, socket))]
 pub async fn accept_connection(
-    store: Arc<Store>,
+    store: Arc<Store<WebSocket>>,
     socket: TcpStream,
     client_id: ClientId,
     endpoint_id: EndpointId,
@@ -96,12 +97,12 @@ pub struct RemoteTcp {
     socket_tx: WriteHalf<TcpStream>,
     remote_info: RemoteInfo,
     ct: CancellationToken,
-    store: Arc<Store>,
+    store: Arc<Store<WebSocket>>,
     disabled: bool,
 }
 
 impl RemoteTcp {
-    pub fn new(store: Arc<Store>, socket: TcpStream, client_id: ClientId, endpoint_id: EndpointId, peer_addr: SocketAddr) -> Self {
+    pub fn new(store: Arc<Store<WebSocket>>, socket: TcpStream, client_id: ClientId, endpoint_id: EndpointId, peer_addr: SocketAddr) -> Self {
         let (mut stream, sink) = tokio::io::split(socket);
         let stream_id = StreamId::new();
         let ct: CancellationToken = CancellationToken::new();
@@ -131,6 +132,7 @@ impl RemoteTcp {
                     }
                 };
                 tracing::debug!(cid = %client_id, sid = %stream_id, "read {} bytes message from remote", n);
+                counter!("ownserver_server.remote.tcp.received_bytes", "client_id" => client_id.to_string(), "stream_id" => stream_id.to_string()).increment(n as u64);
 
                 if n == 0 {
                     tracing::debug!(cid = %client_id, sid = %stream_id, "remote client streams end");
@@ -198,6 +200,8 @@ impl RemoteTcp {
             self.disable();
             return Err(ClientStreamError::RemoteError(format!("stream_id: {}, {:?}", self.stream_id, e)))
         }
+
+        counter!("ownserver_server.remote.tcp.sent_bytes", "client_id" => self.client_id.to_string(), "stream_id" => self.stream_id.to_string()).increment(data.len() as u64);
         Ok(())
     }
 

@@ -2,10 +2,11 @@ use chrono::Utc;
 use futures::{
     Sink, SinkExt, Stream, StreamExt,
 };
-use ownserver_lib::{ClientHelloV2, EndpointClaim, ServerHelloV2, EndpointClaims, ControlPacketV2, Protocol};
+use metrics::counter;
+use ownserver_lib::reconnect::ReconnectTokenPayload;
+use ownserver_lib::{ClientHelloV2, ClientType, ControlPacketV2, EndpointClaims, Protocol, ServerHelloV2};
 pub use ownserver_lib::{ClientId, StreamId, CLIENT_HELLO_VERSION};
 use ownserver_auth::decode_jwt;
-use metrics::increment_counter;
 use std::{convert::Infallible, time::Duration};
 use std::net::SocketAddr;
 use tokio::time::sleep;
@@ -18,7 +19,6 @@ use warp::{
 
 use rand::{rngs::StdRng, SeedableRng};
 use std::sync::Arc;
-use once_cell::sync::OnceCell;
 use thiserror::Error;
 
 use crate::{Store, Client};
@@ -27,12 +27,12 @@ use crate::Config;
 
 #[tracing::instrument(skip(config, store))]
 pub fn spawn<A: Into<SocketAddr> + std::fmt::Debug>(
-    config: &'static OnceCell<Config>,
-    store: Arc<Store>,
+    config: &'static Config,
+    store: Arc<Store<WebSocket>>,
     addr: A,
 ) -> JoinSet<()> {
-    let periodic_cleanup_interval = config.get().expect("failed to read config").periodic_cleanup_interval;
-    let periodic_ping_interval = config.get().expect("failed to read config").periodic_ping_interval;
+    let periodic_cleanup_interval = config.periodic_cleanup_interval;
+    let periodic_ping_interval = config.periodic_ping_interval;
 
     let health_check = warp::get().and(warp::path("health_check")).map(|| {
         tracing::debug!("Health Check #2 triggered");
@@ -75,9 +75,23 @@ pub fn spawn<A: Into<SocketAddr> + std::fmt::Debug>(
         loop {
             sleep(Duration::from_secs(periodic_ping_interval)).await;
 
+            
             let current_time = Utc::now();
-            store.broadcast_to_clients(ControlPacketV2::Ping(0, current_time)).await;
-            tracing::debug!("broadcasted ping");
+            let client_ids = store.get_client_ids().await;
+
+            for client_id in client_ids {
+                tracing::debug!(cid = %client_id, "send ping to client");
+                match ReconnectTokenPayload::new(client_id).into_token(&config.token_secret) {
+                    Ok(token) => {
+                        if let Err(e) = store.send_to_client(client_id, ControlPacketV2::Ping(0, current_time, Some(token))).await {
+                            tracing::warn!(cid = %client_id, "failed to send reconnect token {:?}", e);
+                        }
+                    },
+                    Err(e) => {
+                        tracing::warn!(cid = %client_id, "failed to create reconnect token {:?}", e);
+                    }
+                }
+            }
         }
     });
     
@@ -136,196 +150,257 @@ where
     Ok(())
 }
 
+enum ProvisioningAction {
+    NewClient {
+        claims: EndpointClaims,
+    },
+    Reconnect {
+        client_id: ClientId,
+    }
+}
+
 #[tracing::instrument(skip(config))]
 async fn validate_client_hello(
-    config: &'static OnceCell<Config>,
+    config: &'static Config,
     client_hello_data: Vec<u8>,
-) -> Result<Vec<EndpointClaim>, VerifyClientHandshakeError> {
-    let Config { ref token_secret, ref host, .. } = config.get().expect("failed to read config");
+) -> Result<ProvisioningAction, VerifyClientHandshakeError> {
+    let Config { ref token_secret, ref host, .. } = config;
 
     let client_hello: ClientHelloV2 = match serde_json::from_slice(&client_hello_data) {
         Ok(client_hello) => client_hello,
         _ => {
-            tracing::error!("failed to deserialize client hello");
+            tracing::warn!("failed to deserialize client hello");
+            counter!("ownserver_server.control_server.process_client_claims.invalid_client_hello").increment(1);
+
             return Err(VerifyClientHandshakeError::InvalidClientHello);
         }
     };
     tracing::debug!("got client handshake {:?}", client_hello);
 
     if client_hello.version != CLIENT_HELLO_VERSION {
-        tracing::debug!("client sernt client hello version {} but server accept version {}", client_hello.version, CLIENT_HELLO_VERSION);
+        tracing::warn!("client sent not supported client handshake version. client: {}, server: {}", client_hello.version, CLIENT_HELLO_VERSION);
+        counter!("ownserver_server.control_server.process_client_claims.version_mismatch").increment(1);
+
         return Err(VerifyClientHandshakeError::VersionMismatch);
     }
 
-    let claim = decode_jwt(token_secret, &client_hello.token);
-    match claim.map(|c| &c.host == host) {
-        Ok(true) => {
-            tracing::info!("successfully validate client jwt");
-        },
-        Ok(false) => {
-            tracing::info!("client jwt was valid but different host");
-            return Err(VerifyClientHandshakeError::IllegalHost);
-        },
-        Err(e) => {
-            tracing::info!("failed to parse client jwt: {:?}", e);
-            return Err(VerifyClientHandshakeError::InvalidJWT);
-        }
-    };
-
-    Ok(client_hello.endpoint_claims)
-}
-
-
-async fn process_client_claims(
-    config: &'static OnceCell<Config>,
-    store: Arc<Store>,
-    client_hello: Result<EndpointClaims, VerifyClientHandshakeError>,
-) -> ServerHelloV2 {
-    let Config { ref host, .. } = config.get().expect("failed to read config");
-    let mut rng = StdRng::from_entropy();
-    match client_hello {
-        Ok(claims) => {
-            match store.allocate_endpoints(&mut rng, claims).await {
-                Ok(endpoints) => {
-                    let server_hello = ServerHelloV2::Success {
-                        client_id: ClientId::new(),
-                        host: host.to_string(),
-                        endpoints,
-                    };
-
-                    increment_counter!("ownserver_server.control_server.process_client_claims.success");
-                    server_hello
+    match client_hello.client_type {
+        ClientType::Auth => {
+            let claim = decode_jwt(token_secret, &client_hello.token);
+            match claim.map(|c| &c.host == host) {
+                Ok(true) => {
+                    tracing::info!("successfully validate client jwt");
                 },
-                Err(_) => {
-                    tracing::error!("failed to allocate port");
-                    increment_counter!("ownserver_server.control_server.process_client_claims.service_temporary_unavailable");
+                Ok(false) => {
+                    tracing::warn!("client try to connect to non-designated host");
+                    counter!("ownserver_server.control_server.process_client_claims.illegal_host").increment(1);
 
-                    ServerHelloV2::ServiceTemporaryUnavailable
+                    return Err(VerifyClientHandshakeError::IllegalHost);
+                },
+                Err(e) => {
+                    tracing::warn!("failed to parse client jwt: {:?}", e);
+                    counter!("ownserver_server.control_server.process_client_claims.invalid_jwt").increment(1);
+
+                    return Err(VerifyClientHandshakeError::InvalidJWT);
                 }
-            }
-        }
-        Err(VerifyClientHandshakeError::InvalidClientHello) => {
-            tracing::warn!("failed to verify client hello");
-            increment_counter!("ownserver_server.control_server.process_client_claims.invalid_client_hello");
-
-            ServerHelloV2::BadRequest
+            };
+        
+            Ok(ProvisioningAction::NewClient {
+                claims: client_hello.endpoint_claims
+            })
         },
-        Err(VerifyClientHandshakeError::InvalidJWT) => {
-            tracing::warn!("client jwt has malformed");
-            increment_counter!("ownserver_server.control_server.process_client_claims.invalid_jwt");
+        ClientType::Reconnect => {
+            let payload = ReconnectTokenPayload::decode_token(token_secret, &client_hello.token).map_err(|e| {
+                tracing::info!("failed to parse reconnect token: {:?}", e);
+                VerifyClientHandshakeError::InvalidJWT
+            })?;
 
-            ServerHelloV2::BadRequest
-        },
-        Err(VerifyClientHandshakeError::IllegalHost) => {
-            tracing::warn!("client try to connect to non-designated host");
-            increment_counter!("ownserver_server.control_server.process_client_claims.illegal_host");
-            
-            ServerHelloV2::IllegalHost
-        },
-        Err(VerifyClientHandshakeError::VersionMismatch) => {
-            tracing::warn!("client sent not supported client handshake version");
-            increment_counter!("ownserver_server.control_server.process_client_claims.version_mismatch");
-
-            ServerHelloV2::VersionMismatch
+            tracing::info!("successfully validate reconnect token");
+            Ok(ProvisioningAction::Reconnect {
+                client_id: payload.client_id
+            })
         }
     }
 }
 
+impl From<VerifyClientHandshakeError> for ServerHelloV2 {
+    fn from(e: VerifyClientHandshakeError) -> Self {
+        match e {
+            VerifyClientHandshakeError::InvalidClientHello => ServerHelloV2::BadRequest,
+            VerifyClientHandshakeError::InvalidJWT => ServerHelloV2::BadRequest,
+            VerifyClientHandshakeError::IllegalHost => ServerHelloV2::IllegalHost,
+            VerifyClientHandshakeError::VersionMismatch => ServerHelloV2::VersionMismatch,
+        }
+    }
+}
 
+async fn process_client_claims(
+    config: &'static Config,
+    store: Arc<Store<WebSocket>>,
+    claims: EndpointClaims
+) -> ServerHelloV2 {
+    let Config { ref host, .. } = config;
+    let mut rng = StdRng::from_entropy();
+
+    match store.allocate_endpoints(&mut rng, claims).await {
+        Ok(endpoints) => {
+            let server_hello = ServerHelloV2::Success {
+                client_id: ClientId::new(),
+                host: host.to_string(),
+                endpoints,
+            };
+
+            counter!("ownserver_server.control_server.process_client_claims.success").increment(1);
+            server_hello
+        },
+        Err(_) => {
+            tracing::error!("failed to allocate port");
+            counter!("ownserver_server.control_server.process_client_claims.service_temporary_unavailable").increment(1);
+
+            ServerHelloV2::ServiceTemporaryUnavailable
+        }
+    }
+}
 
 
 #[tracing::instrument(skip(config, store, websocket))]
 async fn handle_new_connection(
-    config: &'static OnceCell<Config>,
-    store: Arc<Store>,
+    config: &'static Config,
+    store: Arc<Store<WebSocket>>,
     client_ip: SocketAddr,
     mut websocket: WebSocket,
 ) {
-    increment_counter!("ownserver_server.control_server.handle_new_connection");
+    counter!("ownserver_server.control_server.handle_new_connection").increment(1);
 
 
     // 1. read client hello
     let client_hello_data = match read_client_hello(&mut websocket).await {
         Some(data) => data,
         None => {
-            increment_counter!("ownserver_server.control_server.handle_new_connection.read_client_hello_error");
+            counter!("ownserver_server.control_server.handle_new_connection.read_client_hello_error").increment(1);
             return
         }
     };
 
     // 2. parse and validate client hello
-    let client_hello = validate_client_hello(config, client_hello_data).await;
-
-    // 3. convert client hello to server hello
-    // allocate ports based on client claims
-    let server_hello = process_client_claims(config, store.clone(), client_hello).await;
-
-    // 4. respond with server hello
-    if let Err(e) = send_server_hello(&mut websocket, &server_hello).await {
-        tracing::error!("failed to send server hello: {:?}", e);
-        increment_counter!("ownserver_server.control_server.handle_new_connection.send_server_hello_error");
-        return;
-    }
-
-    let (client_id, endpoints) = match server_hello {
-        ServerHelloV2::Success { client_id, endpoints, .. } => (client_id, endpoints),
-        _ => {
+    let provisioning_action = match validate_client_hello(config, client_hello_data).await {
+        Ok(action) => action,
+        Err(e) => {
+            let server_hello: ServerHelloV2 = e.into();
+            if let Err(e) = send_server_hello(&mut websocket, &server_hello).await {
+                tracing::error!("failed to send server hello: {:?}", e);
+                counter!("ownserver_server.control_server.handle_new_connection.send_server_hello_error").increment(1);
+            }
             return;
-        }
+        },
     };
 
-    // 5. spawn remote listener
-    let client = Client::new(store.clone(), client_id, endpoints.clone(), websocket);
-    let ct = client.cancellation_token();
-    store.add_client(client).await;
-    tracing::info!(cid=%client_id, "register client to store");
+    match provisioning_action {
+        ProvisioningAction::NewClient { claims } => {
+            tracing::info!("process NewClient action");
+            let Config { reconnect_window, ..  } = config;
+            // 3. convert client hello to server hello
+            // allocate ports based on client claims
+            let server_hello = process_client_claims(config, store.clone(), claims).await;
 
-    for endpoint in endpoints {
-        match endpoint.protocol {
-            Protocol::TCP => {
-                if let Err(e) = remote::tcp::spawn_remote(store.clone(), client_id, endpoint.id, ct.clone()).await {
-                    tracing::error!(cid = %client_id, eid = %endpoint.id, "failed to spawn remote listener {:?}", e);
-                }
+            // 4. respond with server hello
+            if let Err(e) = send_server_hello(&mut websocket, &server_hello).await {
+                tracing::error!("failed to send server hello: {:?}", e);
+                counter!("ownserver_server.control_server.handle_new_connection.send_server_hello_error").increment(1);
+                return;
             }
-            Protocol::UDP => {
-                if let Err(e) = remote::udp::spawn_remote(store.clone(), client_id, endpoint.id, ct.clone()).await {
-                    tracing::error!(cid = %client_id, eid = %endpoint.id, "failed to spawn remote listener {:?}", e);
+
+            let (client_id, endpoints) = match server_hello {
+                ServerHelloV2::Success { client_id, endpoints, .. } => (client_id, endpoints),
+                _ => {
+                    // Never happens
+                    return;
                 }
+            };
+
+            // 5. spawn remote listener
+            let client = Client::new(store.clone(), client_id, endpoints.clone(), websocket, *reconnect_window);
+            let ct_child = client.clone_child_token();
+            store.add_client(client).await;
+            tracing::info!(cid=%client_id, "register client to store");
+
+            for endpoint in endpoints {
+                match endpoint.protocol {
+                    Protocol::TCP => {
+                        if let Err(e) = remote::tcp::spawn_remote(store.clone(), client_id, endpoint.id, ct_child.clone()).await {
+                            tracing::error!(cid = %client_id, eid = %endpoint.id, "failed to spawn remote listener {:?}", e);
+                        }
+                    }
+                    Protocol::UDP => {
+                        if let Err(e) = remote::udp::spawn_remote(store.clone(), client_id, endpoint.id, ct_child.clone()).await {
+                            tracing::error!(cid = %client_id, eid = %endpoint.id, "failed to spawn remote listener {:?}", e);
+                        }
+                    }
+                }
+
             }
+            counter!("ownserver_server.control_server.handle_new_connection.newclient.success").increment(1);
         }
+        ProvisioningAction::Reconnect { client_id } => {
+            let Config { ref host, reconnect_window,  .. } = config;
 
+            tracing::info!("process Reconnect action");
+            let old_client = match store.remove_client(client_id).await {
+                Some(client) => client,
+                None => {
+                    tracing::warn!(cid=%client_id, "try to reconnect, but client not found");
+                    counter!("ownserver_server.control_server.handle_new_connection.reconnect.client_not_found").increment(1);
+                    return;
+                }
+            };
+            let endpoints = old_client.endpoints.clone();
+            drop(old_client);
+
+            let server_hello = ServerHelloV2::Success {
+                client_id,
+                host: host.clone(),
+                endpoints: endpoints.clone(),
+            };
+            if let Err(e) = send_server_hello(&mut websocket, &server_hello).await {
+                tracing::error!("failed to send server hello: {:?}", e);
+                counter!("ownserver_server.control_server.handle_new_connection.send_server_hello_error").increment(1);
+                return;
+            }
+
+            let new_client = Client::new(store.clone(), client_id, endpoints, websocket, *reconnect_window);
+            store.add_client(new_client).await;
+            tracing::info!(cid=%client_id, "register reconnect client to store");
+            counter!("ownserver_server.control_server.handle_new_connection.reconnect.success").increment(1);
+        },
     }
+
 }
 
 #[cfg(test)]
 mod verify_client_handshake_test {
+    use std::sync::LazyLock;
+
     use super::*;
     use ownserver_auth::make_jwt;
     use chrono::Duration;
-    use ownserver_lib::Protocol;
+    use ownserver_lib::{ClientType, EndpointClaim, Protocol};
 
-    static CONFIG: OnceCell<Config> = OnceCell::new();
-    static EMPTY_CONFIG: OnceCell<Config> = OnceCell::new();
-
-    fn get_config() -> &'static OnceCell<Config> {
-        CONFIG.get_or_init(||
-            Config {
-                control_port: 5000,
-                token_secret: "supersecret".to_string(),
-                host: "foohost.test.local".to_string(),
-                remote_port_start: 10010,
-                remote_port_end: 10011,
-                periodic_cleanup_interval: 15,
-                periodic_ping_interval: 15,
-            }
-        );
-        &CONFIG
-    }
+    static CONFIG: LazyLock<Config> = LazyLock::new(||
+        Config {
+            control_port: 5000,
+            token_secret: "supersecret".to_string(),
+            host: "foohost.test.local".to_string(),
+            metrics_idle_timeout: 300,
+            remote_port_start: 10010,
+            remote_port_end: 10011,
+            periodic_cleanup_interval: 15,
+            periodic_ping_interval: 15,
+            reconnect_window: Duration::minutes(2)
+        } 
+    );
 
     #[tokio::test]
     async fn accept_client_hello() -> Result<(), Box<dyn std::error::Error>> {
-        let config = get_config();
-
         let hello = serde_json::to_vec(&ClientHelloV2 {
             version: CLIENT_HELLO_VERSION,
             token: make_jwt("supersecret", Duration::minutes(10), "foohost.test.local".to_string())?,
@@ -334,21 +409,20 @@ mod verify_client_handshake_test {
                 local_port: 25565,
                 remote_port: 0,
             }],
+            client_type: ClientType::Auth,
         })
         .unwrap_or_default();
         let client_hello_data = Message::binary(hello).into_bytes();
 
-        let hello = validate_client_hello(config, client_hello_data).await;
+        let hello = validate_client_hello(&CONFIG, client_hello_data).await;
         assert!(hello.is_ok());
         Ok(())
     }
 
     #[tokio::test]
     async fn reject_invalid_text_hello() -> Result<(), Box<dyn std::error::Error>> {
-        let config = get_config();
-
         let client_hello_data = Message::text("foobarbaz".to_string()).into_bytes();
-        let handshake= validate_client_hello(config, client_hello_data).await;
+        let handshake= validate_client_hello(&CONFIG, client_hello_data).await;
         let handshake_error = handshake.err().unwrap();
         assert_eq!(handshake_error, VerifyClientHandshakeError::InvalidClientHello);
         Ok(())
@@ -356,12 +430,10 @@ mod verify_client_handshake_test {
 
     #[tokio::test]
     async fn reject_invalid_serialized_hello() -> Result<(), Box<dyn std::error::Error>> {
-        let config = get_config();
-
         let hello = serde_json::to_vec(&"malformed".to_string()).unwrap_or_default();
         let client_hello_data = Message::binary(hello).into_bytes();
 
-        let handshake= validate_client_hello(config, client_hello_data).await;
+        let handshake= validate_client_hello(&CONFIG, client_hello_data).await;
         let handshake_error = handshake.err().unwrap();
         assert_eq!(handshake_error, VerifyClientHandshakeError::InvalidClientHello);
         Ok(())
@@ -369,8 +441,6 @@ mod verify_client_handshake_test {
 
     #[tokio::test]
     async fn reject_invalid_jwt() -> Result<(), Box<dyn std::error::Error>> {
-        let config = get_config();
-
         let hello = serde_json::to_vec(&ClientHelloV2 {
             version: CLIENT_HELLO_VERSION,
             token: "invalid jwt".to_string(),
@@ -379,11 +449,12 @@ mod verify_client_handshake_test {
                 local_port: 25565,
                 remote_port: 0,
             }],
+            client_type: ClientType::Auth,
         })
         .unwrap_or_default();
         let client_hello_data = Message::binary(hello).into_bytes();
 
-        let handshake= validate_client_hello(config, client_hello_data).await;
+        let handshake= validate_client_hello(&CONFIG, client_hello_data).await;
         let handshake_error = handshake.err().unwrap();
         assert_eq!(handshake_error, VerifyClientHandshakeError::InvalidJWT);
         Ok(())
@@ -391,8 +462,6 @@ mod verify_client_handshake_test {
 
     #[tokio::test]
     async fn reject_illegal_host() -> Result<(), Box<dyn std::error::Error>> {
-        let config = get_config();
-
         let hello = serde_json::to_vec(&ClientHelloV2 {
             version: CLIENT_HELLO_VERSION,
             token: make_jwt("supersecret", Duration::minutes(10), "other.host.test.local".to_string())?,
@@ -401,38 +470,19 @@ mod verify_client_handshake_test {
                 local_port: 25565,
                 remote_port: 0,
             }],
+            client_type: ClientType::Auth,
         })
         .unwrap_or_default();
         let client_hello_data = Message::binary(hello).into_bytes();
 
-        let handshake= validate_client_hello(config, client_hello_data).await;
+        let handshake= validate_client_hello(&CONFIG, client_hello_data).await;
         let handshake_error = handshake.err().unwrap();
         assert_eq!(handshake_error, VerifyClientHandshakeError::IllegalHost);
         Ok(())
     }
 
     #[tokio::test]
-    #[should_panic]
-    async fn panic_when_config_not_initialized() {
-        let hello = serde_json::to_vec(&ClientHelloV2 {
-            version: CLIENT_HELLO_VERSION,
-            token: make_jwt("supersecret", Duration::minutes(10), "foohost.test.local".to_string()).unwrap(),
-            endpoint_claims: vec![EndpointClaim {
-                protocol: Protocol::TCP,
-                local_port: 25565,
-                remote_port: 0,
-            }],
-        })
-        .unwrap_or_default();
-        let client_hello_data = Message::binary(hello).into_bytes();
-
-        let _ = validate_client_hello(&EMPTY_CONFIG, client_hello_data).await;
-    }
-
-    #[tokio::test]
     async fn reject_when_version_mismatch() -> Result<(), Box<dyn std::error::Error>> {
-        let config = get_config();
-
         let hello = serde_json::to_vec(&ClientHelloV2 {
             version: CLIENT_HELLO_VERSION,
             token: make_jwt("supersecret", Duration::minutes(10), "foohost.test.local".to_string())?,
@@ -441,11 +491,12 @@ mod verify_client_handshake_test {
                 local_port: 25565,
                 remote_port: 0,
             }],
+            client_type: ClientType::Auth,
         })
         .unwrap_or_default();
         let client_hello_data = Message::binary(hello).into_bytes();
 
-        let hello = validate_client_hello(config, client_hello_data).await;
+        let hello = validate_client_hello(&CONFIG, client_hello_data).await;
         assert!(hello.is_ok());
         Ok(())
     }

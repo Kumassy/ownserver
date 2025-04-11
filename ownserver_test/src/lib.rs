@@ -1,10 +1,9 @@
 use std::sync::Arc;
-use once_cell::sync::OnceCell;
+use chrono::Duration;
 
 use ownserver_auth::build_routes;
 use ownserver_server::{
     proxy_server,
-    Config,
     Store,
 };
 use ownserver_lib::{EndpointClaim, EndpointClaims, Protocol};
@@ -18,6 +17,9 @@ use tokio_util::sync::CancellationToken;
 use tokio::net::UdpSocket;
 use futures::Future;
 
+mod ports;
+pub use ports::{use_ports, PortSet};
+use warp::filters::ws::WebSocket;
 
 #[macro_export]
 macro_rules! wait {
@@ -56,26 +58,25 @@ macro_rules! assert_udp_socket_bytes_matches {
     };
 }
 
-pub static CONFIG: OnceCell<Config> = OnceCell::new();
-
-pub const CONTROL_PORT: u16 = 5000;
-pub const LOCAL_PORT: u16 = 3000;
-pub const REMOTE_PORT_START: u16 = 4500;
-pub const REMOTE_PORT_END: u16 = 4599;
-pub const TOKEN_PORT: u16 = 8888;
-
-
 pub struct TokenServer {
 }
 
 
 pub struct ProxyServer {
-    pub store: Arc<Store>,
+    pub store: Arc<Store<WebSocket>>,
 }
 
 pub struct ProxyClient {
+    pub store: Arc<ClientStore>,
     pub client_info: ClientInfo,
     pub cancellation_token: CancellationToken,
+}
+
+impl ProxyClient {
+    pub async fn cancel(&self) {
+        self.cancellation_token.cancel();
+        self.store.remove_client().await;
+    }
 }
 
     
@@ -101,27 +102,28 @@ pub async fn launch_token_server(token_port: u16) -> TokenServer {
 pub async fn launch_proxy_server(
     control_port: u16,
     remote_port_start: u16,
-    remote_port_end: u16
+    remote_port_end: u16,
+    ping_interval: Option<u64>,
 ) -> Result<ProxyServer, Box<dyn std::error::Error>> {
-
-    let config = CONFIG.get_or_init(||
-        Config {
-            control_port,
-            token_secret: "supersecret".to_string(),
-            host: "127.0.0.1".to_string(),
-            remote_port_start,
-            remote_port_end,
-            periodic_cleanup_interval: 2 << 30,
-            periodic_ping_interval: 2 << 30,
-        }
-    );
+    let periodic_ping_interval = ping_interval.unwrap_or(2 << 30);
+    let config = Box::leak(Box::new(ownserver_server::Config {
+        control_port,
+        token_secret: "supersecret".to_string(),
+        host: "127.0.0.1".to_string(),
+        metrics_idle_timeout: 300,
+        remote_port_start,
+        remote_port_end,
+        periodic_cleanup_interval: 2 << 30,
+        periodic_ping_interval,
+        reconnect_window: Duration::seconds(2),
+    }));
 
     let store = Arc::new(Store::new(config.remote_port_start..config.remote_port_end));
 
     let store_ = store.clone();
     tokio::spawn(async move {
         proxy_server::run(
-            &CONFIG,
+            config,
             store_,
         )
         .await.join_next().await;
@@ -133,8 +135,9 @@ pub async fn launch_proxy_server(
     })
 }
 
-
 pub mod tcp {
+
+    use proxy_client::RequestType;
 
     use super::*;
 
@@ -147,27 +150,39 @@ pub mod tcp {
     }
     
     pub async fn launch_proxy_client(
+        token_port: u16,
         control_port: u16,
-        endpoint_claims: EndpointClaims,
+        request_type: RequestType,
     ) -> Result<ProxyClient, Box<dyn std::error::Error>> {
         let client_store: Arc<ClientStore> = Default::default();
         let cancellation_token = CancellationToken::new();
     
-        let (client_info, mut set) =
-                proxy_client::run(client_store, control_port, "http://127.0.0.1:8888/v0/request_token", cancellation_token.clone(), endpoint_claims, 15)
-                    .await
-                    .expect("failed to launch proxy_client");
+        let config = ownserver::Config {
+            control_port,
+            token_server: format!("http://127.0.0.1:{}/v0/request_token", token_port),
+            ping_interval: 15,
+        };
+
+        let client_store_ = client_store.clone();
+        let cancellation_token_ = cancellation_token.clone();
         tokio::spawn(async move {
-            while let Some(res) = set.join_next().await {
-                let _ = res.unwrap();
-            }
+            proxy_client::run_client(&config, client_store_, cancellation_token_, request_type)
+                .await
+                .expect("failed to launch proxy_client");
+            tracing::warn!("run_client finished");
         });
     
-        wait!();
-        Ok(ProxyClient {
-            client_info,
-            cancellation_token,
-        })
+        for _ in 0..10 {
+            wait!();
+            if let Some(client_info) = client_store.get_client_info().await {
+                return Ok(ProxyClient {
+                    store: client_store,
+                    client_info,
+                    cancellation_token,
+                });
+            }
+        }
+        Err("failed to get client info".into())
     }
 
     pub async fn launch_local_server(local_port: u16) -> LocalServer {
@@ -241,20 +256,36 @@ pub mod tcp {
     }
 
 
-    pub async fn with_proxy<T>(endpoint_claims: EndpointClaims, test_func: impl FnOnce(TokenServer, ProxyServer, ProxyClient) -> T)
+    async fn _with_proxy<T>(ping_interval: Option<u64>, port_set: PortSet, request_type: RequestType, test_func: impl FnOnce(TokenServer, ProxyServer, ProxyClient) -> T)
         where
         T: Future<Output = Result<(), Box<dyn std::error::Error>>> + Send,
     {
-        let token_server = launch_token_server(TOKEN_PORT).await;
+        let token_server = launch_token_server(port_set.token_port).await;
         wait!();
 
-        let proxy_server = launch_proxy_server(CONTROL_PORT, REMOTE_PORT_START, REMOTE_PORT_END).await.expect("failed to launch proxy server");
+        let proxy_server = launch_proxy_server(port_set.control_port, port_set.remote_ports.start, port_set.remote_ports.end, ping_interval).await.expect("failed to launch proxy server");
         wait!();
 
-        let proxy_client = launch_proxy_client(CONTROL_PORT, endpoint_claims).await.expect("failed to launch proxy client");
+        let proxy_client = launch_proxy_client(port_set.token_port, port_set.control_port, request_type).await.expect("failed to launch proxy client");
 
         test_func(token_server, proxy_server, proxy_client).await.expect("failed to call test_func");
     }
+
+
+    pub async fn with_proxy<T>(port_set: PortSet, request_type: RequestType, test_func: impl FnOnce(TokenServer, ProxyServer, ProxyClient) -> T)
+        where
+        T: Future<Output = Result<(), Box<dyn std::error::Error>>> + Send,
+    {
+        _with_proxy(None, port_set, request_type, test_func).await;
+    }
+
+    pub async fn with_proxy_use_reconnect<T>(port_set: PortSet, request_type: RequestType, test_func: impl FnOnce(TokenServer, ProxyServer, ProxyClient) -> T)
+        where
+        T: Future<Output = Result<(), Box<dyn std::error::Error>>> + Send,
+    {
+        _with_proxy(Some(1), port_set, request_type, test_func).await;
+    }
+
 
     pub async fn with_local_server<T>(local_port: u16, test_func: impl FnOnce(LocalServer) -> T)
         where
@@ -278,6 +309,8 @@ pub mod tcp {
 }
 
 pub mod udp {
+    use proxy_client::RequestType;
+
     use super::*;
 
     pub fn get_endpoint_claims_single(local_port: u16) -> EndpointClaims {
@@ -289,27 +322,39 @@ pub mod udp {
     }
 
     pub async fn launch_proxy_client(
+        token_port: u16,
         control_port: u16,
-        endpoint_claims: EndpointClaims,
+        request_type: RequestType,
     ) -> Result<ProxyClient, Box<dyn std::error::Error>> {
         let client_store: Arc<ClientStore> = Default::default();
         let cancellation_token = CancellationToken::new();
     
-        let (client_info, mut set) =
-            proxy_client::run(client_store, control_port, "http://127.0.0.1:8888/v0/request_token", cancellation_token.clone(), endpoint_claims, 15)
+        let config = ownserver::Config {
+            control_port,
+            token_server: format!("http://127.0.0.1:{}/v0/request_token", token_port),
+            ping_interval: 15,
+        };
+
+        let client_store_ = client_store.clone();
+        let cancellation_token_ = cancellation_token.clone();
+        tokio::spawn(async move {
+            proxy_client::run_client(&config, client_store_, cancellation_token_, request_type)
                 .await
                 .expect("failed to launch proxy_client");
-        tokio::spawn(async move {
-            while let Some(res) = set.join_next().await {
-                let _ = res.unwrap();
-            }
+            tracing::warn!("run_client finished");
         });
     
-        wait!();
-        Ok(ProxyClient {
-            client_info,
-            cancellation_token,
-        })
+        for _ in 0..10 {
+            wait!();
+            if let Some(client_info) = client_store.get_client_info().await {
+                return Ok(ProxyClient {
+                    store: client_store,
+                    client_info,
+                    cancellation_token,
+                });
+            }
+        }
+        Err("failed to get client info".into())
     }
     
     pub async fn launch_local_server(local_port: u16) -> LocalServer {
@@ -345,17 +390,17 @@ pub mod udp {
     }
 
 
-    pub async fn with_proxy<T>(endpoint_claims: EndpointClaims, test_func: impl FnOnce(TokenServer, ProxyServer, ProxyClient) -> T)
+    pub async fn with_proxy<T>(port_set: PortSet, request_type: RequestType, test_func: impl FnOnce(TokenServer, ProxyServer, ProxyClient) -> T)
         where
         T: Future<Output = Result<(), Box<dyn std::error::Error>>> + Send,
     {
-        let token_server = launch_token_server(TOKEN_PORT).await;
+        let token_server = launch_token_server(port_set.token_port).await;
         wait!();
 
-        let proxy_server = launch_proxy_server(CONTROL_PORT, REMOTE_PORT_START, REMOTE_PORT_END).await.expect("failed to launch proxy server");
+        let proxy_server = launch_proxy_server(port_set.control_port, port_set.remote_ports.start, port_set.remote_ports.end, None).await.expect("failed to launch proxy server");
         wait!();
 
-        let proxy_client = launch_proxy_client(CONTROL_PORT, endpoint_claims).await.expect("failed to launch proxy client");
+        let proxy_client = launch_proxy_client(port_set.token_port, port_set.control_port, request_type).await.expect("failed to launch proxy client");
 
         test_func(token_server, proxy_server, proxy_client).await.expect("failed to call test_func");
     }

@@ -1,4 +1,3 @@
-use serial_test::serial;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::net::UdpSocket;
@@ -8,20 +7,21 @@ use ownserver_lib::{EndpointClaim, Protocol};
 #[cfg(test)]
 mod e2e_tcp_test {
     use super::*;
-    use ownserver_test::{tcp::{with_proxy, with_local_server, get_endpoint_claims_single, with_local_server_echoback}, assert_tcp_socket_bytes_matches, LOCAL_PORT};
-
+    use ownserver::proxy_client::RequestType;
+    use ownserver_test::{assert_tcp_socket_bytes_matches, tcp::{get_endpoint_claims_single, with_local_server, with_local_server_echoback, with_proxy, with_proxy_use_reconnect}, use_ports, PortSet};
 
     #[tokio::test]
-    #[serial]
     async fn forward_remote_traffic_to_local(
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let endpoint_claims = get_endpoint_claims_single(LOCAL_PORT);
-        with_proxy(endpoint_claims, |_token_server, _proxy_server, proxy_client| async move {
+        let [local_port] = use_ports();
+        let endpoint_claims = get_endpoint_claims_single(local_port);
+
+        with_proxy(PortSet::new(), RequestType::NewClient { endpoint_claims }, |_token_server, _proxy_server, proxy_client| async move {
             let client_info = proxy_client.client_info;
             let remote_addr = format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port);
             wait!();
 
-            with_local_server(LOCAL_PORT, |_local_server| async move {
+            with_local_server(local_port, |_local_server| async move {
                 let mut remote = TcpStream::connect(remote_addr)
                     .await?;
                 remote.write_all(b"foobar".as_ref()).await?;
@@ -36,15 +36,16 @@ mod e2e_tcp_test {
     }
 
     #[tokio::test]
-    #[serial]
     async fn forward_multiple_remote_traffic_to_local() -> Result<(), Box<dyn std::error::Error>> {
-        let endpoint_claims = get_endpoint_claims_single(LOCAL_PORT);
-        with_proxy(endpoint_claims, |_token_server, _proxy_server, proxy_client| async move {
+        let [local_port] = use_ports();
+        let endpoint_claims = get_endpoint_claims_single(local_port);
+
+        with_proxy(PortSet::new(), RequestType::NewClient { endpoint_claims }, |_token_server, _proxy_server, proxy_client| async move {
             let client_info = proxy_client.client_info;
             let remote_addr = format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port);
             wait!();
 
-            with_local_server(LOCAL_PORT, |_local_server| async move {
+            with_local_server(local_port, |_local_server| async move {
                 let mut remote = TcpStream::connect(remote_addr.clone())
                     .await
                     .expect("Failed to connect to remote port");
@@ -67,18 +68,19 @@ mod e2e_tcp_test {
     }
 
     #[tokio::test]
-    #[serial]
     async fn refuse_remote_traffic_when_client_canceled() -> Result<(), Box<dyn std::error::Error>> {
-        let endpoint_claims = get_endpoint_claims_single(LOCAL_PORT);
-        with_proxy(endpoint_claims, |_token_server, _proxy_server, proxy_client| async move {
-            let client_info = proxy_client.client_info;
+        let [local_port] = use_ports();
+        let endpoint_claims = get_endpoint_claims_single(local_port);
+
+        with_proxy(PortSet::new(), RequestType::NewClient { endpoint_claims }, |_token_server, _proxy_server, proxy_client| async move {
+            let client_info = proxy_client.client_info.clone();
             let remote_addr = format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port);
             wait!();
 
-            with_local_server(LOCAL_PORT, |_local_server| async move {
+            with_local_server(local_port, |_local_server| async move {
                 // cancel client
-                let cancellation_token = proxy_client.cancellation_token;
-                cancellation_token.cancel();
+                proxy_client.cancel().await;
+                wait!();
 
                 // access remote port
                 // we can access remote server because remote_port_for_client remains open
@@ -99,15 +101,16 @@ mod e2e_tcp_test {
     }
 
     #[tokio::test]
-    #[serial]
     async fn refuse_remote_traffic_after_client_canceled() -> Result<(), Box<dyn std::error::Error>> {
-        let endpoint_claims = get_endpoint_claims_single(LOCAL_PORT);
-        with_proxy(endpoint_claims, |_token_server, _proxy_server, proxy_client| async move {
-            let client_info = proxy_client.client_info;
+        let [local_port] = use_ports();
+        let endpoint_claims = get_endpoint_claims_single(local_port);
+
+        with_proxy(PortSet::new(), RequestType::NewClient { endpoint_claims }, |_token_server, _proxy_server, proxy_client| async move {
+            let client_info = proxy_client.client_info.clone();
             let remote_addr = format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port);
             wait!();
 
-            with_local_server(LOCAL_PORT, |_local_server| async move {
+            with_local_server(local_port, |_local_server| async move {
                 let mut remote = TcpStream::connect(remote_addr)
                     .await?;
                 wait!();
@@ -116,8 +119,8 @@ mod e2e_tcp_test {
                 assert_tcp_socket_bytes_matches!(&mut remote, b"hello, foobar");
 
                 // cancel client
-                let cancellation_token = proxy_client.cancellation_token;
-                cancellation_token.cancel();
+                proxy_client.cancel().await;
+                wait!();
 
                 remote.write_all(b"foobar".as_ref()).await?;
                 // assert_tcp_socket_bytes_matches!(remote, b"");
@@ -131,15 +134,16 @@ mod e2e_tcp_test {
     }
 
     #[tokio::test]
-    #[serial]
     async fn remove_disabled_client_streams() -> Result<(), Box<dyn std::error::Error>> {
-        let endpoint_claims = get_endpoint_claims_single(LOCAL_PORT);
-        with_proxy(endpoint_claims, |_token_server, proxy_server, proxy_client| async move {
-            let client_info = proxy_client.client_info;
+        let [local_port] = use_ports();
+        let endpoint_claims = get_endpoint_claims_single(local_port);
+
+        with_proxy(PortSet::new(), RequestType::NewClient { endpoint_claims }, |_token_server, proxy_server, proxy_client| async move {
+            let client_info = proxy_client.client_info.clone();
             let remote_addr = format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port);
             wait!();
 
-            with_local_server(LOCAL_PORT, |_local_server| async move {
+            with_local_server(local_port, |_local_server| async move {
                 let mut remote = TcpStream::connect(remote_addr)
                     .await?;
                 wait!();
@@ -153,8 +157,8 @@ mod e2e_tcp_test {
                 assert_eq!(store.len_clients().await, 1);
                 assert_eq!(store.len_streams().await, 1);
 
-                let cancellation_token = proxy_client.cancellation_token;
-                cancellation_token.cancel();
+                // cancel client
+                proxy_client.cancel().await;
                 wait!();
 
                 // client and stream remains in store
@@ -176,22 +180,23 @@ mod e2e_tcp_test {
     }
 
     #[tokio::test]
-    #[serial]
     async fn forward_remote_traffic_to_multiple_local(
     ) -> Result<(), Box<dyn std::error::Error>> {
+        let [local1, local2] = use_ports();
         let endpoint_claims = vec![
             EndpointClaim {
                 protocol: Protocol::TCP,
-                local_port: LOCAL_PORT + 1,
+                local_port: local1,
                 remote_port: 0,
             },
             EndpointClaim {
                 protocol: Protocol::TCP,
-                local_port: LOCAL_PORT + 2,
+                local_port: local2,
                 remote_port: 0,
             },
         ];
-        with_proxy(endpoint_claims, |_token_server, _proxy_server, proxy_client| async move {
+
+        with_proxy(PortSet::new(), RequestType::NewClient { endpoint_claims }, |_token_server, _proxy_server, proxy_client| async move {
             let client_info = proxy_client.client_info;
             let remote_addr0 = format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port);
             let remote_addr1 = format!("{}:{}", client_info.host, client_info.endpoints[1].remote_port);
@@ -221,22 +226,22 @@ mod e2e_tcp_test {
 
 
     #[tokio::test]
-    #[serial]
     async fn forward_multiple_remote_traffic_to_multiple_local(
     ) -> Result<(), Box<dyn std::error::Error>> {
+        let [local1, local2] = use_ports();
         let endpoint_claims = vec![
             EndpointClaim {
                 protocol: Protocol::TCP,
-                local_port: LOCAL_PORT + 1,
+                local_port: local1,
                 remote_port: 0,
             },
             EndpointClaim {
                 protocol: Protocol::TCP,
-                local_port: LOCAL_PORT + 2,
+                local_port: local2,
                 remote_port: 0,
             },
         ];
-        with_proxy(endpoint_claims, |_token_server, _proxy_server, proxy_client| async move {
+        with_proxy(PortSet::new(), RequestType::NewClient { endpoint_claims }, |_token_server, _proxy_server, proxy_client| async move {
             let client_info = proxy_client.client_info;
             let remote_addr0 = format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port);
             let remote_addr1 = format!("{}:{}", client_info.host, client_info.endpoints[1].remote_port);
@@ -284,16 +289,17 @@ mod e2e_tcp_test {
 
 
     #[tokio::test]
-    #[serial]
     async fn forward_remote_huge_traffic_to_local(
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let endpoint_claims = get_endpoint_claims_single(LOCAL_PORT);
-        with_proxy(endpoint_claims, |_token_server, _proxy_server, proxy_client| async move {
+        let [local_port] = use_ports();
+        let endpoint_claims = get_endpoint_claims_single(local_port);
+
+        with_proxy(PortSet::new(), RequestType::NewClient { endpoint_claims }, |_token_server, _proxy_server, proxy_client| async move {
             let client_info = proxy_client.client_info;
             let remote_addr = format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port);
             wait!();
 
-            with_local_server_echoback(LOCAL_PORT, |_local_server| async move {
+            with_local_server_echoback(local_port, |_local_server| async move {
                 let payload: [u8; 16384] = {
                     let mut unique_bytes = [0; 16384];
                     for (i, byte) in unique_bytes.iter_mut().enumerate() {
@@ -328,26 +334,108 @@ mod e2e_tcp_test {
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn reconnect_when_websocket_disconnected_new(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let [local_port] = use_ports();
+        let port_set = PortSet::new();
+        let endpoint_claims = get_endpoint_claims_single(local_port);
+
+        with_proxy_use_reconnect(port_set, RequestType::NewClient { endpoint_claims }, |_token_server, _proxy_server, proxy_client| async move {
+            let client_info = proxy_client.client_info.clone();
+            let remote_addr = format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port);
+            wait!();
+
+            with_local_server(local_port, |_local_server| async move {
+                let mut remote = TcpStream::connect(remote_addr)
+                    .await?;
+                remote.write_all(b"foobar".as_ref()).await?;
+                assert_tcp_socket_bytes_matches!(&mut remote, b"hello, foobar");
+
+                // ensure ping is sent to client
+                wait!();
+
+                // terminate websocket connection by dropping client
+                proxy_client.store.remove_client().await;
+                wait!();
+
+                // reconnect happens in background
+
+                remote.write_all(b"fugapiyo".as_ref()).await?;
+                assert_tcp_socket_bytes_matches!(&mut remote, b"hello, fugapiyo");
+
+                Ok(())
+            }).await;
+            Ok(())
+        }).await;
+
+        Ok(())
+    }
+
+
+    #[tokio::test]
+    async fn reconnect_when_websocket_disconnected_multiple_time_new(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let [local_port] = use_ports();
+        let port_set = PortSet::new();
+        let endpoint_claims = get_endpoint_claims_single(local_port);
+
+        with_proxy_use_reconnect(port_set, RequestType::NewClient { endpoint_claims }, |_token_server, _proxy_server, proxy_client| async move {
+            let client_info = proxy_client.client_info.clone();
+            let remote_addr = format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port);
+            wait!();
+
+            with_local_server(local_port, |_local_server| async move {
+                let mut remote = TcpStream::connect(remote_addr)
+                    .await?;
+                remote.write_all(b"foobar".as_ref()).await?;
+                assert_tcp_socket_bytes_matches!(&mut remote, b"hello, foobar");
+
+
+                for i in 0..3 {
+                    // terminate websocket connection by dropping client
+                    proxy_client.store.remove_client().await;
+                    wait!();
+
+                    // reconnect
+                    wait!();
+
+                    // send & validate
+                    remote.write_all(format!("fugapiyo {}", i).as_bytes()).await?;
+                    assert_tcp_socket_bytes_matches!(&mut remote, format!("hello, fugapiyo {}", i).as_bytes());
+                }
+
+                Ok(())
+            }).await;
+            Ok(())
+        }).await;
+
+        Ok(())
+    }
+
 }
 
 
 
 #[cfg(test)]
 mod e2e_udp_test {
-    use ownserver_test::{udp::{with_proxy, with_local_server, get_endpoint_claims_single}, assert_udp_socket_bytes_matches, LOCAL_PORT};
+    use ownserver::proxy_client::RequestType;
+    use ownserver_test::{assert_udp_socket_bytes_matches, udp::{get_endpoint_claims_single, with_local_server, with_proxy}, use_ports, PortSet};
 
     use super::*;
 
     #[tokio::test]
-    #[serial]
     async fn forward_remote_traffic_to_local() -> Result<(), Box<dyn std::error::Error>> {
-        let endpoint_claims = get_endpoint_claims_single(LOCAL_PORT);
-        with_proxy(endpoint_claims, |_token_server, _proxy_server, proxy_client| async move {
+        let [local_port] = use_ports();
+        let endpoint_claims = get_endpoint_claims_single(local_port);
+
+        with_proxy(PortSet::new(), RequestType::NewClient { endpoint_claims }, |_token_server, _proxy_server, proxy_client| async move {
             let client_info = proxy_client.client_info;
             let remote_addr = format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port);
             wait!();
 
-            with_local_server(LOCAL_PORT, |_local_server| async move {
+            with_local_server(local_port, |_local_server| async move {
                 let remote = UdpSocket::bind("127.0.0.1:0").await.unwrap();
                     remote.connect(remote_addr).await.unwrap();
                 remote.send(b"foobar".as_ref()).await?;
@@ -363,15 +451,16 @@ mod e2e_udp_test {
     }
 
     #[tokio::test]
-    #[serial]
     async fn forward_multiple_remote_traffic_to_local() -> Result<(), Box<dyn std::error::Error>> {
-        let endpoint_claims = get_endpoint_claims_single(LOCAL_PORT);
-        with_proxy(endpoint_claims, |_token_server, _proxy_server, proxy_client| async move {
+        let [local_port] = use_ports();
+        let endpoint_claims = get_endpoint_claims_single(local_port);
+
+        with_proxy(PortSet::new(), RequestType::NewClient { endpoint_claims }, |_token_server, _proxy_server, proxy_client| async move {
             let client_info = proxy_client.client_info;
             let remote_addr = format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port);
             wait!();
 
-            with_local_server(LOCAL_PORT, |_local_server| async move {
+            with_local_server(local_port, |_local_server| async move {
                 let remote1 = UdpSocket::bind("127.0.0.1:0").await.unwrap();
                 remote1.connect(remote_addr.clone()).await.unwrap();
                 let remote2 = UdpSocket::bind("127.0.0.1:0").await.unwrap();
@@ -394,22 +483,23 @@ mod e2e_udp_test {
 
 
     #[tokio::test]
-    #[serial]
     async fn forward_remote_traffic_to_multiple_local(
     ) -> Result<(), Box<dyn std::error::Error>> {
+        let [local1, local2] = use_ports();
         let endpoint_claims = vec![
             EndpointClaim {
                 protocol: Protocol::UDP,
-                local_port: LOCAL_PORT + 1,
+                local_port: local1,
                 remote_port: 0,
             },
             EndpointClaim {
                 protocol: Protocol::UDP,
-                local_port: LOCAL_PORT + 2,
+                local_port: local2,
                 remote_port: 0,
             },
         ];
-        with_proxy(endpoint_claims, |_token_server, _proxy_server, proxy_client| async move {
+
+        with_proxy(PortSet::new(), RequestType::NewClient { endpoint_claims }, |_token_server, _proxy_server, proxy_client| async move {
             let client_info = proxy_client.client_info;
             let remote_addr0 = format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port);
             let remote_addr1 = format!("{}:{}", client_info.host, client_info.endpoints[1].remote_port);
@@ -443,22 +533,23 @@ mod e2e_udp_test {
 
 
     #[tokio::test]
-    #[serial]
     async fn forward_multiple_remote_traffic_to_multiple_local(
     ) -> Result<(), Box<dyn std::error::Error>> {
+        let [local1, local2] = use_ports();
         let endpoint_claims = vec![
             EndpointClaim {
                 protocol: Protocol::UDP,
-                local_port: LOCAL_PORT + 1,
+                local_port: local1,
                 remote_port: 0,
             },
             EndpointClaim {
                 protocol: Protocol::UDP,
-                local_port: LOCAL_PORT + 2,
+                local_port: local2,
                 remote_port: 0,
             },
         ];
-        with_proxy(endpoint_claims, |_token_server, _proxy_server, proxy_client| async move {
+
+        with_proxy(PortSet::new(), RequestType::NewClient { endpoint_claims }, |_token_server, _proxy_server, proxy_client| async move {
             let client_info = proxy_client.client_info;
             let remote_addr0 = format!("{}:{}", client_info.host, client_info.endpoints[0].remote_port);
             let remote_addr1 = format!("{}:{}", client_info.host, client_info.endpoints[1].remote_port);

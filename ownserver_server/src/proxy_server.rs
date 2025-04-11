@@ -1,19 +1,19 @@
 pub use ownserver_lib::{ClientId, StreamId};
+use warp::filters::ws::WebSocket;
 use std::sync::Arc;
 use tokio::task::JoinSet;
-use once_cell::sync::OnceCell;
 
 use crate::{control_server_v2, Store};
 use crate::Config;
 
 #[tracing::instrument(skip(config, store))]
 pub async fn run(
-    config: &'static OnceCell<Config>,
-    store: Arc<Store>,
+    config: &'static Config,
+    store: Arc<Store<WebSocket>>,
 ) -> JoinSet<()> {
     tracing::info!("starting server!");
 
-    let control_port = config.get().expect("failed to read config").control_port;
+    let control_port = config.control_port;
 
     let set = control_server_v2::spawn(
         config,

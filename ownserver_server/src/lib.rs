@@ -1,3 +1,4 @@
+use chrono::Duration;
 use futures::channel::mpsc::SendError;
 use ownserver_lib::{ClientId, StreamId};
 use thiserror::Error;
@@ -16,10 +17,12 @@ pub struct Config {
     pub control_port: u16,
     pub token_secret: String,
     pub host: String,
+    pub metrics_idle_timeout: u64,
     pub remote_port_start: u16,
     pub remote_port_end: u16,
     pub periodic_cleanup_interval: u64,
     pub periodic_ping_interval: u64,
+    pub reconnect_window: Duration,
 }
 
 
