@@ -12,7 +12,6 @@ use tracing_subscriber::prelude::*;
 use std::sync::Arc;
 use std::sync::OnceLock;
 use structopt::StructOpt;
-use metrics::Unit;
 
 static CONFIG: OnceLock<Config> = OnceLock::new();
 

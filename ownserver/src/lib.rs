@@ -74,7 +74,6 @@ pub struct LocalStreamEntry {
 pub struct Client {
     pub client_info: ClientInfo,
     ws_tx: SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>,
-    store: Arc<Store>,
     ct: CancellationToken,
 }
 
@@ -124,7 +123,6 @@ impl Client {
         });
         
         Self {
-            store,
             client_info,
             ws_tx,
             ct: token,
