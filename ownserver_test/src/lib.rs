@@ -185,42 +185,6 @@ pub mod tcp {
         Err("failed to get client info".into())
     }
 
-    pub async fn launch_proxy_client_new(
-        token_port: u16,
-        control_port: u16,
-        request_type: RequestType,
-    ) -> Result<ProxyClient, Box<dyn std::error::Error>> {
-        let config = ownserver::Config {
-            control_port,
-            token_server: format!("http://127.0.0.1:{}/v0/request_token", token_port),
-            ping_interval: 15,
-        };
-
-        let client_store: Arc<ClientStore> = Default::default();
-        let cancellation_token = CancellationToken::new();
-    
-        let client_store_ = client_store.clone();
-        let cancellation_token_ = cancellation_token.clone();
-        tokio::spawn(async move {
-            proxy_client::run_client(&config, client_store_, cancellation_token_, request_type)
-                .await
-                .expect("failed to launch proxy_client");
-            tracing::warn!("run_client finished");
-        });
-    
-        for _ in 0..10 {
-            wait!();
-            if let Some(client_info) = client_store.get_client_info().await {
-                return Ok(ProxyClient {
-                    store: client_store,
-                    client_info,
-                    cancellation_token,
-                });
-            }
-        }
-        Err("failed to get client info".into())
-    }
-
     pub async fn launch_local_server(local_port: u16) -> LocalServer {
         let local_server = async move {
             let listener = TcpListener::bind(format!("127.0.0.1:{}", local_port))
