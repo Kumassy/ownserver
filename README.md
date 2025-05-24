@@ -54,33 +54,34 @@ We also offer GUI. visit [ownserver-client-gui](https://github.com/Kumassy/ownse
 
 ```sh
 % ownserver -h
-ownserver 0.5.1
+Expose your local game server to the Internet
 
-USAGE:
-    ownserver [OPTIONS]
+Usage: ownserver [OPTIONS] --endpoint <ENDPOINT>
 
-FLAGS:
-    -h, --help       Prints help information
-    -V, --version    Prints version information
-
-OPTIONS:
-        --control-port <control-port>    Advanced settings [default: 5000]
-        --local-port <local-port>        Port of your local game server listens e.g.) 25565 for Minecraft [default:
-                                         3000]
-        --payload <payload>              tcp or udp [default: tcp]
-        --token-server <token-server>    Advanced settings [default: https://auth.ownserver.kumassy.com/v1/request_token]
+Options:
+      --endpoint <ENDPOINT>
+          Port and protocol of your local game server e.g.) `25565/tcp` for Minecraft
+      --api-port <API_PORT>
+          Advanced settings. You can inspect client's internal state at localhost:<api_port>.
+      --control-port <CONTROL_PORT>
+          Advanced settings [default: 5000]
+      --token-server <TOKEN_SERVER>
+          Advanced settings [default: https://auth.ownserver.kumassy.com/v2/request_token]
+      --periodic-ping-interval <PERIODIC_PING_INTERVAL>
+          [default: 15]
+  -h, --help
+          Print help
+  -V, --version
 
 # listen on local port
 % nc -kl 3000
 
-% ownserver --payload tcp --local-port 3000
-Connecting to auth server: https://auth.ownserver.kumassy.com/v1/request_token
-Your proxy server: shard-7924.ownserver.kumassy.com
-Connecting to proxy server: shard-7924.ownserver.kumassy.com:5000
-Your Client ID: client_755d0b36-f863-41e1-b5ff-c6c89fdb92a5
-+---------------------------------------------------------------------------------------------------+
-| Your server tcp://localhost:3000 is now available at tcp://shard-7924.ownserver.kumassy.com:17974 |
-+---------------------------------------------------------------------------------------------------+
+% ownserver --endpoint 3010/tcp
+Your Client ID: client_17638595-be9d-41b9-89bf-c678c1e98d10
+Endpoint Info:
++------------------------------------------------------------------------+
+| tcp://localhost:3010 <--> tcp://shard-2509.ownserver.kumassy.com:15335 |
++------------------------------------------------------------------------+
 
 # you can send any TCP packet to local port!
 % nc shard-7924.ownserver.kumassy.com 17974
@@ -100,7 +101,7 @@ via cargo
 java -Xmx1024M -Xms1024M -jar server.jar nogui
 
 # run ownserver client
-ownserver  -- --payload tcp --local-port 25565
+ownserver  -- --endpoint 25565/tcp
 ```
 
 share your public URL!
@@ -110,12 +111,12 @@ You can query endpoints and streams info using the client API.
 You need to specify local port to use the API: 
 
 ```
-% ownserver --payload tcp --local-port 3000 --api-port 9000
+% ownserver --endpoint 25565/tcp --api-port 9000
 
 % curl -s localhost:9000/endpoints
-[{"id":"client_be38a93b-b7a9-46da-9d9d-51df95cad828","local_port":3000,"remote_addr":"shard-5346.ownserver.kumassy.com:13574"}]
+[[{"id":"02291214-8647-4d08-ace3-032ac255bb14","protocol":"TCP","local_port":3010,"remote_port":19083}]]
 % curl -s localhost:9000/streams
-[{"id":"stream_24a3b5bb-336d-4b4e-baf3-7ef61bc1b78c"}]
+[{"stream_id":"5768354e-97c9-4c6a-8cd2-8163a1f3621c","remote_info":{"remote_peer_addr":"x.x.x.x:13367"}}]
 ```
 
 ## How it works
