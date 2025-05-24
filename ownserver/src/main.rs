@@ -78,19 +78,20 @@ async fn main() -> Result<()> {
 
     let store_ = store.clone();
 
+    if let Some(api_port) = cli.api_port {
+        info!("client side api is available at localhost:{}", api_port);
+        tokio::spawn(async move {
+            api::spawn_api(store_, api_port).await;
+        });
+    }
+
     info!("start client main loop");
-    run_client(&config, store_, cancellation_token,
+    run_client(&config, store, cancellation_token,
         RequestType::NewClient {
             endpoint_claims: cli.endpoint
         }
     ).await?;
 
-    if let Some(api_port) = cli.api_port {
-        info!("client side api is available at localhost:{}", api_port);
-        tokio::spawn(async move {
-            api::spawn_api(store, api_port).await;
-        });
-    }
 
     Ok(())
 }
