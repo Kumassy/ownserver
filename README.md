@@ -140,6 +140,8 @@ This software was initially developed as a fork of [tunnelto](https://github.com
 
 ## Contributing
 
+For a guided tour of the codebase and local development instructions see [docs/development_overview.md](docs/development_overview.md).
+
 ### Project Layout
 
 - ownserver/ownserver
