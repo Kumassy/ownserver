@@ -71,7 +71,7 @@ pub async fn accept_connection(
     let peer_addr = match socket.peer_addr() {
         Ok(addr) => addr,
         Err(_) => {
-            tracing::error!(cid = %client_id, "failed to find remote peer addr");
+            tracing::warn!(cid = %client_id, "failed to find remote peer addr");
             // let _ = socket.write_all(HTTP_TUNNEL_REFUSED_RESPONSE).await;
             return;
         }
@@ -125,15 +125,15 @@ impl RemoteTcp {
                     }
                     _ = ct_.cancelled() => {
                         // exit from this remote stream
-                        tracing::info!(cid = %client_id, id=%stream_id, "read loop was cancelled");
+                        tracing::info!(cid = %client_id, id=%stream_id, "cancel reading RemoteTcp");
                         return;
                     }
                 };
-                tracing::debug!(cid = %client_id, sid = %stream_id, "read {} bytes message from remote", n);
+                tracing::trace!(cid = %client_id, sid = %stream_id, "read {} bytes message from remote", n);
                 counter!("ownserver_server.remote.tcp.received_bytes", "client_id" => client_id.to_string(), "stream_id" => stream_id.to_string()).increment(n as u64);
 
                 if n == 0 {
-                    tracing::debug!(cid = %client_id, sid = %stream_id, "remote client streams end");
+                    tracing::info!(cid = %client_id, sid = %stream_id, "remote client streams end");
 
 
                     let _ = store_ 
@@ -151,7 +151,7 @@ impl RemoteTcp {
 
                 match store_.send_to_client(client_id, packet).await {
                     Ok(_) => {
-                        tracing::debug!(cid = %client_id, sid = %stream_id, "sent data packet to client");
+                        tracing::trace!(cid = %client_id, sid = %stream_id, "sent data packet to client");
                     },
                     Err(e) => {
                         tracing::warn!(cid = %client_id, sid = %stream_id, "failed to forward tcp packets to client. {:?}", e);
@@ -214,3 +214,8 @@ impl RemoteTcp {
     }
 }
 
+impl Drop for RemoteTcp {
+    fn drop(&mut self) {
+        tracing::info!(sid = %self.stream_id, "dropping RemoteTcp");
+    }
+}

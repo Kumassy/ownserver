@@ -81,11 +81,8 @@ async fn process_udp_stream(
             }
         };
 
-        // TODO
-        // gauge!("ownserver_server.remotes.udp.streams", active_streams.len() as f64);
-
         if n == 0 {
-            tracing::debug!(cid = %client_id, sid = %stream_id, "remote client streams end");
+            tracing::info!(cid = %client_id, sid = %stream_id, "remote client streams end");
             let _ = store
                 .send_to_client(client_id, ControlPacketV2::End(stream_id))
                 .await
@@ -95,14 +92,14 @@ async fn process_udp_stream(
             continue;
         }
 
-        tracing::debug!(cid = %client_id, sid = %stream_id, "read {} bytes message from remote client", n);
+        tracing::trace!(cid = %client_id, sid = %stream_id, "read {} bytes message from remote client", n);
         counter!("ownserver_server.remote.udp.received_bytes", "client_id" => client_id.to_string(), "stream_id" => stream_id.to_string()).increment(n as u64);
 
         let data = &buf[..n];
         let packet = ControlPacketV2::Data(stream_id, data.to_vec());
 
         match store.send_to_client(client_id, packet).await {
-            Ok(_) => tracing::debug!(cid = %client_id, sid = %stream_id, "sent data packet to client"),
+            Ok(_) => tracing::trace!(cid = %client_id, sid = %stream_id, "sent data packet to client"),
             Err(_) => {
                 tracing::warn!(cid = %client_id, sid = %stream_id, "failed to forward udp packets to client");
                 continue
@@ -175,3 +172,8 @@ impl RemoteUdp {
     }
 }
 
+impl Drop for RemoteUdp {
+    fn drop(&mut self) {
+        tracing::info!(sid = %self.stream_id, "dropping RemoteUdp");
+    }
+}

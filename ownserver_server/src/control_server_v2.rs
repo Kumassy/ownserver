@@ -80,7 +80,7 @@ pub fn spawn<A: Into<SocketAddr> + std::fmt::Debug>(
             let client_ids = store.get_client_ids().await;
 
             for client_id in client_ids {
-                tracing::debug!(cid = %client_id, "send ping to client");
+                tracing::trace!(cid = %client_id, "send ping to client");
                 match ReconnectTokenPayload::new(client_id).into_token(&config.token_secret) {
                     Ok(token) => {
                         if let Err(e) = store.send_to_client(client_id, ControlPacketV2::Ping(0, current_time, Some(token))).await {
@@ -88,7 +88,7 @@ pub fn spawn<A: Into<SocketAddr> + std::fmt::Debug>(
                         }
                     },
                     Err(e) => {
-                        tracing::warn!(cid = %client_id, "failed to create reconnect token {:?}", e);
+                        tracing::error!(cid = %client_id, "failed to create reconnect token {:?}", e);
                     }
                 }
             }
@@ -211,7 +211,7 @@ async fn validate_client_hello(
         },
         ClientType::Reconnect => {
             let payload = ReconnectTokenPayload::decode_token(token_secret, &client_hello.token).map_err(|e| {
-                tracing::info!("failed to parse reconnect token: {:?}", e);
+                tracing::warn!("failed to parse reconnect token: {:?}", e);
                 VerifyClientHandshakeError::InvalidJWT
             })?;
 
@@ -288,7 +288,7 @@ async fn handle_new_connection(
         Err(e) => {
             let server_hello: ServerHelloV2 = e.into();
             if let Err(e) = send_server_hello(&mut websocket, &server_hello).await {
-                tracing::error!("failed to send server hello: {:?}", e);
+                tracing::warn!("failed to send server hello: {:?}", e);
                 counter!("ownserver_server.control_server.handle_new_connection.send_server_hello_error").increment(1);
             }
             return;
@@ -297,7 +297,7 @@ async fn handle_new_connection(
 
     match provisioning_action {
         ProvisioningAction::NewClient { claims } => {
-            tracing::info!("process NewClient action");
+            tracing::debug!("process NewClient action");
             let Config { reconnect_window, ..  } = config;
             // 3. convert client hello to server hello
             // allocate ports based on client claims
@@ -305,7 +305,7 @@ async fn handle_new_connection(
 
             // 4. respond with server hello
             if let Err(e) = send_server_hello(&mut websocket, &server_hello).await {
-                tracing::error!("failed to send server hello: {:?}", e);
+                tracing::warn!("failed to send server hello: {:?}", e);
                 counter!("ownserver_server.control_server.handle_new_connection.send_server_hello_error").increment(1);
                 return;
             }
@@ -328,12 +328,12 @@ async fn handle_new_connection(
                 match endpoint.protocol {
                     Protocol::TCP => {
                         if let Err(e) = remote::tcp::spawn_remote(store.clone(), client_id, endpoint.id, ct_child.clone()).await {
-                            tracing::error!(cid = %client_id, eid = %endpoint.id, "failed to spawn remote listener {:?}", e);
+                            tracing::warn!(cid = %client_id, eid = %endpoint.id, "failed to spawn remote listener {:?}", e);
                         }
                     }
                     Protocol::UDP => {
                         if let Err(e) = remote::udp::spawn_remote(store.clone(), client_id, endpoint.id, ct_child.clone()).await {
-                            tracing::error!(cid = %client_id, eid = %endpoint.id, "failed to spawn remote listener {:?}", e);
+                            tracing::warn!(cid = %client_id, eid = %endpoint.id, "failed to spawn remote listener {:?}", e);
                         }
                     }
                 }
@@ -362,7 +362,7 @@ async fn handle_new_connection(
                 endpoints: endpoints.clone(),
             };
             if let Err(e) = send_server_hello(&mut websocket, &server_hello).await {
-                tracing::error!("failed to send server hello: {:?}", e);
+                tracing::warn!("failed to send server hello: {:?}", e);
                 counter!("ownserver_server.control_server.handle_new_connection.send_server_hello_error").increment(1);
                 return;
             }

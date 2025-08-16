@@ -99,6 +99,9 @@ pub enum ClientType {
 pub enum ControlPacketV2 {
     Init(StreamId, EndpointId, RemoteInfo),
     Data(StreamId, Vec<u8>),
+    /// client --> server
+    /// Notifies the server that a connection to the local server was refused.
+    /// The server will close the corresponding remote stream upon receiving this notification.
     Refused(StreamId),
     End(StreamId),
     Ping(u32,DateTime<chrono::Utc>,Option<String>),

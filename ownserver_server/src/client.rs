@@ -61,11 +61,11 @@ where
                             }
                             // handle close with reason
                             Some(Ok(msg)) if msg.is_close() && !msg.as_bytes().is_empty() => {
-                                tracing::info!(cid = %client_id, close_reason=?msg, "client got close");
+                                tracing::info!(cid = %client_id, close_reason=?msg, "closing client with reason");
                                 break
                             }
                             _ => {
-                                tracing::info!(cid = %client_id, "goodbye client");
+                                tracing::info!(cid = %client_id, "closing client without message");
                                 break
                             }
                         };
@@ -88,7 +88,7 @@ where
 
 
                 
-                        tracing::debug!(cid = %client_id, ?packet, "got control packet from client");
+                        tracing::trace!(cid = %client_id, ?packet, "got control packet from client");
 
                         let (stream_id, data) = match packet {
                             ControlPacketV2::Data(stream_id, data) => {
@@ -130,7 +130,7 @@ where
 
                         tracing::trace!(cid = %client_id, sid = %stream_id, "forward message to remote stream");
                         if let Err(e) = store_.send_to_remote(stream_id, &data).await {
-                            tracing::debug!(cid = %client_id, sid = %stream_id, error = ?e, "Failed to send to remote stream");
+                            tracing::warn!(cid = %client_id, sid = %stream_id, error = ?e, "Failed to send to remote stream");
 
                             store_.disable_remote(stream_id).await;
                         }
@@ -160,7 +160,7 @@ where
         }
 
         if let Err(e) =  self.ws_tx.send(Message::binary(bytes.to_vec())).await {
-            tracing::debug!(cid = %self.client_id, error = ?e, "client disconnected: aborting");
+            tracing::warn!(cid = %self.client_id, error = ?e, "client disconnected: aborting");
             self.set_wait_reconnect();
             return Err(SendToClientError::WriteError(e))
         }
