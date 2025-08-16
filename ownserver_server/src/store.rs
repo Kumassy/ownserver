@@ -8,7 +8,7 @@ use rand::Rng;
 use tokio::{sync::{RwLock, Mutex}, net::ToSocketAddrs};
 use warp::filters::ws::Message;
 
-use crate::{port_allocator::{PortAllocator, PortAllocatorError}, remote::stream::{RemoteStream, StreamMessage}, Client, ClientStreamError};
+use crate::{port_allocator::{PortAllocator, PortAllocatorError}, remote::stream::RemoteStream, Client, SendToClientError, SendToRemoteError};
 
 
 #[derive(Debug, Default)]
@@ -20,10 +20,9 @@ pub struct Store<S> {
     alloc: Mutex<PortAllocator>,
 }
 
-impl<S, E> Store<S>
+impl<S> Store<S>
 where
-    S: futures::Stream<Item = Result<Message, warp::Error>> + Sink<Message, Error = E> + Unpin + Send + 'static,
-    E: std::fmt::Debug,
+    S: futures::Stream<Item = Result<Message, warp::Error>> + Sink<Message, Error = warp::Error> + Unpin + Send + 'static,
 {
     pub fn new(range: Range<u16>) -> Self {
         Self {
@@ -35,13 +34,13 @@ where
         }
     }
 
-    pub async fn send_to_client(&self, client_id: ClientId, packet: ControlPacketV2) -> Result<(), ClientStreamError> {
+    pub async fn send_to_client(&self, client_id: ClientId, packet: ControlPacketV2) -> Result<(), SendToClientError> {
         match self.clients.write().await.get_mut(&client_id) {
             Some(client) => {
                 client.send_to_client(packet).await
             },
             None => {
-                Err(ClientStreamError::ClientNotAvailable(client_id))
+                Err(SendToClientError::ClientNotFound(client_id))
             },
         }
     }
@@ -55,13 +54,13 @@ where
         }
     }
 
-    pub async fn send_to_remote(&self, stream_id: StreamId, message: StreamMessage) -> Result<(), ClientStreamError> {
+    pub async fn send_to_remote(&self, stream_id: StreamId, data: &[u8]) -> Result<(), SendToRemoteError> {
         match self.streams.write().await.get_mut(&stream_id) {
             Some(stream) => {
-                stream.send_to_remote(stream_id, message).await
+                stream.send_to_remote(stream_id, data).await
             },
             None => {
-                Err(ClientStreamError::StreamNotAvailable(stream_id))
+                Err(SendToRemoteError::StreamNotAvailable(stream_id))
             },
         }
     }

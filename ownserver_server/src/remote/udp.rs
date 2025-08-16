@@ -7,10 +7,8 @@ use tokio_util::sync::CancellationToken;
 use warp::filters::ws::WebSocket;
 use std::sync::Arc;
 
-use crate::{Store, remote::stream::RemoteStream, ClientStreamError};
+use crate::{remote::stream::RemoteStream, SendToClientError, SendToRemoteError, Store};
 pub use ownserver_lib::{ClientId, StreamId};
-
-use super::stream::StreamMessage;
 
 #[tracing::instrument(skip(store, cancellation_token))]
 pub async fn spawn_remote(
@@ -83,11 +81,8 @@ async fn process_udp_stream(
             }
         };
 
-        // TODO
-        // gauge!("ownserver_server.remotes.udp.streams", active_streams.len() as f64);
-
         if n == 0 {
-            tracing::debug!(cid = %client_id, sid = %stream_id, "remote client streams end");
+            tracing::info!(cid = %client_id, sid = %stream_id, "remote client streams end");
             let _ = store
                 .send_to_client(client_id, ControlPacketV2::End(stream_id))
                 .await
@@ -97,14 +92,14 @@ async fn process_udp_stream(
             continue;
         }
 
-        tracing::debug!(cid = %client_id, sid = %stream_id, "read {} bytes message from remote client", n);
+        tracing::trace!(cid = %client_id, sid = %stream_id, "read {} bytes message from remote client", n);
         counter!("ownserver_server.remote.udp.received_bytes", "client_id" => client_id.to_string(), "stream_id" => stream_id.to_string()).increment(n as u64);
 
         let data = &buf[..n];
         let packet = ControlPacketV2::Data(stream_id, data.to_vec());
 
         match store.send_to_client(client_id, packet).await {
-            Ok(_) => tracing::debug!(cid = %client_id, sid = %stream_id, "sent data packet to client"),
+            Ok(_) => tracing::trace!(cid = %client_id, sid = %stream_id, "sent data packet to client"),
             Err(_) => {
                 tracing::warn!(cid = %client_id, sid = %stream_id, "failed to forward udp packets to client");
                 continue
@@ -119,11 +114,10 @@ pub struct RemoteUdp {
     pub stream_id: StreamId,
     pub client_id: ClientId,
     pub endpoint_id: EndpointId,
-    socket: Arc<UdpSocket>,
+    socket: Option<Arc<UdpSocket>>,
     remote_info: RemoteInfo,
     ct: CancellationToken,
     store: Arc<Store<WebSocket>>,
-    disabled: bool,
 }
 
 impl RemoteUdp {
@@ -132,45 +126,35 @@ impl RemoteUdp {
         let ct = CancellationToken::new();
         let remote_info = RemoteInfo::new(peer_addr);
 
-        Self { stream_id, client_id, endpoint_id, socket, store, ct, remote_info, disabled: false }
+        Self { stream_id, client_id, endpoint_id, socket: Some(socket), store, ct, remote_info }
     }
 
-    pub async fn send_to_remote(&mut self, stream_id: StreamId, message: StreamMessage) -> Result<(), ClientStreamError> {
-        if self.disabled() {
-            return Err(ClientStreamError::StreamNotAvailable(stream_id));
+    pub async fn send_to_remote(&mut self, stream_id: StreamId, data: &[u8]) -> Result<(), SendToRemoteError> {
+        match self.socket {
+            Some(ref socket) => {
+                if let Err(e) = socket.send_to(data, self.remote_info.remote_peer_addr).await {
+                    tracing::warn!(cid = %self.client_id, sid = %self.stream_id, "could not write data to remote socket {:?}", e);
+
+                    self.disable();
+                    return Err(SendToRemoteError::WriteError(e))
+                }
+                counter!("ownserver_server.remote.udp.sent_bytes", "client_id" => self.client_id.to_string(), "stream_id" => self.stream_id.to_string()).increment(data.len() as u64);
+                Ok(())
+            }
+            None => {
+                Err(SendToRemoteError::StreamNotAvailable(stream_id))
+            }
         }
 
-        let data = match message {
-            StreamMessage::Data(data) => data,
-            StreamMessage::TunnelRefused => {
-                // TODO
-                tracing::info!(sid = %self.stream_id, "tunnel refused");
-
-                self.disable();
-                return Err(ClientStreamError::RemoteError(format!("stream_id: {}, TunnelRefused", self.stream_id)))
-            }
-            StreamMessage::NoClientTunnel => {
-                unimplemented!();
-            }
-        };
-
-        if let Err(e) = self.socket.send_to(&data, self.remote_info.remote_peer_addr).await {
-            tracing::warn!(sid = %self.stream_id, "could not write data to remote socket {:?}", e);
-
-            self.disable();
-            return Err(ClientStreamError::RemoteError(format!("stream_id: {}, {:?}", self.stream_id, e)))
-        }
-        counter!("ownserver_server.remote.udp.sent_bytes", "client_id" => self.client_id.to_string(), "stream_id" => self.stream_id.to_string()).increment(data.len() as u64);
-        Ok(())
     }
 
-    pub async fn send_to_client(&self, packet: ControlPacketV2) -> Result<(), ClientStreamError> {
+    pub async fn send_to_client(&self, packet: ControlPacketV2) -> Result<(), SendToClientError> {
         let client_id = self.client_id;
         self.store.send_to_client(client_id, packet).await?;
         Ok(())
     }
 
-    pub async fn send_init_to_client(&self) -> Result<(), ClientStreamError> {
+    pub async fn send_init_to_client(&self) -> Result<(), SendToClientError> {
         let client_id = self.client_id;
         let packet = ControlPacketV2::Init(self.stream_id, self.endpoint_id, self.remote_info.clone());
         self.store.send_to_client(client_id, packet).await?;
@@ -178,12 +162,18 @@ impl RemoteUdp {
     }
 
     pub fn disabled(&self) -> bool {
-        self.disabled
+        self.socket.is_none()
     }
     pub fn disable(&mut self) {
-        tracing::info!(sid = %self.stream_id, "udp stream was disabled");
+        tracing::debug!(cid = %self.client_id, sid = %self.stream_id, "udp stream was disabled");
+        // drop the socket
         self.ct.cancel();
-        self.disabled = true;
+        self.socket = None;
     }
 }
 
+impl Drop for RemoteUdp {
+    fn drop(&mut self) {
+        tracing::info!(cid = %self.client_id, sid = %self.stream_id, "dropping RemoteUdp");
+    }
+}

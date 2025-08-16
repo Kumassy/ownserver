@@ -8,7 +8,7 @@ use tokio_util::{sync::CancellationToken, codec::{Encoder, Decoder}};
 use tracing::Instrument;
 use warp::ws::Message;
 
-use crate::{Store, remote::stream::StreamMessage, ClientStreamError};
+use crate::{SendToClientError, Store};
 use chrono::{DateTime, Duration, Utc};
 
 
@@ -36,10 +36,9 @@ pub enum ClientState {
     },
 }
 
-impl<S, E> Client<S>
+impl<S> Client<S>
 where
-    S: futures::Stream<Item = Result<Message, warp::Error>> + Sink<Message, Error = E> + Unpin + Send + 'static,
-    E: std::fmt::Debug,
+    S: futures::Stream<Item = Result<Message, warp::Error>> + Sink<Message, Error = warp::Error> + Unpin + Send + 'static,
 {
     pub fn new(store: Arc<Store<S>>, client_id: ClientId, endpoints: Endpoints, ws: S, reconnect_window: Duration) -> Self
     {
@@ -62,11 +61,11 @@ where
                             }
                             // handle close with reason
                             Some(Ok(msg)) if msg.is_close() && !msg.as_bytes().is_empty() => {
-                                tracing::info!(cid = %client_id, close_reason=?msg, "client got close");
+                                tracing::info!(cid = %client_id, close_reason=?msg, "closing client with reason");
                                 break
                             }
                             _ => {
-                                tracing::info!(cid = %client_id, "goodbye client");
+                                tracing::info!(cid = %client_id, "closing client without message");
                                 break
                             }
                         };
@@ -89,16 +88,17 @@ where
 
 
                 
-                        tracing::debug!(cid = %client_id, ?packet, "got control packet from client");
+                        tracing::trace!(cid = %client_id, ?packet, "got control packet from client");
 
-                        let (stream_id, message) = match packet {
+                        let (stream_id, data) = match packet {
                             ControlPacketV2::Data(stream_id, data) => {
                                 tracing::trace!(cid = %client_id, sid = %stream_id, "forwarding to stream: {}", data.len());
-                                (stream_id, StreamMessage::Data(data))
+                                (stream_id, data)
                             }
                             ControlPacketV2::Refused(stream_id) => {
-                                tracing::debug!(cid = %client_id, sid = %stream_id, "tunnel says: refused");
-                                (stream_id, StreamMessage::TunnelRefused)
+                                tracing::info!(cid = %client_id, sid = %stream_id, "disable remote because corresponding client stream was refused");
+                                store_.disable_remote(stream_id).await;
+                                continue;
                             }
                             ControlPacketV2::Ping(seq, datetime, None) => {
                                 tracing::trace!(cid = %client_id, seq = %seq, datetime=%datetime, "pong");
@@ -129,8 +129,8 @@ where
                         };
 
                         tracing::trace!(cid = %client_id, sid = %stream_id, "forward message to remote stream");
-                        if let Err(e) = store_.send_to_remote(stream_id, message).await {
-                            tracing::debug!(cid = %client_id, sid = %stream_id, error = ?e, "Failed to send to remote stream");
+                        if let Err(e) = store_.send_to_remote(stream_id, &data).await {
+                            tracing::warn!(cid = %client_id, sid = %stream_id, error = ?e, "Failed to send to remote stream");
 
                             store_.disable_remote(stream_id).await;
                         }
@@ -151,18 +151,21 @@ where
         }
     }
 
-    pub async fn send_to_client(&mut self, packet: ControlPacketV2) -> Result<(), ClientStreamError> {
+    pub async fn send_to_client(&mut self, packet: ControlPacketV2) -> Result<(), SendToClientError> {
+        if !matches!(self.state, ClientState::Connected) {
+            return Err(SendToClientError::ClientNotConnected(self.client_id))
+        }
         let mut codec = ControlPacketV2Codec::new();
         let mut bytes = BytesMut::new();
         if let Err(e) = codec.encode(packet, &mut bytes) {
             tracing::warn!(cid = %self.client_id, error = ?e, "failed to encode message");
-            return Err(ClientStreamError::ClientError(format!("packet is invalid {}", e)))
+            return Err(SendToClientError::EncodeError(e))
         }
 
         if let Err(e) =  self.ws_tx.send(Message::binary(bytes.to_vec())).await {
-            tracing::debug!(cid = %self.client_id, error = ?e, "client disconnected: aborting");
+            tracing::warn!(cid = %self.client_id, error = ?e, "client disconnected: aborting");
             self.set_wait_reconnect();
-            return Err(ClientStreamError::ClientError(format!("failed to communicate with client {:?}", e)))
+            return Err(SendToClientError::WriteError(e))
         }
         counter!("ownserver_server.client.control_packet.sent_bytes", "client_id" => self.client_id.to_string()).increment(bytes.len() as u64);
         Ok(())
