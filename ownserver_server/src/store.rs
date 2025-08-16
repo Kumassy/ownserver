@@ -20,10 +20,9 @@ pub struct Store<S> {
     alloc: Mutex<PortAllocator>,
 }
 
-impl<S, E> Store<S>
+impl<S> Store<S>
 where
-    S: futures::Stream<Item = Result<Message, warp::Error>> + Sink<Message, Error = E> + Unpin + Send + 'static,
-    E: std::fmt::Debug,
+    S: futures::Stream<Item = Result<Message, warp::Error>> + Sink<Message, Error = warp::Error> + Unpin + Send + 'static,
 {
     pub fn new(range: Range<u16>) -> Self {
         Self {

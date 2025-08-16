@@ -158,7 +158,7 @@ impl RemoteUdp {
             tracing::warn!(sid = %self.stream_id, "could not write data to remote socket {:?}", e);
 
             self.disable();
-            return Err(SendToRemoteError::RemoteError(format!("stream_id: {}, {:?}", self.stream_id, e)))
+            return Err(SendToRemoteError::WriteError(e))
         }
         counter!("ownserver_server.remote.udp.sent_bytes", "client_id" => self.client_id.to_string(), "stream_id" => self.stream_id.to_string()).increment(data.len() as u64);
         Ok(())

@@ -36,10 +36,9 @@ pub enum ClientState {
     },
 }
 
-impl<S, E> Client<S>
+impl<S> Client<S>
 where
-    S: futures::Stream<Item = Result<Message, warp::Error>> + Sink<Message, Error = E> + Unpin + Send + 'static,
-    E: std::fmt::Debug,
+    S: futures::Stream<Item = Result<Message, warp::Error>> + Sink<Message, Error = warp::Error> + Unpin + Send + 'static,
 {
     pub fn new(store: Arc<Store<S>>, client_id: ClientId, endpoints: Endpoints, ws: S, reconnect_window: Duration) -> Self
     {
@@ -156,13 +155,13 @@ where
         let mut bytes = BytesMut::new();
         if let Err(e) = codec.encode(packet, &mut bytes) {
             tracing::warn!(cid = %self.client_id, error = ?e, "failed to encode message");
-            return Err(SendToClientError::ClientError(format!("packet is invalid {}", e)))
+            return Err(SendToClientError::EncodeError(e))
         }
 
         if let Err(e) =  self.ws_tx.send(Message::binary(bytes.to_vec())).await {
             tracing::debug!(cid = %self.client_id, error = ?e, "client disconnected: aborting");
             self.set_wait_reconnect();
-            return Err(SendToClientError::ClientError(format!("failed to communicate with client {:?}", e)))
+            return Err(SendToClientError::WriteError(e))
         }
         counter!("ownserver_server.client.control_packet.sent_bytes", "client_id" => self.client_id.to_string()).increment(bytes.len() as u64);
         Ok(())

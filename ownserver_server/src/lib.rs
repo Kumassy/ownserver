@@ -1,5 +1,5 @@
 use chrono::Duration;
-use futures::channel::mpsc::SendError;
+use futures::{channel::mpsc::SendError, io};
 use ownserver_lib::{ClientId, StreamId};
 use thiserror::Error;
 
@@ -40,21 +40,25 @@ pub enum ForwardingError {
     SendError(#[from] SendError),
 }
 
-#[derive(Error, Debug, PartialEq)]
+#[derive(Error, Debug )]
 pub enum SendToRemoteError {
     #[error("Failed to send data to remote.")]
     RemoteError(String),
     #[error("Stream {0} is not registered to Store or no longer available.")]
     StreamNotAvailable(StreamId),
+    #[error("Failed to write data to remote stream {0}.")]
+    WriteError(#[from] io::Error),
     #[error("Remote stream has closed.")]
     RemoteEnd,
 }
 
 
-#[derive(Error, Debug, PartialEq)]
+#[derive(Error, Debug)]
 pub enum SendToClientError {
-    #[error("Failed to send data to client {0}.")]
-    ClientError(String),
+    #[error("Failed to encode data {0}.")]
+    EncodeError(#[from] io::Error),
+    #[error("Failed to write data to client {0}.")]
+    WriteError(#[from] warp::Error),
     #[error("Client {0} is not registered to Store or no longer available.")]
     ClientNotAvailable(ClientId),
 }

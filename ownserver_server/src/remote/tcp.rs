@@ -180,7 +180,7 @@ impl RemoteTcp {
         let data = match message {
             StreamMessage::Data(data) => data,
             StreamMessage::TunnelRefused => {
-                // TODO
+                // TODO change message type to Data.
                 tracing::info!(sid = %self.stream_id, "tunnel refused");
 
                 let _ = self.socket_tx.shutdown().await.map_err(|_e| {
@@ -199,7 +199,7 @@ impl RemoteTcp {
             tracing::warn!(sid = %self.stream_id, "could not write data to remote socket {:?}", e);
 
             self.disable();
-            return Err(SendToRemoteError::RemoteError(format!("stream_id: {}, {:?}", self.stream_id, e)))
+            return Err(SendToRemoteError::WriteError(e))
         }
 
         counter!("ownserver_server.remote.tcp.sent_bytes", "client_id" => self.client_id.to_string(), "stream_id" => self.stream_id.to_string()).increment(data.len() as u64);
