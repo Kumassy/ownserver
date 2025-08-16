@@ -54,10 +54,10 @@ where
                         break
                     }
                     result = stream.next() => {
-                        let message = match result {
+                        let mut bytes = match result {
                             // handle protocol message
                             Some(Ok(msg)) if (msg.is_binary() || msg.is_text()) && !msg.as_bytes().is_empty() => {
-                                msg.into_bytes()
+                                BytesMut::from(msg.as_bytes())
                             }
                             // handle close with reason
                             Some(Ok(msg)) if msg.is_close() && !msg.as_bytes().is_empty() => {
@@ -70,7 +70,6 @@ where
                             }
                         };
                 
-                        let mut bytes = BytesMut::from(&message[..]);
                         counter!("ownserver_server.client.control_packet.received_bytes", "client_id" => client_id.to_string()).increment(bytes.len() as u64);
 
                         let packet = match ControlPacketV2Codec::new().decode(&mut bytes) {
@@ -162,12 +161,13 @@ where
             return Err(SendToClientError::EncodeError(e))
         }
 
-        if let Err(e) =  self.ws_tx.send(Message::binary(bytes.to_vec())).await {
+        let bytes_len = bytes.len();
+        if let Err(e) =  self.ws_tx.send(Message::binary(bytes)).await {
             tracing::warn!(cid = %self.client_id, error = ?e, "client disconnected: aborting");
             self.set_wait_reconnect();
             return Err(SendToClientError::WriteError(e))
         }
-        counter!("ownserver_server.client.control_packet.sent_bytes", "client_id" => self.client_id.to_string()).increment(bytes.len() as u64);
+        counter!("ownserver_server.client.control_packet.sent_bytes", "client_id" => self.client_id.to_string()).increment(bytes_len as u64);
         Ok(())
     }
 
