@@ -41,16 +41,20 @@ pub enum ForwardingError {
 }
 
 #[derive(Error, Debug, PartialEq)]
-pub enum ClientStreamError {
-    #[error("Failed to send data to client {0}.")]
-    ClientError(String),
+pub enum SendToRemoteError {
     #[error("Failed to send data to remote.")]
     RemoteError(String),
-    #[error("Client {0} is not registered to Store or no longer available.")]
-    ClientNotAvailable(ClientId),
     #[error("Stream {0} is not registered to Store or no longer available.")]
     StreamNotAvailable(StreamId),
     #[error("Remote stream has closed.")]
     RemoteEnd,
 }
 
+
+#[derive(Error, Debug, PartialEq)]
+pub enum SendToClientError {
+    #[error("Failed to send data to client {0}.")]
+    ClientError(String),
+    #[error("Client {0} is not registered to Store or no longer available.")]
+    ClientNotAvailable(ClientId),
+}

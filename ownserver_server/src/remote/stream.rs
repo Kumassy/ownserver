@@ -1,5 +1,6 @@
 use ownserver_lib::{StreamId, ClientId, ControlPacketV2};
-use crate::ClientStreamError;
+
+use crate::{SendToClientError, SendToRemoteError};
 
 use super::{tcp::RemoteTcp, udp::RemoteUdp};
 
@@ -11,7 +12,7 @@ pub enum RemoteStream {
 }
 
 impl RemoteStream {
-    pub async fn send_to_remote(&mut self, stream_id: StreamId, message: StreamMessage) -> Result<(), ClientStreamError> {
+    pub async fn send_to_remote(&mut self, stream_id: StreamId, message: StreamMessage) -> Result<(), SendToRemoteError> {
         match self {
             RemoteStream::RemoteTcp(tcp) => {
                 tcp.send_to_remote(stream_id, message).await
@@ -22,7 +23,7 @@ impl RemoteStream {
         }
     }
 
-    pub async fn send_to_client(&self, packet: ControlPacketV2) -> Result<(), ClientStreamError> {
+    pub async fn send_to_client(&self, packet: ControlPacketV2) -> Result<(), SendToClientError> {
         match self {
             RemoteStream::RemoteTcp(tcp) => {
                 tcp.send_to_client(packet).await

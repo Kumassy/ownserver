@@ -8,7 +8,8 @@ use tokio::{net::{TcpListener, TcpStream}, io::{WriteHalf, AsyncReadExt, AsyncWr
 use tracing::Instrument;
 use tokio_util::sync::CancellationToken;
 
-use crate::{ClientStreamError, Store, remote::stream::RemoteStream};
+use crate::SendToClientError;
+use crate::{SendToRemoteError, Store, remote::stream::RemoteStream};
 pub use ownserver_lib::{ClientId, StreamId};
 
 use super::stream::StreamMessage;
@@ -171,9 +172,9 @@ impl RemoteTcp {
         Self { stream_id, client_id, endpoint_id, socket_tx: sink, remote_info, store, ct, disabled: false }
     }
 
-    pub async fn send_to_remote(&mut self, stream_id: StreamId, message: StreamMessage) -> Result<(), ClientStreamError> {
+    pub async fn send_to_remote(&mut self, stream_id: StreamId, message: StreamMessage) -> Result<(), SendToRemoteError> {
         if self.disabled() {
-            return Err(ClientStreamError::StreamNotAvailable(stream_id));
+            return Err(SendToRemoteError::StreamNotAvailable(stream_id));
         }
 
         let data = match message {
@@ -187,7 +188,7 @@ impl RemoteTcp {
                 });
 
                 self.disable();
-                return Err(ClientStreamError::RemoteError(format!("stream_id: {}, TunnelRefused", self.stream_id)))
+                return Err(SendToRemoteError::RemoteError(format!("stream_id: {}, TunnelRefused", self.stream_id)))
             }
             StreamMessage::NoClientTunnel => {
                 unimplemented!();
@@ -198,20 +199,20 @@ impl RemoteTcp {
             tracing::warn!(sid = %self.stream_id, "could not write data to remote socket {:?}", e);
 
             self.disable();
-            return Err(ClientStreamError::RemoteError(format!("stream_id: {}, {:?}", self.stream_id, e)))
+            return Err(SendToRemoteError::RemoteError(format!("stream_id: {}, {:?}", self.stream_id, e)))
         }
 
         counter!("ownserver_server.remote.tcp.sent_bytes", "client_id" => self.client_id.to_string(), "stream_id" => self.stream_id.to_string()).increment(data.len() as u64);
         Ok(())
     }
 
-    pub async fn send_to_client(&self, packet: ControlPacketV2) -> Result<(), ClientStreamError> {
+    pub async fn send_to_client(&self, packet: ControlPacketV2) -> Result<(), SendToClientError> {
         let client_id = self.client_id;
         self.store.send_to_client(client_id, packet).await?;
         Ok(())
     }
 
-    pub async fn send_init_to_client(&self) -> Result<(), ClientStreamError> {
+    pub async fn send_init_to_client(&self) -> Result<(), SendToClientError> {
         let client_id = self.client_id;
         let packet = ControlPacketV2::Init(self.stream_id, self.endpoint_id, self.remote_info.clone());
         self.store.send_to_client(client_id, packet).await?;

@@ -8,7 +8,7 @@ use tokio_util::{sync::CancellationToken, codec::{Encoder, Decoder}};
 use tracing::Instrument;
 use warp::ws::Message;
 
-use crate::{Store, remote::stream::StreamMessage, ClientStreamError};
+use crate::{remote::stream::StreamMessage, SendToClientError, Store};
 use chrono::{DateTime, Duration, Utc};
 
 
@@ -151,18 +151,18 @@ where
         }
     }
 
-    pub async fn send_to_client(&mut self, packet: ControlPacketV2) -> Result<(), ClientStreamError> {
+    pub async fn send_to_client(&mut self, packet: ControlPacketV2) -> Result<(), SendToClientError> {
         let mut codec = ControlPacketV2Codec::new();
         let mut bytes = BytesMut::new();
         if let Err(e) = codec.encode(packet, &mut bytes) {
             tracing::warn!(cid = %self.client_id, error = ?e, "failed to encode message");
-            return Err(ClientStreamError::ClientError(format!("packet is invalid {}", e)))
+            return Err(SendToClientError::ClientError(format!("packet is invalid {}", e)))
         }
 
         if let Err(e) =  self.ws_tx.send(Message::binary(bytes.to_vec())).await {
             tracing::debug!(cid = %self.client_id, error = ?e, "client disconnected: aborting");
             self.set_wait_reconnect();
-            return Err(ClientStreamError::ClientError(format!("failed to communicate with client {:?}", e)))
+            return Err(SendToClientError::ClientError(format!("failed to communicate with client {:?}", e)))
         }
         counter!("ownserver_server.client.control_packet.sent_bytes", "client_id" => self.client_id.to_string()).increment(bytes.len() as u64);
         Ok(())
