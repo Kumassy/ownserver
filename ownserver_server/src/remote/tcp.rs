@@ -173,7 +173,7 @@ impl RemoteTcp {
         match self.socket_tx {
             Some(ref mut socket_tx)  => {
                 if let Err(e) = socket_tx.write_all(data).await {
-                    tracing::warn!(sid = %self.stream_id, "could not write data to remote socket {:?}", e);
+                    tracing::warn!(cid = %self.client_id, sid = %self.stream_id, "could not write data to remote socket {:?}", e);
 
                     self.disable();
                     return Err(SendToRemoteError::WriteError(e))
@@ -206,7 +206,7 @@ impl RemoteTcp {
         self.socket_tx.is_none()
     }
     pub fn disable(&mut self) {
-        tracing::debug!(sid = %self.stream_id, "tcp stream was disabled");
+        tracing::debug!(cid = %self.client_id, sid = %self.stream_id, "tcp stream was disabled");
         // close read half of the socket
         self.ct.cancel();
         // close the write half of the socket
@@ -216,6 +216,6 @@ impl RemoteTcp {
 
 impl Drop for RemoteTcp {
     fn drop(&mut self) {
-        tracing::info!(sid = %self.stream_id, "dropping RemoteTcp");
+        tracing::info!(cid = %self.client_id, sid = %self.stream_id, "dropping RemoteTcp");
     }
 }

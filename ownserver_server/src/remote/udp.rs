@@ -133,7 +133,7 @@ impl RemoteUdp {
         match self.socket {
             Some(ref socket) => {
                 if let Err(e) = socket.send_to(data, self.remote_info.remote_peer_addr).await {
-                    tracing::warn!(sid = %self.stream_id, "could not write data to remote socket {:?}", e);
+                    tracing::warn!(cid = %self.client_id, sid = %self.stream_id, "could not write data to remote socket {:?}", e);
 
                     self.disable();
                     return Err(SendToRemoteError::WriteError(e))
@@ -165,7 +165,7 @@ impl RemoteUdp {
         self.socket.is_none()
     }
     pub fn disable(&mut self) {
-        tracing::debug!(sid = %self.stream_id, "udp stream was disabled");
+        tracing::debug!(cid = %self.client_id, sid = %self.stream_id, "udp stream was disabled");
         // drop the socket
         self.ct.cancel();
         self.socket = None;
@@ -174,6 +174,6 @@ impl RemoteUdp {
 
 impl Drop for RemoteUdp {
     fn drop(&mut self) {
-        tracing::info!(sid = %self.stream_id, "dropping RemoteUdp");
+        tracing::info!(cid = %self.client_id, sid = %self.stream_id, "dropping RemoteUdp");
     }
 }
