@@ -60,5 +60,7 @@ pub enum SendToClientError {
     #[error("Failed to write data to client {0}.")]
     WriteError(#[from] warp::Error),
     #[error("Client {0} is not registered to Store or no longer available.")]
-    ClientNotAvailable(ClientId),
+    ClientNotFound(ClientId),
+    #[error("Client {0} is registered but waiting for cleanup.")]
+    ClientNotConnected(ClientId),
 }

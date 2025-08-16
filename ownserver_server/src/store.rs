@@ -40,7 +40,7 @@ where
                 client.send_to_client(packet).await
             },
             None => {
-                Err(SendToClientError::ClientNotAvailable(client_id))
+                Err(SendToClientError::ClientNotFound(client_id))
             },
         }
     }

@@ -152,6 +152,9 @@ where
     }
 
     pub async fn send_to_client(&mut self, packet: ControlPacketV2) -> Result<(), SendToClientError> {
+        if !matches!(self.state, ClientState::Connected) {
+            return Err(SendToClientError::ClientNotConnected(self.client_id))
+        }
         let mut codec = ControlPacketV2Codec::new();
         let mut bytes = BytesMut::new();
         if let Err(e) = codec.encode(packet, &mut bytes) {
