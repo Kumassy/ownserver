@@ -159,7 +159,7 @@ enum ProvisioningAction {
     }
 }
 
-#[tracing::instrument(skip(config))]
+#[tracing::instrument(skip(config, client_hello_data))]
 async fn validate_client_hello(
     config: &'static Config,
     client_hello_data: Vec<u8>,
