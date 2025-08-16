@@ -93,11 +93,10 @@ pub struct RemoteTcp {
     pub stream_id: StreamId,
     pub client_id: ClientId,
     pub endpoint_id: EndpointId,
-    socket_tx: WriteHalf<TcpStream>,
+    socket_tx: Option<WriteHalf<TcpStream>>,
     remote_info: RemoteInfo,
     ct: CancellationToken,
     store: Arc<Store<WebSocket>>,
-    disabled: bool,
 }
 
 impl RemoteTcp {
@@ -167,23 +166,27 @@ impl RemoteTcp {
             store_.disable_remote(stream_id).await;
         }.instrument(tracing::info_span!("remote_tcp_read_loop")));
 
-        Self { stream_id, client_id, endpoint_id, socket_tx: sink, remote_info, store, ct, disabled: false }
+        Self { stream_id, client_id, endpoint_id, socket_tx: Some(sink), remote_info, store, ct }
     }
 
     pub async fn send_to_remote(&mut self, stream_id: StreamId, data: &[u8]) -> Result<(), SendToRemoteError> {
-        if self.disabled() {
-            return Err(SendToRemoteError::StreamNotAvailable(stream_id));
+        match self.socket_tx {
+            Some(ref mut socket_tx)  => {
+                if let Err(e) = socket_tx.write_all(data).await {
+                    tracing::warn!(sid = %self.stream_id, "could not write data to remote socket {:?}", e);
+
+                    self.disable();
+                    return Err(SendToRemoteError::WriteError(e))
+                }
+
+                counter!("ownserver_server.remote.tcp.sent_bytes", "client_id" => self.client_id.to_string(), "stream_id" => self.stream_id.to_string()).increment(data.len() as u64);
+                Ok(())
+            },
+            None => {
+                Err(SendToRemoteError::StreamNotAvailable(stream_id))
+            }
         }
 
-        if let Err(e) = self.socket_tx.write_all(data).await {
-            tracing::warn!(sid = %self.stream_id, "could not write data to remote socket {:?}", e);
-
-            self.disable();
-            return Err(SendToRemoteError::WriteError(e))
-        }
-
-        counter!("ownserver_server.remote.tcp.sent_bytes", "client_id" => self.client_id.to_string(), "stream_id" => self.stream_id.to_string()).increment(data.len() as u64);
-        Ok(())
     }
 
     pub async fn send_to_client(&self, packet: ControlPacketV2) -> Result<(), SendToClientError> {
@@ -200,13 +203,14 @@ impl RemoteTcp {
     }
 
     pub fn disabled(&self) -> bool {
-        self.disabled
+        self.socket_tx.is_none()
     }
     pub fn disable(&mut self) {
-        tracing::info!(sid = %self.stream_id, "tcp stream was disabled");
+        tracing::debug!(sid = %self.stream_id, "tcp stream was disabled");
+        // close read half of the socket
         self.ct.cancel();
-        // TODO: self.socket_tx.shutdown().await
-        self.disabled = true;
+        // close the write half of the socket
+        self.socket_tx = None;
     }
 }
 
