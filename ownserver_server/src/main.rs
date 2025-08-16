@@ -85,7 +85,10 @@ async fn main() {
     CONFIG.set(config).expect("failed to initialize config");
 
     tracing_subscriber::registry()
-        .with(tracing_subscriber::EnvFilter::new("INFO"))
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("INFO"))
+        )
         .with(tracing_subscriber::fmt::layer())
         .try_init()
         .expect("Failed to register tracer with registry");
