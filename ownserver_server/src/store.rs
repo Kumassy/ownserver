@@ -8,7 +8,7 @@ use rand::Rng;
 use tokio::{sync::{RwLock, Mutex}, net::ToSocketAddrs};
 use warp::filters::ws::Message;
 
-use crate::{port_allocator::{PortAllocator, PortAllocatorError}, remote::stream::{RemoteStream, StreamMessage}, Client, SendToClientError, SendToRemoteError};
+use crate::{port_allocator::{PortAllocator, PortAllocatorError}, remote::stream::RemoteStream, Client, SendToClientError, SendToRemoteError};
 
 
 #[derive(Debug, Default)]
@@ -54,10 +54,10 @@ where
         }
     }
 
-    pub async fn send_to_remote(&self, stream_id: StreamId, message: StreamMessage) -> Result<(), SendToRemoteError> {
+    pub async fn send_to_remote(&self, stream_id: StreamId, data: &[u8]) -> Result<(), SendToRemoteError> {
         match self.streams.write().await.get_mut(&stream_id) {
             Some(stream) => {
-                stream.send_to_remote(stream_id, message).await
+                stream.send_to_remote(stream_id, data).await
             },
             None => {
                 Err(SendToRemoteError::StreamNotAvailable(stream_id))

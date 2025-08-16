@@ -12,13 +12,13 @@ pub enum RemoteStream {
 }
 
 impl RemoteStream {
-    pub async fn send_to_remote(&mut self, stream_id: StreamId, message: StreamMessage) -> Result<(), SendToRemoteError> {
+    pub async fn send_to_remote(&mut self, stream_id: StreamId, data: &[u8]) -> Result<(), SendToRemoteError> {
         match self {
             RemoteStream::RemoteTcp(tcp) => {
-                tcp.send_to_remote(stream_id, message).await
+                tcp.send_to_remote(stream_id, data).await
             }
             RemoteStream::RemoteUdp(udp) => {
-                udp.send_to_remote(stream_id, message).await
+                udp.send_to_remote(stream_id, data).await
             }
         }
     }

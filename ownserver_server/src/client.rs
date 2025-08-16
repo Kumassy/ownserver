@@ -8,7 +8,7 @@ use tokio_util::{sync::CancellationToken, codec::{Encoder, Decoder}};
 use tracing::Instrument;
 use warp::ws::Message;
 
-use crate::{remote::stream::StreamMessage, SendToClientError, Store};
+use crate::{SendToClientError, Store};
 use chrono::{DateTime, Duration, Utc};
 
 
@@ -90,14 +90,15 @@ where
                 
                         tracing::debug!(cid = %client_id, ?packet, "got control packet from client");
 
-                        let (stream_id, message) = match packet {
+                        let (stream_id, data) = match packet {
                             ControlPacketV2::Data(stream_id, data) => {
                                 tracing::trace!(cid = %client_id, sid = %stream_id, "forwarding to stream: {}", data.len());
-                                (stream_id, StreamMessage::Data(data))
+                                (stream_id, data)
                             }
                             ControlPacketV2::Refused(stream_id) => {
-                                tracing::debug!(cid = %client_id, sid = %stream_id, "tunnel says: refused");
-                                (stream_id, StreamMessage::TunnelRefused)
+                                tracing::info!(cid = %client_id, sid = %stream_id, "disable remote because corresponding client stream was refused");
+                                store_.disable_remote(stream_id).await;
+                                continue;
                             }
                             ControlPacketV2::Ping(seq, datetime, None) => {
                                 tracing::trace!(cid = %client_id, seq = %seq, datetime=%datetime, "pong");
@@ -128,7 +129,7 @@ where
                         };
 
                         tracing::trace!(cid = %client_id, sid = %stream_id, "forward message to remote stream");
-                        if let Err(e) = store_.send_to_remote(stream_id, message).await {
+                        if let Err(e) = store_.send_to_remote(stream_id, &data).await {
                             tracing::debug!(cid = %client_id, sid = %stream_id, error = ?e, "Failed to send to remote stream");
 
                             store_.disable_remote(stream_id).await;

@@ -12,8 +12,6 @@ use crate::SendToClientError;
 use crate::{SendToRemoteError, Store, remote::stream::RemoteStream};
 pub use ownserver_lib::{ClientId, StreamId};
 
-use super::stream::StreamMessage;
-
 #[tracing::instrument(skip(store, cancellation_token))]
 pub async fn spawn_remote(
     store: Arc<Store<WebSocket>>,
@@ -172,30 +170,12 @@ impl RemoteTcp {
         Self { stream_id, client_id, endpoint_id, socket_tx: sink, remote_info, store, ct, disabled: false }
     }
 
-    pub async fn send_to_remote(&mut self, stream_id: StreamId, message: StreamMessage) -> Result<(), SendToRemoteError> {
+    pub async fn send_to_remote(&mut self, stream_id: StreamId, data: &[u8]) -> Result<(), SendToRemoteError> {
         if self.disabled() {
             return Err(SendToRemoteError::StreamNotAvailable(stream_id));
         }
 
-        let data = match message {
-            StreamMessage::Data(data) => data,
-            StreamMessage::TunnelRefused => {
-                // TODO change message type to Data.
-                tracing::info!(sid = %self.stream_id, "tunnel refused");
-
-                let _ = self.socket_tx.shutdown().await.map_err(|_e| {
-                    tracing::error!(sid = %self.stream_id, "error shutting down remote tcp stream");
-                });
-
-                self.disable();
-                return Err(SendToRemoteError::RemoteError(format!("stream_id: {}, TunnelRefused", self.stream_id)))
-            }
-            StreamMessage::NoClientTunnel => {
-                unimplemented!();
-            }
-        };
-
-        if let Err(e) = self.socket_tx.write_all(&data).await {
+        if let Err(e) = self.socket_tx.write_all(data).await {
             tracing::warn!(sid = %self.stream_id, "could not write data to remote socket {:?}", e);
 
             self.disable();
@@ -225,6 +205,7 @@ impl RemoteTcp {
     pub fn disable(&mut self) {
         tracing::info!(sid = %self.stream_id, "tcp stream was disabled");
         self.ct.cancel();
+        // TODO: self.socket_tx.shutdown().await
         self.disabled = true;
     }
 }
