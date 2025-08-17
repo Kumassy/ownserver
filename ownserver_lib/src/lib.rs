@@ -98,7 +98,7 @@ pub enum ClientType {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ControlPacketV2 {
     Init(StreamId, EndpointId, RemoteInfo),
-    Data(StreamId, Vec<u8>),
+    Data(StreamId, #[serde(with = "serde_bytes")] Vec<u8>),
     /// client --> server
     /// Notifies the server that a connection to the local server was refused.
     /// The server will close the corresponding remote stream upon receiving this notification.
@@ -177,7 +177,11 @@ impl Encoder<ControlPacketV2> for ControlPacketV2Codec {
     type Error = io::Error;
 
     fn encode(&mut self, item: ControlPacketV2, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        let encoded = rmp_serde::to_vec(&item).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        let mut encoded = Vec::new();
+        let mut serializer = rmp_serde::Serializer::new(&mut encoded)
+            .with_bytes(rmp_serde::config::BytesMode::ForceAll);
+        item.serialize(&mut serializer).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+
         dst.extend_from_slice(&encoded);
         Ok(())
     }
