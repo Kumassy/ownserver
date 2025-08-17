@@ -9,7 +9,7 @@ fn bench_encode_init(c: &mut Criterion) {
     let remote_info = RemoteInfo::new("127.0.0.1:8080".parse().unwrap());
     let packet = ControlPacketV2::Init(stream_id, endpoint_id, remote_info);
 
-    c.bench_function("control_packet_encode", |b| {
+    c.bench_function("control_packet_encode_init", |b| {
         b.iter(|| {
             let mut codec = ControlPacketV2Codec::new();
             let mut dst = BytesMut::new();
@@ -23,7 +23,7 @@ fn bench_encode_data(c: &mut Criterion) {
     let stream_id = StreamId::default();
     let packet = ControlPacketV2::Data(stream_id, vec![0; 1024]);
 
-    c.bench_function("control_packet_encode", |b| {
+    c.bench_function("control_packet_encode_data", |b| {
         b.iter(|| {
             let mut codec = ControlPacketV2Codec::new();
             let mut dst = BytesMut::new();
@@ -43,7 +43,7 @@ fn bench_decode_init(c: &mut Criterion) {
     let mut encoded = BytesMut::new();
     codec.encode(packet, &mut encoded).unwrap();
 
-    c.bench_function("control_packet_decode", |b| {
+    c.bench_function("control_packet_decode_init", |b| {
         b.iter(|| {
             let mut data = encoded.clone();
             let mut codec = ControlPacketV2Codec::new();
@@ -61,7 +61,7 @@ fn bench_decode_data(c: &mut Criterion) {
     let mut encoded = BytesMut::new();
     codec.encode(packet, &mut encoded).unwrap();
 
-    c.bench_function("control_packet_decode", |b| {
+    c.bench_function("control_packet_decode_data", |b| {
         b.iter(|| {
             let mut data = encoded.clone();
             let mut codec = ControlPacketV2Codec::new();
